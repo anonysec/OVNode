@@ -13,6 +13,7 @@ from core.service.user_managment import (
 )
 from core.service.sessions import disconnect_user, user_diagnostics
 from core.setting.core import change_config
+from core.version import __version__
 
 
 router = APIRouter(prefix="/sync", tags=["node_sync"])
@@ -29,7 +30,7 @@ async def get_status(
         if not change_settings:
             return ResponseModel(success=False, msg="Failed to change settings")
 
-    status = {"status": "running"}
+    status = {"status": "running", "version": __version__}
     cpu_usage = psutil.cpu_percent()
     memory_info = psutil.virtual_memory()
     status.update(
