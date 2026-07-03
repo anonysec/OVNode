@@ -1,22 +1,19 @@
-# OVNode
+<h1 align="center">OV-Node</h1>
 
-OVNode is the OpenVPN node-side service used by OVManager. It exposes authenticated sync APIs and installs OpenVPN hooks for traffic accounting, multi-login enforcement, stale marker cleanup, and per-user disconnect.
+**ovpn backend manager for [OV-Panel](https://github.com/anonysec/ov)**
+
+---
 
 ## Features
+- Automatic installation and configuration
+- Runs as a systemd service
+- Compatible with OV-Panel
+---
 
-- OpenVPN user/config generation
-- Per-config max-login enforcement
-- Automatic stale active-session marker cleanup
-- Traffic usage reporting with per-session counters
-- Per-user disconnect via local OpenVPN management socket
-- Health/status/version endpoint for OVManager
+## Installation
 
-## Project structure
+Install on a fresh Ubuntu/Debian system with a single command:
 
-- `core/` — FastAPI app, routers, OpenVPN services and scripts
-- `install.sh` / `installer.py` — installer entrypoints
-- `data/` — runtime data directory placeholder
-
-## Notes
-
-Do not commit `.env`, runtime databases, logs, or generated virtualenv directories.
+```bash
+bash <(curl -s https://raw.githubusercontent.com/anonysec/ov/main/node/install.sh)
+```
