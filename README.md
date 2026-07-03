@@ -9,7 +9,7 @@ OVNode is the OpenVPN node-side service used by OVManager. It exposes authentica
 - Automatic stale active-session marker cleanup
 - Traffic usage reporting with per-session counters
 - Per-user disconnect via local OpenVPN management socket
-- Health/status endpoint for OVManager
+- Health/status/version endpoint for OVManager
 
 ## Project structure
 
