@@ -1,6 +1,5 @@
 #!/usr/bin/env bash
-# ov-panel multi-login disconnect hook. Removes the active-session marker that
-# client-connect created.
+# OVManager local disconnect hook. Removes local active-session marker only.
 
 set -euo pipefail
 
@@ -11,10 +10,7 @@ LOG_TAG="ovpanel-mlogin"
 cn="${common_name:-${1:-}}"
 
 log() { logger -t "$LOG_TAG" "$*" 2>/dev/null || true; }
-
-sanitize() {
-    printf '%s' "$1" | sed 's/[^A-Za-z0-9_.-]/_/g'
-}
+sanitize() { printf '%s' "$1" | sed 's/[^A-Za-z0-9_.-]/_/g'; }
 
 if [[ -z "$cn" ]]; then
     log "disconnect without common_name"
@@ -36,7 +32,6 @@ if [[ -f "$session_file" ]]; then
     rm -f "$session_file"
     log "CN=$cn disconnect removed session=$session_key"
 else
-    # Fallback: if pool IP is unavailable or changed, remove matching CN+remote.
     rm -f "${ACTIVE_DIR}/${safe_cn}.${trusted_ip_s}.${trusted_port_s}."* 2>/dev/null || true
     log "CN=$cn disconnect fallback cleanup session=$session_key"
 fi

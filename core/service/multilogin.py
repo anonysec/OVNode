@@ -43,10 +43,6 @@ REQUIRED_DIRECTIVES = [
     "script-security 2",
     f"client-connect {CONNECT_DST}",
     f"client-disconnect {DISCONNECT_DST}",
-    # Local-only OpenVPN management socket. Required for per-user disconnect
-    # without restarting OpenVPN. Bound to 127.0.0.1 only; node API auth protects
-    # the panel-facing disconnect endpoint.
-    "management 127.0.0.1 7505",
 ]
 
 
@@ -180,8 +176,11 @@ def ensure_multilogin_setup() -> None:
         conf_changed = _patch_server_conf()
         # server.conf may have been created/edited after _install_scripts() read it.
         _fix_runtime_permissions()
-        if scripts_changed or conf_changed:
-            # OpenVPN must reload to pick up new hooks or changed hook contents.
+        if conf_changed:
+            # OpenVPN must reload only when server.conf changed. Hook script
+            # contents are executed from disk for each new connection, so script
+            # updates do not need an OpenVPN restart and should not disconnect
+            # active VPN users.
             _restart_openvpn()
         if scripts_changed or conf_changed:
             logger.info("multilogin: setup applied (scripts=%s, conf=%s)",
