@@ -1,6 +1,6 @@
 """Idempotent setup for the multi-login (per-config connection limit) feature.
 
-This wires the OpenVPN server so that ov-panel's per-user ``max_logins`` is
+This wires the OpenVPN server so that ovmanager's per-user ``max_logins`` is
 actually enforced on connect:
 
 * installs the ``client-connect`` / ``client-disconnect`` enforcement scripts,
@@ -147,7 +147,7 @@ def _patch_server_conf() -> bool:
 
     if lines and lines[-1].strip() != "":
         lines.append("")
-    lines.append("# ov-panel multi-login (per-config connection limit) enforcement")
+    lines.append("# ovmanager multi-login (per-config connection limit) enforcement")
     lines.extend(to_add)
 
     with open(SERVER_CONF, "w") as f:
