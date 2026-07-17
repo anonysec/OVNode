@@ -1,6 +1,6 @@
 # Multi-Login (per-config simultaneous connection limit)
 
-This node enforces ov-panel's **Max Logins** setting — how many devices may connect
+This node enforces ovmanager's **Max Logins** setting — how many devices may connect
 with the same config (certificate) at the same time.
 
 - `max_logins = 1` → single login (default).
@@ -39,7 +39,7 @@ keep running).
 
 ### Why count from the status log?
 
-ov-node restarts the OpenVPN service on activate/deactivate and on settings changes. A
+ovnode restarts the OpenVPN service on activate/deactivate and on settings changes. A
 persistent per-CN counter would drift across those restarts (disconnect hooks aren't
 guaranteed to fire on shutdown) and could wrongly block clients. Reading live sessions
 from the status log is the source of truth and is immune to restarts.
@@ -64,5 +64,5 @@ no `CLIENT_LIST` prefix and would silently disable both.
   same refresh window can both be admitted briefly before the count catches up; the limit
   is enforced on subsequent connects. For a hard real-time cap you'd use the OpenVPN
   management interface, which is intentionally avoided here to keep the node simple.
-- For existing installs, the setup runs automatically the next time `ov-node` starts
+- For existing installs, the setup runs automatically the next time `ovnode` starts
   (e.g. after `Update`/`Restart` in the installer).

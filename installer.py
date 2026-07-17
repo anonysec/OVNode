@@ -12,7 +12,7 @@ from colorama import Fore, Style, init
 init(autoreset=True)
 
 VERSION = "1.3.3"
-APP_NAME = "ov-node"
+APP_NAME = "ovnode"
 INSTALL_DIR = Path(f"/opt/{APP_NAME}")
 REPO = "anonysec/ov"
 REPO_SUBDIR = "node"
@@ -134,7 +134,7 @@ def setup_multilogin() -> None:
         add = [line for line in required if line not in existing]
         if add:
             with server_conf.open("a", encoding="utf-8") as f:
-                f.write("\n# ov-panel multi-login (per-config connection limit)\n")
+                f.write("\n# ovmanager multi-login (per-config connection limit)\n")
                 f.write("\n".join(add) + "\n")
 
 
@@ -163,7 +163,7 @@ def create_ccd() -> None:
 
 def write_env(service_port: str, api_key: str) -> None:
     Path(".env").write_text(
-        f"""# This is the service port for the OV-Node
+        f"""# This is the service port for the OVNode
 SERVICE_PORT={service_port}
 
 # This is an API key for connecting the master to the node
@@ -180,7 +180,7 @@ API_KEY={api_key}
 def install_ovnode() -> None:
     os.chdir(Path(__file__).resolve().parent)
     if Path("/etc/openvpn").exists():
-        print("OpenVPN already exists. If OV-Node is installed, use Update or Restart.")
+        print("OpenVPN already exists. If OVNode is installed, use Update or Restart.")
         input("Press Enter to return to the menu...")
         menu()
         return
@@ -207,10 +207,10 @@ def install_ovnode() -> None:
         create_ccd()
 
         example_uuid = str(uuid4())
-        service_port = input("OV-Node service port (default 2083): ").strip() or "2083"
+        service_port = input("OVNode service port (default 2083): ").strip() or "2083"
         if not service_port.isdigit() or not (1 <= int(service_port) <= 65535):
             raise ValueError("Service port must be between 1 and 65535")
-        api_key = input(f"OV-Node API key (example: {example_uuid}): ").strip() or example_uuid
+        api_key = input(f"OVNode API key (example: {example_uuid}): ").strip() or example_uuid
         write_env(service_port, api_key)
         run_ovnode()
         input(f"Successfully installed,\nApi key= {api_key}\nPort= {service_port}\nPress Enter to return to the menu...")
@@ -223,15 +223,15 @@ def install_ovnode() -> None:
 
 def update_ovnode() -> None:
     if not INSTALL_DIR.exists():
-        print("OV-Node is not installed.")
+        print("OVNode is not installed.")
         input("Press Enter to return to the menu...")
         menu()
         return
-    tarball = "/tmp/ov-node-latest.tar.gz"
+    tarball = "/tmp/ovnode-latest.tar.gz"
     env_file = INSTALL_DIR / ".env"
-    backup_env = Path("/tmp/ov-node.env.bak")
+    backup_env = Path("/tmp/ovnode.env.bak")
     try:
-        print(Fore.YELLOW + "Downloading latest OV-Node..." + Style.RESET_ALL)
+        print(Fore.YELLOW + "Downloading latest OVNode..." + Style.RESET_ALL)
         download_latest_tarball(tarball)
         if env_file.exists():
             shutil.copy2(env_file, backup_env)
@@ -244,7 +244,7 @@ def update_ovnode() -> None:
         run_command([get_uv_path(), "sync", "--refresh"])
         create_ccd()
         run_ovnode()
-        print(Fore.GREEN + "OV-Node updated successfully!" + Style.RESET_ALL)
+        print(Fore.GREEN + "OVNode updated successfully!" + Style.RESET_ALL)
         input("Press Enter to return to the menu...")
         menu()
     except Exception as e:
@@ -255,14 +255,14 @@ def update_ovnode() -> None:
 
 def restart_ovnode() -> None:
     if not INSTALL_DIR.exists() and not Path("/etc/openvpn").exists():
-        print("OV-Node is not installed.")
+        print("OVNode is not installed.")
         input("Press Enter to return to the menu...")
         menu()
         return
     try:
-        run_command(["systemctl", "restart", "ov-node"], check=False)
+        run_command(["systemctl", "restart", "ovnode"], check=False)
         run_command(["systemctl", "restart", "openvpn-server@server"], check=False)
-        print(Fore.GREEN + "OV-Node and OpenVPN restarted successfully!" + Style.RESET_ALL)
+        print(Fore.GREEN + "OVNode and OpenVPN restarted successfully!" + Style.RESET_ALL)
     except Exception as e:
         print(Fore.RED + f"Restart failed: {e}" + Style.RESET_ALL)
     input("Press Enter to return to the menu...")
@@ -271,11 +271,11 @@ def restart_ovnode() -> None:
 
 def uninstall_ovnode() -> None:
     if not INSTALL_DIR.exists() and not Path("/etc/openvpn").exists():
-        print("OV-Node is not installed.")
+        print("OVNode is not installed.")
         input("Press Enter to return to the menu...")
         menu()
         return
-    uninstall = input("Do you want to uninstall OV-Node and OpenVPN? (y/n): ").strip().lower()
+    uninstall = input("Do you want to uninstall OVNode and OpenVPN? (y/n): ").strip().lower()
     if uninstall not in {"y", "yes"}:
         print("Uninstallation canceled.")
         input("Press Enter to return to the menu...")
@@ -296,13 +296,13 @@ def uninstall_ovnode() -> None:
                 pass
         shutil.rmtree("/etc/openvpn", ignore_errors=True)
         shutil.rmtree(INSTALL_DIR, ignore_errors=True)
-        service_file = Path("/etc/systemd/system/ov-node.service")
+        service_file = Path("/etc/systemd/system/ovnode.service")
         if service_file.exists():
             service_file.unlink()
         run_command(["systemctl", "daemon-reload"], check=False)
         run_command(["systemctl", "reset-failed"], check=False)
-        print(Fore.GREEN + "OV-Node uninstallation completed successfully!" + Style.RESET_ALL)
-        print(Fore.YELLOW + "To install OV-Node again, run:" + Style.RESET_ALL)
+        print(Fore.GREEN + "OVNode uninstallation completed successfully!" + Style.RESET_ALL)
+        print(Fore.YELLOW + "To install OVNode again, run:" + Style.RESET_ALL)
         print("bash <(curl -s https://raw.githubusercontent.com/anonysec/ov/main/node/install.sh)")
         sys.exit(0)
     except Exception as e:
@@ -312,11 +312,11 @@ def uninstall_ovnode() -> None:
 
 
 def run_ovnode() -> None:
-    service_file = Path("/etc/systemd/system/ov-node.service")
+    service_file = Path("/etc/systemd/system/ovnode.service")
     uv_bin = get_uv_path()
     service_file.write_text(
         f"""[Unit]
-Description=OV-Node App
+Description=OVNode App
 After=network.target
 
 [Service]
@@ -333,19 +333,19 @@ WantedBy=multi-user.target
         encoding="utf-8",
     )
     run_command(["systemctl", "daemon-reload"], check=False)
-    run_command(["systemctl", "enable", "ov-node"], check=False)
-    run_command(["systemctl", "restart", "ov-node"], check=False)
+    run_command(["systemctl", "enable", "ovnode"], check=False)
+    run_command(["systemctl", "restart", "ovnode"], check=False)
 
 
 def deactivate_ovnode() -> None:
-    run_command(["systemctl", "stop", "ov-node"], check=False)
-    run_command(["systemctl", "disable", "ov-node"], check=False)
+    run_command(["systemctl", "stop", "ovnode"], check=False)
+    run_command(["systemctl", "disable", "ovnode"], check=False)
 
 
 def menu() -> None:
     safe_clear()
     print(Fore.BLUE + "=" * 34)
-    print(f"Welcome to the OV-Node Installer  v{VERSION}")
+    print(f"Welcome to the OVNode Installer  v{VERSION}")
     print("=" * 34 + Style.RESET_ALL)
     print()
     print("Please choose an option:\n")

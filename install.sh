@@ -4,7 +4,7 @@ set -euo pipefail
 # Never run from inside a directory that may be deleted during reinstall.
 cd /tmp
 
-APP_NAME="ov-node"
+APP_NAME="ovnode"
 INSTALL_DIR="/opt/$APP_NAME"
 # OVNode is now a standalone repository with node files at repo root.
 REPO="anonysec/OVNode"
@@ -34,12 +34,12 @@ if [ -z "${LATEST_URL:-}" ]; then
     LATEST_URL="https://github.com/$REPO/archive/refs/heads/main.tar.gz"
 fi
 
-rm -rf /tmp/ov-node-extract /tmp/ov-node-source.tar.gz
-mkdir -p /tmp/ov-node-extract
-curl -L --fail -o /tmp/ov-node-source.tar.gz "$LATEST_URL"
-tar -xzf /tmp/ov-node-source.tar.gz -C /tmp/ov-node-extract
+rm -rf /tmp/ovnode-extract /tmp/ovnode-source.tar.gz
+mkdir -p /tmp/ovnode-extract
+curl -L --fail -o /tmp/ovnode-source.tar.gz "$LATEST_URL"
+tar -xzf /tmp/ovnode-source.tar.gz -C /tmp/ovnode-extract
 
-SRC_DIR=$(find /tmp/ov-node-extract -mindepth 1 -maxdepth 1 -type d | head -n 1)
+SRC_DIR=$(find /tmp/ovnode-extract -mindepth 1 -maxdepth 1 -type d | head -n 1)
 if [ -z "$SRC_DIR" ] || [ ! -d "$SRC_DIR" ]; then
     echo -e "${RED}Could not find extracted OVNode source.${NC}"
     exit 1
@@ -49,7 +49,7 @@ echo -e "${YELLOW}Installing into $INSTALL_DIR...${NC}"
 rm -rf "$INSTALL_DIR"
 mkdir -p "$INSTALL_DIR"
 cp -a "$SRC_DIR"/. "$INSTALL_DIR"/
-rm -rf /tmp/ov-node-extract /tmp/ov-node-source.tar.gz
+rm -rf /tmp/ovnode-extract /tmp/ovnode-source.tar.gz
 
 cd "$INSTALL_DIR"
 
