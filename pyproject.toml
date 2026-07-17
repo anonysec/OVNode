@@ -6,7 +6,7 @@ readme = "README.md"
 requires-python = ">=3.12"
 dependencies = [
     "fastapi",
-    "uvicorn",
+    "uvicorn[standard]",
     "psutil",
     "pydantic_settings",
     "python-dotenv==1.1.0",
@@ -15,3 +15,27 @@ dependencies = [
     "requests",
     "uuid",
 ]
+
+[project.optional-dependencies]
+dev = [
+    "pytest>=8.0",
+    "pytest-asyncio",
+    "httpx",
+    "ruff>=0.11.0",
+]
+
+[tool.pytest.ini_options]
+asyncio_mode = "auto"
+testpaths = ["tests"]
+pythonpath = ["."]
+
+[tool.ruff]
+line-length = 100
+target-version = "py312"
+
+[tool.ruff.lint]
+select = ["E", "F", "W", "I", "UP", "B", "C4"]
+
+[tool.ruff.format]
+quote-style = "double"
+docstring-code-format = true
