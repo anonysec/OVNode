@@ -19,6 +19,12 @@ from core.version import __version__
 router = APIRouter(prefix="/sync", tags=["node_sync"])
 
 
+@router.get("/health", include_in_schema=False)
+async def health_check():
+    """Simple health check endpoint - no auth required for Docker healthcheck."""
+    return {"status": "ok"}
+
+
 @router.get("/status", response_model=ResponseModel)
 async def get_status(
     request: SetSettingsModel | None = None,

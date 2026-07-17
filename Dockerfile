@@ -8,7 +8,7 @@ ENV PYTHONUNBUFFERED=1 \
 
 # OpenVPN + networking tools for tunnel management
 RUN apt-get update \
-    && apt-get install -y --no-install-recommends openvpn iproute2 iptables \
+    && apt-get install -y --no-install-recommends openvpn iproute2 iptables curl \
     && rm -rf /var/lib/apt/lists/*
 
 WORKDIR /app
@@ -21,4 +21,6 @@ RUN pip install --no-cache-dir uv \
     && uv sync --frozen || uv sync
 
 EXPOSE 2083 1194/udp
+HEALTHCHECK --interval=30s --timeout=5s --start-period=5s --retries=3 \
+    CMD curl -sf http://localhost:2083/sync/health || exit 1
 CMD ["sh", "-c", "uv run main.py"]
