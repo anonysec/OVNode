@@ -1,14 +1,14 @@
 """Robust logging utilities for installer operations and node management."""
+
 import logging
 import os
 from datetime import datetime
 from pathlib import Path
 
-from core.config import settings
-
 # ============================================================
 # File & Console Handlers
 # ============================================================
+
 
 def _get_log_dir() -> Path:
     """Return the directory where log files should live."""
@@ -18,17 +18,20 @@ def _get_log_dir() -> Path:
     # Local dev: put under the project root.
     return Path(__file__).parent.parent.parent / "logs"
 
+
 def _file_formatter():
     return logging.Formatter(
         fmt="%(asctime)s | %(levelname)-8s | %(name)-32s | %(message)s",
         datefmt="%Y-%m-%d %H:%M:%S",
     )
 
+
 def _console_formatter():
     return logging.Formatter(
         fmt="%(asctime)s | %(levelname)-8s | %(message)s",
         datefmt="%H:%M:%S",
     )
+
 
 def _common_handlers():
     log_dir = _get_log_dir()
@@ -43,13 +46,12 @@ def _common_handlers():
     # Console handler: concise, human-friendly
     ch = logging.StreamHandler()
     ch.setLevel(
-        logging.WARNING
-        if os.getenv("LOG_LEVEL", "").upper() == "WARNING"
-        else logging.INFO
+        logging.WARNING if os.getenv("LOG_LEVEL", "").upper() == "WARNING" else logging.INFO
     )
     ch.setFormatter(_console_formatter())
 
     return [fh, ch]
+
 
 # root logger configured for the whole app
 def _root_logger():
@@ -59,6 +61,7 @@ def _root_logger():
         for h in _common_handlers():
             root.addHandler(h)
     return root
+
 
 # named loggers
 _INSTALLER_LOGGER = logging.getLogger("ovnode.installer")
@@ -75,16 +78,21 @@ if not _NODE_LOGGER.handlers:
     _NODE_LOGGER.addHandler(handlers[0])
     _NODE_LOGGER.addHandler(handlers[1])
 
+
 def installer():
     return _INSTALLER_LOGGER
+
 
 def node():
     return _NODE_LOGGER
 
+
 # convenience helpers
+
 
 class TraceCtx:
     """Context manager that logs function entry/exit and elapsed time."""
+
     def __init__(self, label, logger_=None):
         self.label = label
         self.logger = logger_ or logging.getLogger()
@@ -99,27 +107,37 @@ class TraceCtx:
         if exc_type:
             self.logger.error(
                 "!!! EXIT %s — %s: %s (%.2fs)",
-                self.label, exc_type.__name__, exc_val, elapsed,
+                self.label,
+                exc_type.__name__,
+                exc_val,
+                elapsed,
             )
         else:
             self.logger.debug("=== EXIT %s (%.2fs)", self.label, elapsed)
         return False
 
+
 def traced(logger_=None):
     def decorator(fn):
         from functools import wraps
+
         @wraps(fn)
         def _wrapper(*args, **kwargs):
             label = f"{logger_.name}.{fn.__name__}" if logger_ else f"{fn.__module__}.{fn.__name__}"
             with TraceCtx(label, logger_):
                 return fn(*args, **kwargs)
+
         return _wrapper
+
     return decorator
+
 
 # structured / audit helpers
 
+
 def event(msg, **extra):
     _INSTALLER_LOGGER.info(msg, extra=extra)
+
 
 def audit(action, target, status, details="", uid=None, **kwargs):
     payload = {
@@ -133,11 +151,14 @@ def audit(action, target, status, details="", uid=None, **kwargs):
     }
     _NODE_LOGGER.info("AUDIT | %s", str(payload))
 
+
 def install_log(func):
     """Decorator that logs function entry/exit."""
     from functools import wraps
+
     @wraps(func)
     def _wrapper(*args, **kwargs):
         with TraceCtx(f"{_INSTALLER_LOGGER.name}.{func.__name__}"):
             return func(*args, **kwargs)
+
     return _wrapper

@@ -113,8 +113,8 @@ def restart_openvpn() -> None:
     sending SIGHUP to the OpenVPN master process (for Docker containers
     where systemd is not available).
     """
-    import subprocess
     import signal
+    import subprocess
 
     logger.info("Restarting OpenVPN service...")
 
@@ -141,7 +141,9 @@ def restart_openvpn() -> None:
             # Try finding openvpn process directly
             result = subprocess.run(
                 ["pgrep", "-f", "openvpn"],
-                capture_output=True, text=True, timeout=5,
+                capture_output=True,
+                text=True,
+                timeout=5,
             )
             pids = result.stdout.strip().split() if result.stdout.strip() else []
         for pid_file in pids:

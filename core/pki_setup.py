@@ -5,10 +5,10 @@ Runs once at container startup. If PKI already exists (persisted via Docker
 volume), it skips initialization so existing client configs remain valid.
 If PKI is missing, creates a fresh CA + server cert + all prerequisites.
 """
-import os
-import shutil
-import subprocess
+
 import logging
+import os
+import subprocess
 
 logger = logging.getLogger("pki_setup")
 
@@ -38,6 +38,7 @@ def _setup_easyrsa():
     src = "/usr/share/easy-rsa"
     if not os.path.exists(src):
         import subprocess as sp
+
         r = sp.run(["dpkg", "-L", "easy-rsa"], capture_output=True, text=True)
         for line in r.stdout.splitlines():
             if line.startswith("/usr/share/easy-rsa/"):
@@ -67,9 +68,12 @@ def _easyrsa(*args, timeout=120):
         )
         return True
     except subprocess.CalledProcessError as e:
-        logger.error("easyrsa %s failed (rc=%d): %s",
-                     " ".join(args), e.returncode,
- e.stderr[-300:].decode() if e.stderr else str(e))
+        logger.error(
+            "easyrsa %s failed (rc=%d): %s",
+            " ".join(args),
+            e.returncode,
+            e.stderr[-300:].decode() if e.stderr else str(e),
+        )
         return False
     except Exception as e:
         logger.error("easyrsa %s error: %s", " ".join(args), e)
@@ -79,15 +83,28 @@ def _easyrsa(*args, timeout=120):
 def _ensure_dir_tree():
     """Create all PKI subdirectories needed for easyrsa operations."""
     subdirs = [
-        "private", "issued", "reqs", "certs_by_serial",
-        "index.txt.attrs", "inline/private", "revoked/certs_by_serial",
-        "revoked/private", "revoked/reqs", "revoked/issued",
+        "private",
+        "issued",
+        "reqs",
+        "certs_by_serial",
+        "index.txt.attrs",
+        "inline/private",
+        "revoked/certs_by_serial",
+        "revoked/private",
+        "revoked/reqs",
+        "revoked/issued",
     ]
     for subdir in subdirs:
         os.makedirs(os.path.join(PKI_DIR, subdir), exist_ok=True)
     # Initialize index files
-    for fname in ["index.txt", "index.txt.attr", "serial", "serial.old",
-                   "crlnumber", "crlnumber.old"]:
+    for fname in [
+        "index.txt",
+        "index.txt.attr",
+        "serial",
+        "serial.old",
+        "crlnumber",
+        "crlnumber.old",
+    ]:
         path = os.path.join(PKI_DIR, fname)
         if not os.path.exists(path):
             with open(path, "w") as f:
@@ -110,7 +127,9 @@ def init_pki():
             logger.warning("TLS key missing from existing PKI, generating...")
             subprocess.run(
                 ["openvpn", "--genkey", "secret", TLS_KEY],
-                check=True, capture_output=True, timeout=30,
+                check=True,
+                capture_output=True,
+                timeout=30,
             )
             os.chmod(TLS_KEY, 0o600)
             logger.info("TLS key generated and permissions set.")
@@ -146,7 +165,9 @@ def init_pki():
     # Generate TLS crypt key
     subprocess.run(
         ["openvpn", "--genkey", "secret", TLS_KEY],
-        check=True, capture_output=True, timeout=30,
+        check=True,
+        capture_output=True,
+        timeout=30,
     )
     os.chmod(TLS_KEY, 0o600)
     logger.info("TLS key generated and permissions set.")
