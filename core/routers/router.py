@@ -1,20 +1,23 @@
+import psutil
 from fastapi import APIRouter, Depends, HTTPException
 from fastapi.responses import FileResponse
-import psutil
-from core.schema.all_schemas import User, UserLimit, ResponseModel, SetSettingsModel
+
 from core.auth.auth import check_api_key
+from core.schema.all_schemas import ResponseModel, SetSettingsModel, User, UserLimit
+from core.service.sessions import disconnect_user, user_diagnostics
+from core.service.user_managment import (
+    change_user_status as change_user_status_on_server,
+)
 from core.service.user_managment import (
     create_user_on_server,
-    change_user_status as change_user_status_on_server,
     delete_user_on_server,
     download_ovpn_file,
     get_users_usage,
     set_user_limit,
 )
-from core.service.sessions import disconnect_user, user_diagnostics
 from core.setting.core import change_config
+from core.validation import validate_user_id
 from core.version import __version__
-
 
 router = APIRouter(prefix="/sync", tags=["node_sync"])
 
@@ -45,16 +48,18 @@ async def get_status(
             "memory_usage": memory_info.percent,
         }
     )
-    return ResponseModel(
-        success=True, msg="Node status retrieved successfully", data=status
-    )
+    return ResponseModel(success=True, msg="Node status retrieved successfully", data=status)
+
 
 @router.get("/usage", response_model=ResponseModel)
 async def get_all_user_usage(api_key: str = Depends(check_api_key)):
     usages = get_users_usage()
     if usages:
-        return ResponseModel(success=True, msg="Latest user usage received", data=usages) 
-    return ResponseModel(success=True, msg="No user is using it.",)
+        return ResponseModel(success=True, msg="Latest user usage received", data=usages)
+    return ResponseModel(
+        success=True,
+        msg="No user is using it.",
+    )
 
 
 @router.get("/sessions", response_model=ResponseModel)
@@ -71,81 +76,96 @@ async def get_session_diagnostics(
     )
 
 
-@router.post("/user/{name}/disconnect", response_model=ResponseModel)
-async def disconnect_user_sessions(name: str, api_key: str = Depends(check_api_key)):
-    """Best-effort disconnect for a CN; also clears stale active markers."""
+@router.post("/user/{uid}/disconnect", response_model=ResponseModel)
+async def disconnect_user_sessions(uid: str, api_key: str = Depends(check_api_key)):
+    """Best-effort disconnect for a user; also clears stale active markers."""
+    from core.service.user_managment import _cn_from_uid
+
+    cn = _cn_from_uid(uid)
     return ResponseModel(
         success=True,
         msg="Disconnect command processed",
-        data=disconnect_user(name),
+        data=disconnect_user(cn),
     )
 
 
 @router.post("/user", response_model=ResponseModel)
 async def create_user(user: User, api_key: str = Depends(check_api_key)):
+    uid = validate_user_id(user.id)
+    if uid is None:
+        return ResponseModel(success=False, msg="Invalid user id (must be UUID)")
     max_logins = user.max_logins if user.max_logins is not None else 1
-    success = create_user_on_server(user.name, max_logins)
+    success = create_user_on_server(uid, user.name or "", max_logins)
     if success:
         return ResponseModel(
             success=True,
             msg="User created successfully",
-            data={"client_name": user.name},
+            data={"id": uid, "name": user.name},
         )
     return ResponseModel(success=False, msg="Failed to create user")
 
 
-@router.delete("/user/{name}", response_model=ResponseModel)
-async def delete_user(name: str, api_key: str = Depends(check_api_key)):
-    result = delete_user_on_server(name)
-    if result:
+@router.delete("/user/{uid}", response_model=ResponseModel)
+async def delete_user(uid: str, api_key: str = Depends(check_api_key)):
+    safe_id = validate_user_id(uid)
+    if safe_id is None:
+        return ResponseModel(success=False, msg="Invalid user id (must be UUID)")
+    result = delete_user_on_server(safe_id)
+    if result is True:
         return ResponseModel(
             success=True,
             msg="User deleted successfully",
-            data={"client_name": name},
+            data={"id": safe_id},
         )
+    if result == "not_found":
+        return ResponseModel(success=False, msg="User not found")
     return ResponseModel(success=False, msg="Failed to delete user")
 
 
 @router.put("/user", response_model=ResponseModel)
 async def change_user_status(user: User, api_key: str = Depends(check_api_key)):
+    uid = validate_user_id(user.id)
+    if uid is None:
+        return ResponseModel(success=False, msg="Invalid user id (must be UUID)")
     # Update the stored login limit if the panel sent one.
     if user.max_logins is not None:
-        set_user_limit(user.name, user.max_logins)
-    result = change_user_status_on_server(user.name, user.status)
+        set_user_limit(uid, user.max_logins)
+    result = change_user_status_on_server(uid, user.status)
     if result:
         return ResponseModel(
             success=True,
             msg="User status changed successfully",
-            data={"client_name": user.name},
+            data={"id": uid, "name": user.name},
         )
     return ResponseModel(success=False, msg="Failed to change user status")
 
 
 @router.put("/user/limit", response_model=ResponseModel)
-async def set_user_login_limit(
-    payload: UserLimit, api_key: str = Depends(check_api_key)
-):
+async def set_user_login_limit(payload: UserLimit, api_key: str = Depends(check_api_key)):
     """Set the max simultaneous logins/devices for a client.
 
     max_logins: 1 = single login, 0 = unlimited.
     """
-    result = set_user_limit(payload.name, payload.max_logins)
+    uid = validate_user_id(payload.id)
+    if uid is None:
+        return ResponseModel(success=False, msg="Invalid user id (must be UUID)")
+    result = set_user_limit(uid, payload.max_logins)
     if result:
         return ResponseModel(
             success=True,
             msg="User login limit updated successfully",
-            data={"client_name": payload.name, "max_logins": payload.max_logins},
+            data={"id": uid, "name": payload.name, "max_logins": payload.max_logins},
         )
     return ResponseModel(success=False, msg="Failed to update user login limit")
 
 
-@router.get("/download/ovpn/{client_name}")
-async def download_ovpn(client_name: str, api_key: str = Depends(check_api_key)):
-    response = await download_ovpn_file(client_name)
+@router.get("/download/ovpn/{uid}")
+async def download_ovpn(uid: str, api_key: str = Depends(check_api_key)):
+    response = await download_ovpn_file(uid)
     if response:
         return FileResponse(
             path=response,
-            filename=f"{client_name}.ovpn",
+            filename=f"{uid}.ovpn",
             media_type="application/x-openvpn-profile",
         )
     raise HTTPException(status_code=404, detail="OVPN file not found")

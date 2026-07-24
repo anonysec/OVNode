@@ -1,26 +1,94 @@
-import pexpect
-import re
+import json
+import glob
 import os
+import re as _re_uuid
 import subprocess
+import logging
 
-from core.logger import logger
+from core.logging_utils import TraceCtx
+
+# Get the node-specific logger
+from core.logging_utils import node
+node_logger = node()
+
 from core.schema.all_schemas import UsersUsage
+from core.pki_setup import EASYRSA_DIR, PKI_DIR
 
-
-script_path = "/root/openvpn-install.sh"
+# Inline UUID<->CN conversion (shared/ module is outside Docker build context)
+_UUID_RE = _re_uuid.compile(r"^[0-9a-fA-F]{8}-?[0-9a-fA-F]{4}-?[0-9a-fA-F]{4}-?[0-9a-fA-F]{4}-?[0-9a-fA-F]{12}$")
+_CN_RE = _re_uuid.compile(r"^[a-fA-F0-9]{32}$")
 
 # Where per-client simultaneous-login limits are stored.
 # Kept separate from the CCD dir because CCD files are wiped on
 # deactivate/reactivate, while the limit should survive that.
 LIMITS_DIR = "/etc/openvpn/limits"
 
+# Where generated .ovpn config files are cached. Kept out of /root so the
+# node does not pollute the home directory of the invoking user.
+CLIENTS_DIR = "/etc/openvpn/clients"
 
-def set_user_limit(name: str, max_logins: int) -> bool:
-    """Persist the max simultaneous logins for a client.
+# Mapping file: uid (UUID) -> display name (for panel use)
+UID_MAP_FILE = os.path.join(CLIENTS_DIR, "uid_map.json")
 
-    max_logins: 1 = single login (default), 0 = unlimited.
-    The connect-time enforcement script reads this file.
-    """
+
+def _load_uid_map() -> dict:
+    if not os.path.exists(UID_MAP_FILE):
+        return {}
+    try:
+        with open(UID_MAP_FILE) as f:
+            return json.load(f)
+    except Exception:
+        return {}
+
+
+def _save_uid_map(mapping: dict) -> None:
+    try:
+        os.makedirs(CLIENTS_DIR, exist_ok=True)
+        with open(UID_MAP_FILE, "w") as f:
+            json.dump(mapping, f)
+    except Exception as e:
+        node_logger.error("Failed to save uid map: %s", e)
+
+
+def _cn_from_uid(uid: str) -> str:
+    if _UUID_RE.match(uid):
+        return uid.replace("-", "")
+    return uid
+
+
+def _get_name(uid: str) -> str | None:
+    mapping = _load_uid_map()
+    return mapping.get(uid)
+
+
+def _set_name(uid: str, name: str) -> None:
+    mapping = _load_uid_map()
+    mapping[uid] = name
+    _save_uid_map(mapping)
+
+
+def _remove_name(uid: str) -> None:
+    mapping = _load_uid_map()
+    if uid in mapping:
+        del mapping[uid]
+        _save_uid_map(mapping)
+
+
+def _client_paths(uid: str) -> dict:
+    cn = _cn_from_uid(uid)
+    return {
+        "name": cn,
+        "ovpn": os.path.join(CLIENTS_DIR, f"{cn}.ovpn"),
+        "crt": f"{PKI_DIR}/issued/{cn}.crt",
+        "inline": f"{PKI_DIR}/inline/private/{cn}.inline",
+        "template": "/etc/openvpn/server/client-common.txt",
+        "ccd": f"/etc/openvpn/ccd/{cn}",
+        "limit": os.path.join(LIMITS_DIR, cn),
+    }
+
+
+def set_user_limit(uid: str, max_logins: int) -> bool:
+    paths = _client_paths(uid)
     try:
         if max_logins is None:
             return True
@@ -28,292 +96,271 @@ def set_user_limit(name: str, max_logins: int) -> bool:
         if max_logins < 0:
             max_logins = 0
         os.makedirs(LIMITS_DIR, exist_ok=True)
-        with open(os.path.join(LIMITS_DIR, name), "w") as f:
+        with open(paths["limit"], "w") as f:
             f.write(str(max_logins))
-        logger.info("Set login limit for '%s' to %s", name, max_logins)
+        node_logger.info("Set login limit for uid='%s' (cn='%s') to %s", uid, paths["name"], max_logins)
         return True
     except Exception as e:
-        logger.error("Error setting login limit for '%s': %s", name, e)
+        node_logger.error("Error setting login limit for uid='%s': %s", uid, e)
         return False
 
 
-def remove_user_limit(name: str) -> None:
-    """Remove the stored limit file for a client (used on delete)."""
+def remove_user_limit(uid: str) -> None:
+    paths = _client_paths(uid)
     try:
-        path = os.path.join(LIMITS_DIR, name)
-        if os.path.exists(path):
-            os.remove(path)
+        if os.path.exists(paths["limit"]):
+            os.remove(paths["limit"])
     except Exception as e:
-        logger.error("Error removing login limit for '%s': %s", name, e)
+        node_logger.error("Error removing login limit for uid='%s': %s", uid, e)
 
 
-def _client_paths(name: str) -> dict:
-    return {
-        "ovpn": f"/root/{name}.ovpn",
-        "crt": f"/etc/openvpn/server/easy-rsa/pki/issued/{name}.crt",
-        "inline": f"/etc/openvpn/server/easy-rsa/pki/inline/private/{name}.inline",
-        "template": "/etc/openvpn/server/client-common.txt",
-        "ccd": f"/etc/openvpn/ccd/{name}",
-    }
-
-
-def _generate_ovpn_from_existing_cert(name: str) -> bool:
-    """Regenerate /root/name.ovpn when the cert already exists.
-
-    Nyr's installer creates /etc/openvpn/server/easy-rsa/pki/inline/private/<name>.inline
-    and combines it with client-common.txt. If a user already exists but the cached
-    /root/*.ovpn was deleted after a port/protocol change, this recreates it without
-    trying to add a duplicate client through the interactive installer.
-    """
-    paths = _client_paths(name)
+def _generate_ovpn_from_existing_cert(uid: str) -> bool:
+    paths = _client_paths(uid)
     try:
-        if not os.path.exists(paths["template"]) or not os.path.exists(paths["inline"]):
+        template = paths["template"]
+        # Prefer inline file, fall back to cert file, fail if neither exists
+        cert_src = None
+        if os.path.exists(paths["inline"]):
+            cert_src = paths["inline"]
+        elif os.path.exists(paths["crt"]):
+            cert_src = paths["crt"]
+        else:
+            node_logger.warning("No inline or cert file for uid='%s', cannot generate OVPN", uid)
             return False
+        if not os.path.exists(template):
+            node_logger.warning("client-common.txt template missing for uid='%s'", uid)
+            return False
+        os.makedirs(CLIENTS_DIR, exist_ok=True)
         with open(paths["ovpn"], "w") as out:
             subprocess.run(
-                ["grep", "-vh", "^#", paths["template"], paths["inline"]],
+                ["grep", "-vh", "^#", template, cert_src],
                 stdout=out,
                 check=True,
                 timeout=30,
             )
         os.chmod(paths["ovpn"], 0o600)
-        logger.info("Regenerated existing OVPN file for '%s'", name)
+        node_logger.info("Regenerated OVPN file for uid='%s' (cn='%s')", uid, paths["name"])
         return True
     except Exception as e:
-        logger.error("Failed to regenerate OVPN for '%s': %s", name, e)
+        node_logger.error("Failed to regenerate OVPN for uid='%s': %s", uid, e)
         return False
 
 
-def create_user_on_server(name, max_logins: int = 1) -> bool:
+def _easyrsa(*args, timeout=120):
+    """Run easyrsa with batch mode. Returns True on success."""
+    easyrsa_bin = os.path.join(EASYRSA_DIR, "easyrsa")
+    if not os.path.exists(easyrsa_bin):
+        node_logger.error("easyrsa not found at %s", easyrsa_bin)
+        return False
     try:
-        paths = _client_paths(name)
+        env = {**os.environ, "EASYRSA_BATCH": "1"}
+        subprocess.run(
+            [easyrsa_bin] + list(args),
+            cwd=EASYRSA_DIR,
+            env=env,
+            check=True,
+            capture_output=True,
+            timeout=timeout,
+        )
+        return True
+    except subprocess.CalledProcessError as e:
+        node_logger.error("easyrsa %s failed: %s", " ".join(args), e.stderr[-500:] if e.stderr else str(e))
+        return False
+    except Exception as e:
+        node_logger.error("easyrsa %s error: %s", " ".join(args), e)
+        return False
 
-        # Already generated -> success, but refresh the cached .ovpn from the
-        # current template when the inline cert exists. This prevents stale
-        # downloads after server-level changes such as port/protocol/cipher/MTU.
+
+def create_user_on_server(uid: str, name: str, max_logins: int = 1) -> bool:
+    """Create a new OpenVPN client using direct easyrsa commands.
+
+    The OpenVPN CN is derived deterministically from the UID (UUID without dashes).
+    No interactive installer script required — PKI must already be initialized
+    by the startup lifespan handler.
+    """
+    with TraceCtx("create_user_on_server"):
+        if name:
+            _set_name(uid, name)
+
+        paths = _client_paths(uid)
+        cn = paths["name"]
+        if cn is None:
+            node_logger.error("create_user_on_server: failed to get CN for uid %s", uid)
+            return False
+
+        try:
+            _cn_from_uid(cn)  # validate
+        except ValueError as e:
+            node_logger.error("Invalid CN for uid=%s: %s", uid, e)
+            return False
+
+        # Already generated -> refresh template and return
         if os.path.exists(paths["ovpn"]):
             if os.path.exists(paths["inline"]):
-                _generate_ovpn_from_existing_cert(name)
+                _generate_ovpn_from_existing_cert(uid)
             os.makedirs("/etc/openvpn/ccd", exist_ok=True)
             open(paths["ccd"], "a").close()
-            set_user_limit(name, max_logins if max_logins is not None else 1)
+            set_user_limit(uid, max_logins if max_logins is not None else 1)
             return True
 
-        # Certificate exists but /root/*.ovpn is missing (common after settings
-        # changes). Regenerate from the existing inline cert instead of calling
-        # the interactive installer and getting stuck on "invalid name".
+        # Certificate exists but cached .ovpn missing — regenerate
         if os.path.exists(paths["crt"]) or os.path.exists(paths["inline"]):
-            if _generate_ovpn_from_existing_cert(name):
+            if _generate_ovpn_from_existing_cert(uid):
                 os.makedirs("/etc/openvpn/ccd", exist_ok=True)
                 open(paths["ccd"], "a").close()
-                set_user_limit(name, max_logins if max_logins is not None else 1)
+                set_user_limit(uid, max_logins if max_logins is not None else 1)
                 return True
-            logger.error("Client '%s' exists but OVPN regeneration failed", name)
+            node_logger.error("Client '%s' (uid=%s) exists but OVPN regeneration failed", cn, uid)
             return False
 
-        if not os.path.exists(script_path):
-            logger.error("OpenVPN installer script not found at %s", script_path)
+        # Ensure PKI exists before creating client
+        if not os.path.exists(os.path.join(PKI_DIR, "ca.crt")):
+            node_logger.error("PKI not initialized — run init_pki() first (container startup).")
             return False
 
-        env = {"PATH": "/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin"}
-        bash = pexpect.spawn(
-            "/usr/bin/bash",
-            [script_path],
-            env=env,
-            encoding="utf-8",
-            timeout=180,
-        )
+        # Generate client cert with easyrsa
+        if not _easyrsa("build-client-full", cn, "nopass"):
+            node_logger.error("Failed to generate client certificate for '%s' (uid=%s)", cn, uid)
+            return False
 
-        bash.expect(r"Option:|Select an option:", timeout=90)
-        bash.sendline("1")
+        node_logger.info("Client certificate generated for cn='%s' (uid=%s)", cn, uid)
 
-        bash.expect(r"Name:", timeout=90)
-        bash.sendline(name)
-        bash.expect(pexpect.EOF, timeout=240)
-        bash.close()
-
-        # Nyr's script writes the file to the script directory (/root). If not,
-        # try to generate it from the produced inline certificate.
-        if not os.path.exists(paths["ovpn"]):
-            _generate_ovpn_from_existing_cert(name)
+        # Generate OVPN file from template + inline cert
+        if os.path.exists(paths["inline"]):
+            _generate_ovpn_from_existing_cert(uid)
 
         os.makedirs("/etc/openvpn/ccd", exist_ok=True)
         open(paths["ccd"], "a").close()
-        set_user_limit(name, max_logins if max_logins is not None else 1)
+        set_user_limit(uid, max_logins if max_logins is not None else 1)
 
         return os.path.exists(paths["ovpn"])
 
-    except pexpect.TIMEOUT:
-        logger.error("Timeout occurred while creating OpenVPN client '%s'", name)
-        return False
-    except pexpect.EOF:
-        logger.error("OpenVPN installer closed earlier than expected while creating '%s'", name)
-        return os.path.exists(_client_paths(name)["ovpn"])
-    except Exception as e:
-        logger.error("Error creating OpenVPN client '%s': %s", name, e)
+
+def delete_user_on_server(uid: str) -> bool | str:
+    """Delete/revoke a client using direct easyrsa commands."""
+    cn = _cn_from_uid(uid)
+    if not cn:
+        node_logger.error("delete_user_on_server: failed to get CN for uid %s", uid)
         return False
 
-def delete_user_on_server(name) -> bool | str:
     try:
-        if not os.path.exists(script_path):
-            logger.error("script not found at %s", script_path)
-            return False
-
-        env = {"PATH": "/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin"}
-        bash = pexpect.spawn(
-            "/usr/bin/bash", [script_path], env=env, encoding="utf-8", timeout=120
-        )
-
-        try:
-            bash.expect(r"Option:|Select an option:", timeout=20)
-        except pexpect.TIMEOUT:
-            logger.warning("Did not see main menu prompt, attempting to continue")
-
-        bash.sendline("2")
-
-        try:
-            bash.expect(
-                r"Select the client to revoke:|Select the client to revoke", timeout=20
-            )
-        except pexpect.TIMEOUT:
-            logger.info("Didn't match full header")
-
-        bash.expect(r"Client:", timeout=20)
-        list_output = bash.before
-
-        pattern = re.compile(r"\s*(\d+)\)\s*(.+)")
-        matches = pattern.findall(list_output)
-
-        user_number = None
-        for num, user in matches:
-            if user.strip() == name:
-                user_number = num
-                break
-
-        if not user_number:
-            logger.error("User '%s' not found for delete!", name)
-            bash.close(force=True)
-            return "not_found"
-
-        logger.info("Revoking user '%s' -> number %s", name, user_number)
-        bash.sendline(user_number)
-
-        try:
-            bash.expect(
-                r"Confirm .*revocation\?.*\[y/N\]:|Confirm .*revocation\?.*:|Confirm .*revocation\?",
-                timeout=20,
-            )
-            bash.sendline("y")
-        except pexpect.TIMEOUT:
-            logger.warning("Confirmation prompt not seen; trying to continue")
-
-        bash.expect(pexpect.EOF, timeout=120)
-        bash.close()
-
-        # remove local .ovpn file if exists
-        file_to_delete = f"/root/{name}.ovpn"
-        if os.path.exists(file_to_delete):
-            try:
-                os.remove(file_to_delete)
-                logger.info("Removed %s", file_to_delete)
-            except Exception as e:
-                logger.error("Error deleting file %s: %s", file_to_delete, e)
-                return True
-
-        ccd_file = f"/etc/openvpn/ccd/{name}"
-        if os.path.exists(ccd_file):
-            try:
-                os.remove(ccd_file)
-                logger.info("Removed %s", ccd_file)
-            except Exception as e:
-                logger.error("Error deleting file %s: %s", ccd_file, e)
-                return True
-
-        # Drop the stored login limit for this client.
-        remove_user_limit(name)
-
-        return True
-
-    except Exception as e:
-        logger.exception("Error in delete_user_on_server: %s", e)
+        _cn_from_uid(cn)  # validate
+    except ValueError as e:
+        node_logger.error("Invalid CN for uid=%s: %s", uid, e)
         return False
 
+    paths = _client_paths(uid)
 
-def change_user_status(name: str, status: str) -> bool:
-    """
-    Soft enable/disable for a user.
+    # Check if user actually exists
+    if not os.path.exists(paths["crt"]) and not os.path.exists(paths["ovpn"]):
+        node_logger.warning("User '%s' (uid=%s) not found on node", cn, uid)
+        return "not_found"
 
-    We only touch the CCD file.
-    We deliberately do NOT restart OpenVPN here.
+    # Revoke with easyrsa
+    if os.path.exists(paths["crt"]):
+        _easyrsa("revoke", cn)
+        _easyrsa("gen-crl")
 
-    Why?
-    - Restarting would disconnect ALL users on the node (bad UX).
-    - Removing the CCD file is enough to block NEW connections for this user.
-    - Existing sessions will continue until they naturally disconnect or the
-      connection limit / traffic enforcement kicks in via client-connect script.
-    - This makes editing data limit / expiry date non-disruptive for other users.
-    """
-    ccd_file = f"/etc/openvpn/ccd/{name}"
+    # Remove local files
+    for key in ["ovpn", "crt", "inline", "ccd", "limit"]:
+        fpath = paths.get(key)
+        if fpath and os.path.exists(fpath):
+            try:
+                os.remove(fpath)
+            except Exception as e:
+                node_logger.warning("Could not remove %s: %s", fpath, e)
+
+    _remove_name(uid)
+    node_logger.info("Revoked and cleaned up user '%s' (uid=%s)", cn, uid)
+    return True
+
+
+def change_user_status(uid: str, status: str) -> bool:
+    paths = _client_paths(uid)
 
     if status == "deactivate":
-        if os.path.exists(ccd_file):
+        if os.path.exists(paths["ccd"]):
             try:
-                os.remove(ccd_file)
-                logger.info("Soft-disabled user (removed CCD): %s", name)
+                os.remove(paths["ccd"])
+                node_logger.info("Soft-disabled user (removed CCD): uid='%s' cn='%s'", uid, paths["name"])
             except Exception as e:
-                logger.error("Error removing CCD for %s: %s", name, e)
+                node_logger.error("Error removing CCD for uid='%s': %s", uid, e)
                 return False
         return True
 
     elif status == "activate":
         try:
             os.makedirs("/etc/openvpn/ccd", exist_ok=True)
-            with open(ccd_file, "w") as f:
+            with open(paths["ccd"], "w") as f:
                 f.write("")
-            logger.info("Soft-enabled user (created CCD): %s", name)
+            node_logger.info("Soft-enabled user (created CCD): uid='%s' cn='%s'", uid, paths["name"])
             return True
         except Exception as e:
-            logger.error("Error creating CCD for %s: %s", name, e)
+            node_logger.error("Error creating CCD for uid='%s': %s", uid, e)
             return False
 
     return False
 
 
 def restart_openvpn_service() -> bool:
-    """
-    Full OpenVPN restart.
-    Only used for server-level changes (port/protocol, multi-login script setup).
-    User enable/disable no longer calls this (soft CCD toggle only).
-    """
     try:
-        os.system("systemctl restart openvpn-server@server")
-        logger.info("OpenVPN service restarted successfully.")
+        subprocess.run(
+            ["/usr/bin/systemctl", "restart", "openvpn-server@server"],
+            check=True, timeout=30,
+        )
+        node_logger.info("OpenVPN service restarted successfully.")
         return True
+    except FileNotFoundError:
+        node_logger.info("systemctl not found (likely Docker); falling back to SIGHUP.")
+    except subprocess.TimeoutExpired:
+        node_logger.error("Timeout while restarting OpenVPN service via systemctl")
     except Exception as e:
-        logger.error(f"Failed to restart OpenVPN service: {e}")
+        node_logger.warning("systemctl restart failed (%s); falling back to SIGHUP.", e)
+
+    try:
+        import signal
+        pids = glob.glob("/run/openvpn-server/*.pid")
+        if not pids:
+            result = subprocess.run(
+                ["pgrep", "-f", "openvpn"], capture_output=True, text=True, timeout=5,
+            )
+            pids = result.stdout.strip().split() if result.stdout.strip() else []
+        for pid_file in pids:
+            try:
+                real_path = os.path.realpath(pid_file)
+                if not real_path.startswith("/run/openvpn-server/"):
+                    node_logger.warning("Skipping PID file outside expected dir: %s", pid_file)
+                    continue
+                if not os.path.isfile(real_path):
+                    continue
+                pid = int(open(real_path).read().strip())
+                os.kill(pid, signal.SIGHUP)
+                node_logger.info("Sent SIGHUP to OpenVPN PID %s.", pid)
+            except (ValueError, FileNotFoundError, ProcessLookupError) as e:
+                node_logger.warning("Could not signal PID from %s: %s", pid_file, e)
+        if not pids:
+            node_logger.warning("No OpenVPN process found to restart.")
+    except Exception as e:
+        node_logger.error("Error restarting OpenVPN via SIGHUP: %s", e)
         return False
+    return True
 
 
-async def download_ovpn_file(name: str) -> str | None:
-    """Return a fresh OVPN file path without infinite recursion.
-
-    The /root/<name>.ovpn file is a cache generated from
-    /etc/openvpn/server/client-common.txt + the client's inline certificate.
-    Server settings can change later (port/protocol/DNS/cipher/MTU), so a
-    previously cached file may become stale. On every download, regenerate from
-    the current template whenever the inline cert exists.
-    """
-    paths = _client_paths(name)
+async def download_ovpn_file(uid: str) -> str | None:
+    paths = _client_paths(uid)
     file_path = paths["ovpn"]
 
+    # Use existing name from uid_map or the uid itself as fallback
+    existing_name = _get_name(uid) or uid
+
     if os.path.exists(paths["inline"]):
-        if _generate_ovpn_from_existing_cert(name):
+        if _generate_ovpn_from_existing_cert(uid):
             return file_path
 
     if os.path.exists(file_path):
         return file_path
 
-    if create_user_on_server(name):
+    if create_user_on_server(uid, existing_name):
         return file_path if os.path.exists(file_path) else None
 
     return None
@@ -324,44 +371,40 @@ def get_users_usage() -> UsersUsage | None:
     sessions: dict = {}
     file_path = "/var/log/openvpn-status.log"
     if not os.path.exists(file_path):
-        logger.warning("OpenVPN status log not found: %s", file_path)
+        node_logger.warning("OpenVPN status log not found: %s", file_path)
         return None
     try:
         with open(file_path) as f:
             lines = f.readlines()
     except Exception as e:
-        logger.error("Failed to read OpenVPN status log: %s", e)
+        node_logger.error("Failed to read OpenVPN status log: %s", e)
         return None
 
     for line in lines:
         line = line.strip()
-        if not (line.startswith("CLIENT_LIST,") or line.startswith("CLIENT_LIST	")):
+        if not (line.startswith("CLIENT_LIST,") or line.startswith("CLIENT_LIST\t")):
             continue
-        if line.startswith("CLIENT_LIST,Common Name") or line.startswith("CLIENT_LIST	Common Name"):
+        if line.startswith("CLIENT_LIST,Common Name") or line.startswith(
+            "CLIENT_LIST\tCommon Name"
+        ):
             continue
 
-        parts = line.split("	") if "	" in line else line.split(",")
+        parts = line.split("\t") if "\t" in line else line.split(",")
         if len(parts) < 7:
-            logger.warning("Skipping malformed OpenVPN CLIENT_LIST line: %s", line)
+            node_logger.warning("Skipping malformed OpenVPN CLIENT_LIST line: %s", line)
             continue
 
         username = parts[1]
-        real_address = parts[2]  # IP:port, unique per active session
+        real_address = parts[2]
         try:
             bytes_received = int(parts[5] or 0)
             bytes_sent = int(parts[6] or 0)
         except (TypeError, ValueError):
-            logger.warning("Skipping CLIENT_LIST line with invalid byte counters: %s", line)
+            node_logger.warning("Skipping CLIENT_LIST line with invalid byte counters: %s", line)
             continue
 
         total_bytes = bytes_received + bytes_sent
-
-        # Per-CN total (a multi-login user has several rows; sum them).
         users[username] = users.get(username, 0) + total_bytes
-
-        # Per-session breakdown so the panel can diff each session
-        # independently and avoid double-counting when one of several
-        # simultaneous sessions disconnects.
         sessions.setdefault(username, {})[real_address] = total_bytes
 
     if users:

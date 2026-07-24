@@ -4,6 +4,7 @@ import re
 
 from core.logger import logger
 from core.schema.all_schemas import SetSettingsModel
+from core.service.user_managment import CLIENTS_DIR
 
 
 def change_config(request: SetSettingsModel) -> bool:
@@ -13,20 +14,16 @@ def change_config(request: SetSettingsModel) -> bool:
     proto = "tcp" if str(request.protocol).lower().startswith("tcp") else "udp"
     try:
         # Read current proto/port so we can detect whether anything changed.
-        with open(setting_file, "r") as file:
+        with open(setting_file) as file:
             config = file.read()
 
         old_proto_match = re.search(r"^proto\s+(\S+)", config, flags=re.MULTILINE)
         old_port_match = re.search(r"^port\s+(\d+)", config, flags=re.MULTILINE)
         old_proto = old_proto_match.group(1) if old_proto_match else ""
         old_port = old_port_match.group(1) if old_port_match else ""
-        changed = (not old_proto.startswith(proto)) or (
-            old_port != str(request.ovpn_port)
-        )
+        changed = (not old_proto.startswith(proto)) or (old_port != str(request.ovpn_port))
 
-        config = re.sub(
-            r"^port\s+\d+", f"port {request.ovpn_port}", config, flags=re.MULTILINE
-        )
+        config = re.sub(r"^port\s+\d+", f"port {request.ovpn_port}", config, flags=re.MULTILINE)
         # Match the full proto token (\S+) so variants like "tcp-server" are
         # fully replaced instead of leaving a dangling "-server".
         config = re.sub(
@@ -40,7 +37,7 @@ def change_config(request: SetSettingsModel) -> bool:
             file.write(config)
 
         # Update the client template
-        with open(template_file, "r") as file:
+        with open(template_file) as file:
             template = file.read()
         if request.tunnel_address and request.tunnel_address.strip() != "":
             # Update both address and port
@@ -74,29 +71,22 @@ def change_config(request: SetSettingsModel) -> bool:
         if changed:
             _invalidate_cached_ovpn()
 
-            # CRITICAL: Delete ALL cached .ovpn files so clients get fresh configs
-            # with the new port/protocol on next download.
-            try:
-                for f in glob.glob("/root/*.ovpn"):
-                    try:
-                        os.remove(f)
-                    except:
-                        pass
-            except Exception:
-                pass
-
         restart_openvpn()
 
         # CRITICAL for multi-login: re-apply scripts and server.conf directives
         try:
             from core.service.multilogin import ensure_multilogin_setup
+
             ensure_multilogin_setup()
         except Exception as e:
             logger.error(f"Failed to re-apply multi-login after config change: {e}")
 
-        logger.info(
-            f"OpenVPN port changed to {request.ovpn_port}, protocol to {proto}, and tunnel address to {request.tunnel_address}"
+        change_msg = (
+            f"OpenVPN port changed to {request.ovpn_port}, "
+            f"protocol to {proto}, "
+            f"and tunnel address to {request.tunnel_address}"
         )
+        logger.info(change_msg)
         return True
     except Exception as e:
         logger.error(f"Error changing OpenVPN settings: {e}")
@@ -104,9 +94,9 @@ def change_config(request: SetSettingsModel) -> bool:
 
 
 def _invalidate_cached_ovpn() -> None:
-    """Delete cached /root/*.ovpn so they regenerate with the new settings."""
+    """Delete cached .ovpn files (in CLIENTS_DIR) so they regenerate with the new settings."""
     try:
-        for path in glob.glob("/root/*.ovpn"):
+        for path in glob.glob(os.path.join(CLIENTS_DIR, "*.ovpn")):
             try:
                 os.remove(path)
                 logger.info("Removed stale client config: %s", path)
@@ -117,18 +107,55 @@ def _invalidate_cached_ovpn() -> None:
 
 
 def restart_openvpn() -> None:
-    """Restart the OpenVPN service with systemctl"""
-    try:
-        logger.info("Restarting OpenVPN service...")
-        import subprocess
+    """Restart the OpenVPN service.
 
+    Tries systemctl first (for non-Docker installs), then falls back to
+    sending SIGHUP to the OpenVPN master process (for Docker containers
+    where systemd is not available).
+    """
+    import subprocess
+    import signal
+
+    logger.info("Restarting OpenVPN service...")
+
+    # Try systemctl first (works on bare-metal / systemd installs)
+    try:
         subprocess.run(
             ["/usr/bin/systemctl", "restart", "openvpn-server@server"],
             check=True,
             timeout=30,
         )
-        logger.info("OpenVPN service restarted successfully.")
+        logger.info("OpenVPN service restarted successfully via systemctl.")
+        return
+    except FileNotFoundError:
+        logger.info("systemctl not found (likely Docker); falling back to SIGHUP.")
     except subprocess.TimeoutExpired:
-        logger.error("Timeout while restarting OpenVPN service")
+        logger.error("Timeout while restarting OpenVPN service via systemctl")
     except Exception as e:
-        logger.error(f"Error restarting OpenVPN service: {e}")
+        logger.warning(f"systemctl restart failed ({e}); falling back to SIGHUP.")
+
+    # Fallback: send SIGHUP to the OpenVPN master process
+    try:
+        pids = glob.glob("/run/openvpn-server/*.pid")
+        if not pids:
+            # Try finding openvpn process directly
+            result = subprocess.run(
+                ["pgrep", "-f", "openvpn"],
+                capture_output=True, text=True, timeout=5,
+            )
+            pids = result.stdout.strip().split() if result.stdout.strip() else []
+        for pid_file in pids:
+            try:
+                if pid_file.isdigit():
+                    pid = int(pid_file)
+                else:
+                    with open(pid_file) as f:
+                        pid = int(f.read().strip())
+                os.kill(pid, signal.SIGHUP)
+                logger.info(f"Sent SIGHUP to OpenVPN PID {pid}.")
+            except (ValueError, FileNotFoundError, ProcessLookupError) as e:
+                logger.warning(f"Could not signal PID from {pid_file}: {e}")
+        if not pids:
+            logger.warning("No OpenVPN process found to restart; config will apply on next start.")
+    except Exception as e:
+        logger.error(f"Error restarting OpenVPN via SIGHUP: {e}")

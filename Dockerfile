@@ -6,9 +6,9 @@ ENV PYTHONUNBUFFERED=1 \
     UV_SYSTEM_PYTHON=1 \
     PATH="/root/.local/bin:${PATH}"
 
-# OpenVPN + networking tools for tunnel management
+# OpenVPN + networking tools + CA for client cert generation
 RUN apt-get update \
-    && apt-get install -y --no-install-recommends openvpn iproute2 iptables curl \
+    && apt-get install -y --no-install-recommends openvpn iproute2 iptables curl easy-rsa \
     && rm -rf /var/lib/apt/lists/*
 
 WORKDIR /app
