@@ -1,6 +1,6 @@
 #!/bash
 # OVNode OpenVPN Node Agent Installer
-# Usage: curl -sSL https://raw.githubusercontent.com/anonysec/OVNode/main/install.sh | bash
+# Usage: curl -sSL https://anonysec.github.io/OVNode/install.sh | bash
 #       curl -sSL URL | bash -s -- [--port 2083] [--api-key KEY] [--vpn-port 1194] [--docker] [--help]
 # Subcommands: update, uninstall
 
@@ -55,7 +55,7 @@ show_help() {
 	OVNode OpenVPN Node Agent Installer
 
 	Usage:
-	  curl -sSL https://raw.githubusercontent.com/anonysec/OVNode/main/install.sh | bash
+	  curl -sSL https://anonysec.github.io/OVNode/install.sh | bash
 	  curl -sSL URL | bash -s -- [--port PORT] [--api-key KEY] [--vpn-port PORT] [--docker] [--help]
 
 	Flags:
