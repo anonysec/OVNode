@@ -1,5 +1,6 @@
 import logging
 from core.logging_utils import install_log, node, TraceCtx
+from core.config import settings
 
 # Get the node-specific logger
 node_log = node()
@@ -12,7 +13,7 @@ def main():
     from core.app import api
     from uvicorn import Config, Server
     
-    config = Config(app=api, host="0.0.0.0", port=2096, reload=False, workers=1)
+    config = Config(app=api, host="0.0.0.0", port=settings.service_port, reload=False, workers=1)
     server = Server(config=config)
     
     with TraceCtx("uvicorn.run"):

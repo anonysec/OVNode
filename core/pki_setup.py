@@ -69,7 +69,7 @@ def _easyrsa(*args, timeout=120):
     except subprocess.CalledProcessError as e:
         logger.error("easyrsa %s failed (rc=%d): %s",
                      " ".join(args), e.returncode,
-                     e.stderr[-300].decode() if e.stderr else str(e))
+ e.stderr[-300:].decode() if e.stderr else str(e))
         return False
     except Exception as e:
         logger.error("easyrsa %s error: %s", " ".join(args), e)
@@ -207,7 +207,7 @@ def _ensure_client_template():
     content = f"""client
 dev tun
 proto tcp
-remote 91.107.164.180 {vpn_port}
+remote SERVER_IP {vpn_port}
 resolv-retry infinite
 nobind
 persist-key
