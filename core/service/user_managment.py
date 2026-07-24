@@ -1,21 +1,20 @@
-import json
 import glob
+import json
 import os
 import re as _re_uuid
 import subprocess
-import logging
 
-from core.logging_utils import TraceCtx
+from core.logging_utils import TraceCtx, node
+from core.pki_setup import EASYRSA_DIR, PKI_DIR
+from core.schema.all_schemas import UsersUsage
 
 # Get the node-specific logger
-from core.logging_utils import node
 node_logger = node()
 
-from core.schema.all_schemas import UsersUsage
-from core.pki_setup import EASYRSA_DIR, PKI_DIR
-
 # Inline UUID<->CN conversion (shared/ module is outside Docker build context)
-_UUID_RE = _re_uuid.compile(r"^[0-9a-fA-F]{8}-?[0-9a-fA-F]{4}-?[0-9a-fA-F]{4}-?[0-9a-fA-F]{4}-?[0-9a-fA-F]{12}$")
+_UUID_RE = _re_uuid.compile(
+    r"^[0-9a-fA-F]{8}-?[0-9a-fA-F]{4}-?[0-9a-fA-F]{4}-?[0-9a-fA-F]{4}-?[0-9a-fA-F]{12}$"
+)
 _CN_RE = _re_uuid.compile(r"^[a-fA-F0-9]{32}$")
 
 # Where per-client simultaneous-login limits are stored.
@@ -98,7 +97,12 @@ def set_user_limit(uid: str, max_logins: int) -> bool:
         os.makedirs(LIMITS_DIR, exist_ok=True)
         with open(paths["limit"], "w") as f:
             f.write(str(max_logins))
-        node_logger.info("Set login limit for uid='%s' (cn='%s') to %s", uid, paths["name"], max_logins)
+        node_logger.info(
+            "Set login limit for uid='%s' (cn='%s') to %s",
+            uid,
+            paths["name"],
+            max_logins,
+        )
         return True
     except Exception as e:
         node_logger.error("Error setting login limit for uid='%s': %s", uid, e)
@@ -164,7 +168,11 @@ def _easyrsa(*args, timeout=120):
         )
         return True
     except subprocess.CalledProcessError as e:
-        node_logger.error("easyrsa %s failed: %s", " ".join(args), e.stderr[-500:] if e.stderr else str(e))
+        node_logger.error(
+            "easyrsa %s failed: %s",
+            " ".join(args),
+            e.stderr[-500:] if e.stderr else str(e),
+        )
         return False
     except Exception as e:
         node_logger.error("easyrsa %s error: %s", " ".join(args), e)
@@ -282,7 +290,11 @@ def change_user_status(uid: str, status: str) -> bool:
         if os.path.exists(paths["ccd"]):
             try:
                 os.remove(paths["ccd"])
-                node_logger.info("Soft-disabled user (removed CCD): uid='%s' cn='%s'", uid, paths["name"])
+                node_logger.info(
+                    "Soft-disabled user (removed CCD): uid='%s' cn='%s'",
+                    uid,
+                    paths["name"],
+                )
             except Exception as e:
                 node_logger.error("Error removing CCD for uid='%s': %s", uid, e)
                 return False
@@ -293,7 +305,11 @@ def change_user_status(uid: str, status: str) -> bool:
             os.makedirs("/etc/openvpn/ccd", exist_ok=True)
             with open(paths["ccd"], "w") as f:
                 f.write("")
-            node_logger.info("Soft-enabled user (created CCD): uid='%s' cn='%s'", uid, paths["name"])
+            node_logger.info(
+                "Soft-enabled user (created CCD): uid='%s' cn='%s'",
+                uid,
+                paths["name"],
+            )
             return True
         except Exception as e:
             node_logger.error("Error creating CCD for uid='%s': %s", uid, e)
@@ -306,7 +322,8 @@ def restart_openvpn_service() -> bool:
     try:
         subprocess.run(
             ["/usr/bin/systemctl", "restart", "openvpn-server@server"],
-            check=True, timeout=30,
+            check=True,
+            timeout=30,
         )
         node_logger.info("OpenVPN service restarted successfully.")
         return True
@@ -319,10 +336,14 @@ def restart_openvpn_service() -> bool:
 
     try:
         import signal
+
         pids = glob.glob("/run/openvpn-server/*.pid")
         if not pids:
             result = subprocess.run(
-                ["pgrep", "-f", "openvpn"], capture_output=True, text=True, timeout=5,
+                ["pgrep", "-f", "openvpn"],
+                capture_output=True,
+                text=True,
+                timeout=5,
             )
             pids = result.stdout.strip().split() if result.stdout.strip() else []
         for pid_file in pids:

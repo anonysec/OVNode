@@ -1,13 +1,12 @@
 from contextlib import asynccontextmanager
 
-from fastapi import FastAPI, Request
+from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
 from core.config import settings
 from core.logger import logger
-from core.routers import core_router
 from core.pki_setup import init_pki
-from core.security import setup_security_headers
+from core.routers import core_router
 
 
 @asynccontextmanager
@@ -16,6 +15,7 @@ async def lifespan(app: FastAPI):
     logger.info("Starting OV-Node — initializing PKI...")
     init_pki()
     from core.service.multilogin import ensure_multilogin_setup
+
     ensure_multilogin_setup()
     yield
     logger.info("OV-Node shutting down.")

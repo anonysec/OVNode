@@ -1,14 +1,13 @@
+import datetime
 import os
 import shutil
 import subprocess
 import sys
 import tarfile
-import logging
 from pathlib import Path
-from typing import Optional
 
-from colorama import Fore, Style
 import pexpect
+from colorama import Fore, Style
 
 # Import our logging utilities
 from core.logging_utils import (
@@ -82,7 +81,12 @@ def download_latest_tarball(filename: str) -> None:
 
 @install_log
 def extract_repo_subdir(tarball: str, subdir: str, destination: Path) -> None:
-    install_log.event("extract.start", tarball=tarball, subdir=subdir or "<repo_root>", destination=str(destination))
+    install_log.event(
+        "extract.start",
+        tarball=tarball,
+        subdir=subdir or "<repo_root>",
+        destination=str(destination),
+    )
     destination.mkdir(parents=True, exist_ok=True)
     with tarfile.open(tarball, "r:gz") as tar:
         members = []
@@ -106,7 +110,12 @@ def extract_repo_subdir(tarball: str, subdir: str, destination: Path) -> None:
             raise RuntimeError(f"Could not find '{subdir or '<repo_root>'}' in downloaded source")
         members.sort(key=lambda m: m.name)
         tar.extractall(destination, members=members)
-    install_log.event("extract.complete", tarball=tarball, extracted=str(destination), count=len(members))
+    install_log.event(
+        "extract.complete",
+        tarball=tarball,
+        extracted=str(destination),
+        count=len(members),
+    )
 
 
 @install_log
@@ -195,16 +204,24 @@ def create_ccd() -> None:
         install_log.event("ccd.configured", ccd_dir=str(ccd_dir))
 
     setup_multilogin()
-    install_log.event("openvpn.restart.requested", method="systemctl restart openvpn-server@server.service")
+    install_log.event(
+        "openvpn.restart.requested",
+        method="systemctl restart openvpn-server@server.service",
+    )
     try:
         run_command(["systemctl", "restart", "openvpn-server@server.service"], check=False)
     except Exception:
         install_log.warning("systemctl restart failed, falling back to SIGHUP")
         import signal
-        pids = list(Path("/run/openvpn-server").glob("*.pid")) if Path("/run/openvpn-server").exists() else []
+
+        pids_dir = Path("/run/openvpn-server")
+        pids = list(pids_dir.glob("*.pid")) if pids_dir.exists() else []
         if not pids:
             result = subprocess.run(
-                ["pgrep", "-f", "openvpn"], capture_output=True, text=True, timeout=5,
+                ["pgrep", "-f", "openvpn"],
+                capture_output=True,
+                text=True,
+                timeout=5,
             )
             pids = [p for p in result.stdout.strip().split() if p] if result.stdout.strip() else []
         for pid_file in pids:
@@ -240,7 +257,7 @@ API_KEY={api_key}
 @install_log
 def install_ovnode() -> None:
     install_log.event("install.start")
-    with TraceCtx("install_ovnode") as ctx:
+    with TraceCtx("install_ovnode"):
         os.chdir(Path(__file__).resolve().parent)
 
         if Path("/etc/openvpn").exists():
@@ -276,7 +293,7 @@ def install_ovnode() -> None:
         install_log.event("create.ccd")
         create_ccd()
 
-        example_uuid = str(Path("/tmp").joinpath(f"uuid_{hash(datetime.utcnow())}"))
+        example_uuid = str(Path("/tmp").joinpath(f"uuid_{hash(datetime.datetime.utcnow())}"))
         service_port = input("OVNode service port (default 2083): ").strip() or "2083"
         if not service_port.isdigit() or not (1 <= int(service_port) <= 65535):
             raise ValueError("Service port must be between 1 and 65535")
@@ -286,11 +303,7 @@ def install_ovnode() -> None:
         install_log.event("env.written", service_port=service_port, api_key_masked="***")
 
         run_ovnode()
-        msg = (
-            f"Successfully installed,\n"
-            f"Api key= {api_key}\n"
-            f"Port= {service_port}\n"
-        )
+        msg = f"Successfully installed,\nApi key= {api_key}\nPort= {service_port}\n"
         print(msg + "Press Enter to return to the menu...")
         input(msg)
         install_log.event("install.complete", service_port=service_port)
@@ -299,7 +312,7 @@ def install_ovnode() -> None:
 @install_log
 def update_ovnode() -> None:
     install_log.event("update.start")
-    with TraceCtx("ovnode.update") as ctx:
+    with TraceCtx("ovnode.update"):
         if not INSTALL_DIR.exists():
             msg = "OVNode is not installed."
             install_log.event("update.skip", reason=msg)
@@ -347,7 +360,7 @@ def update_ovnode() -> None:
 @install_log
 def restart_ovnode() -> None:
     install_log.event("restart.start")
-    with TraceCtx("ovnode.restart") as ctx:
+    with TraceCtx("ovnode.restart"):
         if not INSTALL_DIR.exists() and not Path("/etc/openvpn").exists():
             msg = "OVNode is not installed."
             install_log.event("restart.skip", reason=msg)
@@ -369,7 +382,7 @@ def restart_ovnode() -> None:
 @install_log
 def uninstall_ovnode() -> None:
     install_log.event("uninstall.start")
-    with TraceCtx("ovnode.uninstall") as ctx:
+    with TraceCtx("ovnode.uninstall"):
         if not INSTALL_DIR.exists() and not Path("/etc/openvpn").exists():
             msg = "OVNode is not installed."
             install_log.event("uninstall.skip", reason=msg)
@@ -385,6 +398,7 @@ def uninstall_ovnode() -> None:
 
         try:
             from core.service.user_managment import deactivate_ovnode
+
             deactivate_ovnode()
 
             if Path("/root/openvpn-install.sh").exists():
@@ -414,7 +428,9 @@ def uninstall_ovnode() -> None:
             install_log.event("uninstall.complete")
             print("OVNode uninstallation completed successfully!")
             print("To install OVNode again, run:")
-            print("bash <(curl -s https://raw.githubusercontent.com/anonysec/OVNode/main/install.sh)")
+            print(
+                "bash <(curl -s https://raw.githubusercontent.com/anonysec/OVNode/main/install.sh)"
+            )
         except Exception as e:
             install_log.audit("uninstall", "ovnode", "failed", details=str(e))
             install_log.event("uninstall.failed", error=str(e))
