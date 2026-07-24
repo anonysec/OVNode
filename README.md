@@ -5,7 +5,7 @@ OpenVPN node agent for [OVManager](https://github.com/anonysec/OVManager). Manag
 ## Install
 
 ```bash
-bash <(curl -sSL https://raw.githubusercontent.com/anonysec/OVNode/main/install.sh)
+bash <(curl -sSL https://anonysec.github.io/OVNode/install.sh)
 ```
 
 With options:
