@@ -225,10 +225,11 @@ def _ensure_client_template():
     if os.path.exists(CLIENT_TEMPLATE):
         return
     vpn_port = os.environ.get("OPENVPN_PORT", "1194")
+    tunnel_addr = os.environ.get("TUNNEL_ADDRESS", "UPDATE_VIA_PANEL")
     content = f"""client
 dev tun
 proto tcp
-remote SERVER_IP {vpn_port}
+remote {tunnel_addr} {vpn_port}
 resolv-retry infinite
 nobind
 persist-key
