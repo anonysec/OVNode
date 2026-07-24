@@ -79,9 +79,7 @@ def _fix_runtime_permissions() -> None:
         shutil.chown(ACTIVE_DIR, user=user, group=group)
         shutil.chown(LOCK_FILE, user=user, group=group)
     except Exception as e:
-        logger.warning(
-            "multilogin: failed to chown registry to %s:%s: %s", user, group, e
-        )
+        logger.warning("multilogin: failed to chown registry to %s:%s: %s", user, group, e)
     try:
         os.chmod(ACTIVE_DIR, 0o755)
         os.chmod(LOCK_FILE, 0o664)
@@ -103,8 +101,8 @@ def _install_scripts() -> bool:
         if not os.path.exists(src):
             logger.error("multilogin: source script missing: %s", src)
             continue
-        new = open(src, "r").read()
-        old = open(dst, "r").read() if os.path.exists(dst) else None
+        new = open(src).read()
+        old = open(dst).read() if os.path.exists(dst) else None
         if new != old:
             shutil.copyfile(src, dst)
             changed = True
@@ -118,7 +116,7 @@ def _patch_server_conf() -> bool:
         logger.warning("multilogin: %s not found; skipping conf patch", SERVER_CONF)
         return False
 
-    with open(SERVER_CONF, "r") as f:
+    with open(SERVER_CONF) as f:
         content = f.read()
 
     lines = content.splitlines()
@@ -136,9 +134,7 @@ def _patch_server_conf() -> bool:
     # produced by status-version 2/3. The default (version 1) uses a different
     # format with no CLIENT_LIST prefix, which would silently break both the
     # connection limit and traffic accounting. Ensure version 3 is set.
-    has_status_version = any(
-        ln.strip().startswith("status-version") for ln in lines
-    )
+    has_status_version = any(ln.strip().startswith("status-version") for ln in lines)
     if not has_status_version:
         to_add.append("status-version 2")
 
@@ -183,7 +179,8 @@ def ensure_multilogin_setup() -> None:
             # active VPN users.
             _restart_openvpn()
         if scripts_changed or conf_changed:
-            logger.info("multilogin: setup applied (scripts=%s, conf=%s)",
-                        scripts_changed, conf_changed)
+            logger.info(
+                "multilogin: setup applied (scripts=%s, conf=%s)", scripts_changed, conf_changed
+            )
     except Exception as e:
         logger.error("multilogin: setup error: %s", e)

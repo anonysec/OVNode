@@ -1,19 +1,22 @@
-import uvicorn
-from core.config import settings
-from core.logger import logger
+import logging
+from core.logging_utils import install_log, node, TraceCtx
+
+# Get the node-specific logger
+node_log = node()
 
 
 def main():
-    logger.info("Starting OV-Node...")
+    node_log.info("Starting OV-Node...")
     # reload=True is a development-only feature (extra watcher process + constant
     # filesystem polling). Disabled to keep the node lightweight.
-    uvicorn.run(
-        "core.app:api",
-        host="0.0.0.0",
-        port=settings.service_port,
-        reload=False,
-        workers=1,
-    )
+    from core.app import api
+    from uvicorn import Config, Server
+    
+    config = Config(app=api, host="0.0.0.0", port=2096, reload=False, workers=1)
+    server = Server(config=config)
+    
+    with TraceCtx("uvicorn.run"):
+        server.run()
 
 
 if __name__ == "__main__":

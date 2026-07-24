@@ -8,7 +8,6 @@ LOG_FILE = os.path.join(os.path.dirname(BASE_DIR), "data", "app.log")
 
 os.makedirs(os.path.dirname(LOG_FILE), exist_ok=True)
 
-import logging
 
 level_map = {
     "DEBUG": logging.DEBUG,

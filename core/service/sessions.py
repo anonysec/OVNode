@@ -7,9 +7,7 @@ import os
 import re
 import socket
 import subprocess
-import time
 from collections import Counter
-from pathlib import Path
 from typing import Any
 
 from core.logger import logger
@@ -111,13 +109,9 @@ def _journal_lines(hours: int) -> list[str]:
 def user_diagnostics(common_name: str | None = None, hours: int = 8) -> dict[str, Any]:
     live = _read_status_sessions()
     active = _read_active_files()
-    live_keys = {
-        (s["common_name"], s["trusted_ip"], s["trusted_port"])
-        for s in live
-    }
+    live_keys = {(s["common_name"], s["trusted_ip"], s["trusted_port"]) for s in live}
     stale = [
-        a for a in active
-        if (a["common_name"], a["trusted_ip"], a["trusted_port"]) not in live_keys
+        a for a in active if (a["common_name"], a["trusted_ip"], a["trusted_port"]) not in live_keys
     ]
 
     cn_filter = common_name or None
@@ -193,8 +187,7 @@ def disconnect_user(common_name: str) -> dict[str, Any]:
 
     removed_markers = []
     live_keys = {
-        (s["common_name"], s["trusted_ip"], s["trusted_port"])
-        for s in _read_status_sessions()
+        (s["common_name"], s["trusted_ip"], s["trusted_port"]) for s in _read_status_sessions()
     }
     for marker in _read_active_files():
         if marker["common_name"] != common_name:

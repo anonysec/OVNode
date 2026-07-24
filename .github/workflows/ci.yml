@@ -28,8 +28,8 @@ jobs:
           python-version: "3.11"
       - run: pip install uv ruff
       - run: uv sync
-      - run: ruff check core/ --output-format=github || true
-      - run: ruff format --check core/ || true
+      - run: ruff check core/ installer.py --output-format=github
+      - run: ruff format --check core/ installer.py
 
   build:
     needs: [test, lint]
