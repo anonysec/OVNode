@@ -1,19 +1,45 @@
-<h1 align="center">OV-Node</h1>
+# OVNode
 
-**ovpn backend manager for [OVManager (panel)](https://github.com/anonysec/OVManager)**
+OpenVPN node agent for [OVManager](https://github.com/anonysec/OVManager). Manages OpenVPN server, PKI, user configs, and multi-login enforcement.
 
----
-
-## Features
-- Automatic installation and configuration
-- Runs as a systemd service
-- Compatible with OVManager (panel)
----
-
-## Installation
-
-Install on a fresh Ubuntu/Debian system with a single command:
+## Install
 
 ```bash
-See [OVManager repo](https://github.com/anonysec/OVManager) for deployment.
+bash <(curl -sSL https://raw.githubusercontent.com/anonysec/OVNode/main/install.sh)
 ```
+
+With options:
+
+```bash
+bash <(curl -sSL URL) -- --port 2083 --api-key YOUR_KEY --vpn-port 1194
+```
+
+## Update / Uninstall
+
+```bash
+# Update
+bash <(curl -sSL URL) update
+
+# Uninstall
+bash <(curl -sSL URL) uninstall
+```
+
+## Docker
+
+```bash
+bash <(curl -sSL URL) --docker
+```
+
+## Manual Install
+
+```bash
+git clone https://github.com/anonysec/OVNode.git /opt/ovnode
+cd /opt/ovnode
+cp .env.example .env  # edit with your settings
+pip install uv && uv sync
+uv run main.py
+```
+
+## License
+
+MIT
