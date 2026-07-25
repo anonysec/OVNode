@@ -516,17 +516,25 @@ interactive_setup() {
     case "${tls_choice:-5}" in
         1)
             TLS_METHOD="letsencrypt"
-            if [[ -z "$TLS_DOMAIN" ]]; then
+            while [[ -z "$TLS_DOMAIN" ]]; do
                 if [[ -t 0 ]]; then
                     printf "  ${WH}Domain${NC} [] : "
                     read -r TLS_DOMAIN
+                else
+                    die "Domain is required for Let's Encrypt (use --tls-domain DOMAIN)"
                 fi
-                [[ -z "$TLS_DOMAIN" ]] && die "Domain is required for Let's Encrypt"
-            fi
+            done
             ;;
         2)
             TLS_METHOD="letsencrypt-ip"
-            [[ -z "$TLS_DOMAIN" ]] && TLS_DOMAIN=$(hostname -I | awk '{print $1}')
+            if [[ -z "$TLS_DOMAIN" ]]; then
+                local real_ip=$(hostname -I | awk '{print $1}')
+                if [[ -t 0 ]]; then
+                    printf "  ${WH}IP${NC} [${GR}%s${NC}] : " "$real_ip"
+                    read -r TLS_DOMAIN
+                fi
+                [[ -z "$TLS_DOMAIN" ]] && TLS_DOMAIN="$real_ip"
+            fi
             ;;
         3) TLS_METHOD="selfsigned" ;;
         4) TLS_METHOD="custom"; prompt_val TLS_KEY "TLS key path" ""; prompt_val TLS_CERT "TLS cert path" "" ;;
