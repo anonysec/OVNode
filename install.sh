@@ -66,20 +66,16 @@ step_dim()  { echo -e "  ${DIM}$1${R}"; }
 box_line() { echo -e "  ${CYAN}│${R} $1"; }
 
 banner() {
+    [[ -z "$TERM" || "$TERM" == "dumb" ]] && export TERM=xterm-256color
     clear
-    printf "\n"
-    printf "  ${BG_BLUE}${WHITE}${BOLD}                                                              ${R}\n"
-    printf "  ${BG_BLUE}${WHITE}${BOLD}    ██████╗ ███████╗██╗   ██╗██╗  ███████╗██╗   ██╗███████╗  ${R}\n"
-    printf "  ${BG_BLUE}${WHITE}${BOLD}    ██╔══██╗██╔════╝██║   ██║██║  ██╔════╝╚██╗ ██╔╝██╔════╝  ${R}\n"
-    printf "  ${BG_BLUE}${WHITE}${BOLD}    ██║  ██║█████╗  ██║   ██║██║  █████╗   ╚████╔╝ ███████╗  ${R}\n"
-    printf "  ${BG_BLUE}${WHITE}${BOLD}    ██║  ██║██╔══╝  ╚██╗ ██╔╝██║  ██╔══╝    ╚██╔╝  ╚════██║  ${R}\n"
-    printf "  ${BG_BLUE}${WHITE}${BOLD}    ██████╔╝███████╗ ╚████╔╝ ██║  ███████╗   ██║   ███████║  ${R}\n"
-    printf "  ${BG_BLUE}${WHITE}${BOLD}    ╚═════╝ ╚══════╝  ╚═══╝  ╚═╝  ╚══════╝   ╚═╝   ╚══════╝  ${R}\n"
-    printf "  ${BG_BLUE}${WHITE}${BOLD}                                                              ${R}\n"
-    printf "\n"
-    printf "  ${DIM}OpenVPN Node Agent Installer${R}  ${DIM}v2.0${R}\n"
-    printf "  ${DIM}https://github.com/${REPO}${R}\n"
-    printf "\n"
+    echo -e ""
+    echo -e "  ${BLUE}+==============================================+${R}"
+    echo -e "  ${BLUE}|${R}                                              ${BLUE}|${R}"
+    echo -e "  ${BLUE}|${R}   ${BOLD}${WHITE}O  V  N  O  D  E${R}                          ${BLUE}|${R}"
+    echo -e "  ${BLUE}|${R}   ${DIM}OpenVPN Node Agent  |  v2.0${R}               ${BLUE}|${R}"
+    echo -e "  ${BLUE}|${R}                                              ${BLUE}|${R}"
+    echo -e "  ${BLUE}+==============================================+${R}"
+    echo -e ""
 }
 
 divider() {
