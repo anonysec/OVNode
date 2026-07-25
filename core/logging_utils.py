@@ -2,7 +2,7 @@
 
 import logging
 import os
-from datetime import datetime
+from datetime import UTC, datetime
 from pathlib import Path
 
 # ============================================================
@@ -98,12 +98,12 @@ class TraceCtx:
         self.logger = logger_ or logging.getLogger()
 
     def __enter__(self):
-        self._start = datetime.utcnow()
+        self._start = datetime.now(UTC)
         self.logger.debug(">>> ENTER %s", self.label)
         return self
 
     def __exit__(self, exc_type, exc_val, exc_tb):
-        elapsed = (datetime.utcnow() - self._start).total_seconds()
+        elapsed = (datetime.now(UTC) - self._start).total_seconds()
         if exc_type:
             self.logger.error(
                 "!!! EXIT %s — %s: %s (%.2fs)",
@@ -141,7 +141,7 @@ def event(msg, **extra):
 
 def audit(action, target, status, details="", uid=None, **kwargs):
     payload = {
-        "timestamp": datetime.utcnow().isoformat() + "Z",
+        "timestamp": datetime.now(UTC).isoformat(),
         "action": action,
         "target": target,
         "status": status,

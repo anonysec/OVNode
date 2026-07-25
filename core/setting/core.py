@@ -79,7 +79,8 @@ def change_config(request: SetSettingsModel) -> bool:
 
             ensure_multilogin_setup()
         except Exception as e:
-            logger.error(f"Failed to re-apply multi-login after config change: {e}")
+            logger.error("Failed to re-apply multi-login after config change: %s", e)
+
 
         change_msg = (
             f"OpenVPN port changed to {request.ovpn_port}, "
@@ -89,7 +90,7 @@ def change_config(request: SetSettingsModel) -> bool:
         logger.info(change_msg)
         return True
     except Exception as e:
-        logger.error(f"Error changing OpenVPN settings: {e}")
+        logger.error("Error changing OpenVPN settings: %s", e)
         return False
 
 
@@ -154,10 +155,10 @@ def restart_openvpn() -> None:
                     with open(pid_file) as f:
                         pid = int(f.read().strip())
                 os.kill(pid, signal.SIGHUP)
-                logger.info(f"Sent SIGHUP to OpenVPN PID {pid}.")
+                logger.info("Sent SIGHUP to OpenVPN PID %s.", pid)
             except (ValueError, FileNotFoundError, ProcessLookupError) as e:
-                logger.warning(f"Could not signal PID from {pid_file}: {e}")
+                logger.warning("Could not signal PID from %s: %s", pid_file, e)
         if not pids:
             logger.warning("No OpenVPN process found to restart; config will apply on next start.")
     except Exception as e:
-        logger.error(f"Error restarting OpenVPN via SIGHUP: {e}")
+        logger.error("Error restarting OpenVPN via SIGHUP: %s", e)
