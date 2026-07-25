@@ -1,3 +1,4 @@
+import os
 from contextlib import asynccontextmanager
 
 from fastapi import FastAPI
@@ -30,8 +31,8 @@ api = FastAPI(
 # Apply security headers middleware
 api.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],
-    allow_credentials=True,
+    allow_origins=[os.getenv("PANEL_ORIGINS", "*")],
+    allow_credentials=os.getenv("PANEL_ORIGINS", "") != "*",
     allow_methods=["*"],
     allow_headers=["*"],
 )

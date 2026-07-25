@@ -11,6 +11,7 @@ from collections import Counter
 from typing import Any
 
 from core.logger import logger
+from core.validation import _CLIENT_NAME_RE
 
 STATUS_FILE = "/var/log/openvpn-status.log"
 ACTIVE_DIR = "/etc/openvpn/ovpanel-active"
@@ -164,6 +165,10 @@ def _management_available() -> bool:
 
 
 def _management_kill(common_name: str) -> dict[str, Any]:
+    # Validate CN against allowed character set before sending to management socket.
+    # Unsanitized CNs could inject shell/protocol commands.
+    if not _CLIENT_NAME_RE.match(common_name):
+        return {"available": True, "ok": False, "error": "invalid cn format"}
     try:
         with socket.create_connection((MANAGEMENT_HOST, MANAGEMENT_PORT), timeout=3.0) as s:
             banner = s.recv(1024).decode(errors="ignore")
