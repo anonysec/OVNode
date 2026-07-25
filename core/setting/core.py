@@ -81,7 +81,6 @@ def change_config(request: SetSettingsModel) -> bool:
         except Exception as e:
             logger.error("Failed to re-apply multi-login after config change: %s", e)
 
-
         change_msg = (
             f"OpenVPN port changed to {request.ovpn_port}, "
             f"protocol to {proto}, "
