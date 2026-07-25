@@ -15,7 +15,6 @@ node_logger = node()
 _UUID_RE = _re_uuid.compile(
     r"^[0-9a-fA-F]{8}-?[0-9a-fA-F]{4}-?[0-9a-fA-F]{4}-?[0-9a-fA-F]{4}-?[0-9a-fA-F]{12}$"
 )
-_CN_RE = _re_uuid.compile(r"^[a-fA-F0-9]{32}$")
 
 # Where per-client simultaneous-login limits are stored.
 # Kept separate from the CCD dir because CCD files are wiped on

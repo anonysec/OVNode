@@ -10,8 +10,8 @@ class Settings(BaseSettings):
     doc: bool = False
     # Built-in TLS — when both are set, uvicorn serves HTTPS directly.
     # Certs live under /etc/letsencrypt/<domain>/ or /etc/ssl/self-signed/.
-    ssl_certfile: str = ""
-    ssl_keyfile: str = ""
+    ssl_certfile: str | None = None
+    ssl_keyfile: str | None = None
     # Installer metadata (ignored by the app, used by install.sh for state)
     node_name: str = "node-1"
     data_dir: str = ""
