@@ -12,9 +12,13 @@ class Settings(BaseSettings):
     # Certs live under /etc/letsencrypt/<domain>/ or /etc/ssl/self-signed/.
     ssl_certfile: str = ""
     ssl_keyfile: str = ""
+    # Installer metadata (ignored by the app, used by install.sh for state)
+    node_name: str = "node-1"
+    data_dir: str = ""
+    openvpn_port: int = 1194
+    tls_method: str = "none"
 
-    class Config:
-        env_file = os.path.join(os.path.dirname(__file__), "../.env")
+    model_config = {"env_file": os.path.join(os.path.dirname(__file__), "../.env")}
 
 
 settings = Settings()
