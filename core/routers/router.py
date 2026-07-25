@@ -40,7 +40,7 @@ async def get_status(
             return ResponseModel(success=False, msg="Failed to change settings")
 
     status = {"status": "running", "version": __version__}
-    cpu_usage = psutil.cpu_percent()
+    cpu_usage = psutil.cpu_percent(interval=None)
     memory_info = psutil.virtual_memory()
     status.update(
         {
