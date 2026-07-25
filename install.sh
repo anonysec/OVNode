@@ -486,6 +486,44 @@ do_uninstall() {
 # ──────────────────────────────────────────────────────
 #  M A I N
 # ──────────────────────────────────────────────────────
+interactive_setup() {
+    local api_default
+    api_default=$(python3 -c 'import uuid;print(uuid.uuid4().hex)' 2>/dev/null || openssl rand -hex 16)
+    prompt_val NODE_NAME    "Node name"     "node-1"
+    prompt_val PORT         "Service port"  "$(find_free_port "$DEFAULT_PORT")"
+    prompt_val VPN_PORT     "OpenVPN port"  "$(find_free_vpn_port "$DEFAULT_VPN")"
+    prompt_val API_KEY      "API key"       "$api_default"
+
+    sep
+    line "  TLS:"
+    line "  ${WH}1${NC})  Let's Encrypt (domain)"
+    line "  ${WH}2${NC})  Let's Encrypt (IP)"
+    line "  ${WH}3${NC})  Self-signed cert"
+    line "  ${WH}4${NC})  Custom cert path"
+    line "  ${WH}5${NC})  None (HTTP)"
+    if [[ -t 0 ]]; then
+        printf "  Select [${GR}5${NC}] : "
+        read -r tls_choice
+    else
+        tls_choice=5
+    fi
+    case "${tls_choice:-5}" in
+        1) TLS_METHOD="letsencrypt"; prompt_val TLS_DOMAIN "Domain" "" ;;
+        2) TLS_METHOD="letsencrypt-ip"; TLS_DOMAIN=$(hostname -I | awk '{print $1}') ;;
+        3) TLS_METHOD="selfsigned" ;;
+        4) TLS_METHOD="custom"; prompt_val TLS_KEY "TLS key path" ""; prompt_val TLS_CERT "TLS cert path" "" ;;
+        *) TLS_METHOD="none" ;;
+    esac
+
+    sep
+    field "Node name"     "$NODE_NAME"
+    field "Service port"  "$PORT"
+    field "OpenVPN port"  "$VPN_PORT"
+    field "Data dir"      "$DATA_BASE/$NODE_NAME"
+    field "TLS method"    "$TLS_METHOD"
+    sep
+}
+
 main() {
     parse_args "$@"
     clear
