@@ -304,13 +304,19 @@ do_install() {
     # Ensure data directory base exists
     mkdir -p "$DATA_BASE"
 
+    local server_ip=$(hostname -I | awk '{print $1}')
     sep
-    info "Node name:           ${NODE_NAME}"
-    field "Service port"   "$PORT"
-    field "OpenVPN port"   "$VPN_PORT"
-    field "TLS method"     "$TLS_METHOD"
+    field "Server IP"     "$server_ip"
+    field "Node name"     "$NODE_NAME"
+    field "Service port"  "$PORT"
+    field "OpenVPN port"  "$VPN_PORT"
+    field "TLS method"    "$TLS_METHOD"
     if [[ "$TLS_METHOD" =~ ^letsencrypt ]]; then
-        field "TLS domain"     "$TLS_DOMAIN"
+        if [[ "$TLS_METHOD" == "letsencrypt-ip" ]]; then
+            field "TLS IP"     "$TLS_DOMAIN"
+        else
+            field "TLS domain" "$TLS_DOMAIN"
+        fi
     elif [[ "$TLS_METHOD" == "custom" ]]; then
         field "TLS key path"   "$TLS_KEY"
         field "TLS cert path"  "$TLS_CERT"
@@ -508,18 +514,19 @@ interactive_setup() {
         tls_choice=5
     fi
     case "${tls_choice:-5}" in
-        1|2)
-            if [[ "$tls_choice" == "2" ]]; then
-                TLS_METHOD="letsencrypt-ip"
-            else
-                TLS_METHOD="letsencrypt"
+        1)
+            TLS_METHOD="letsencrypt"
+            if [[ -z "$TLS_DOMAIN" ]]; then
+                if [[ -t 0 ]]; then
+                    printf "  ${WH}Domain${NC} [] : "
+                    read -r TLS_DOMAIN
+                fi
+                [[ -z "$TLS_DOMAIN" ]] && die "Domain is required for Let's Encrypt"
             fi
-            local ip_hint=$(hostname -I | awk '{print $1}')
-            if [[ -t 0 ]]; then
-                printf "  ${WH}Domain/IP${NC} [${GR}%s${NC}] : " "$ip_hint"
-                read -r TLS_DOMAIN
-            fi
-            [[ -z "$TLS_DOMAIN" ]] && TLS_DOMAIN="$ip_hint"
+            ;;
+        2)
+            TLS_METHOD="letsencrypt-ip"
+            [[ -z "$TLS_DOMAIN" ]] && TLS_DOMAIN=$(hostname -I | awk '{print $1}')
             ;;
         3) TLS_METHOD="selfsigned" ;;
         4) TLS_METHOD="custom"; prompt_val TLS_KEY "TLS key path" ""; prompt_val TLS_CERT "TLS cert path" "" ;;
