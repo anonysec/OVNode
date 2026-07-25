@@ -1,456 +1,376 @@
-#!/bash
-# OVNode OpenVPN Node Agent Installer
-# Usage: curl -sSL https://anonysec.github.io/OVNode/install.sh | bash
-#       curl -sSL URL | bash -s -- [--port 2083] [--api-key KEY] [--vpn-port 1194] [--docker] [--help]
-# Subcommands: update, uninstall
+#!/bin/bash
+# OVNode OpenVPN Node Agent Installer — TUI Edition
+# Usage: bash <(curl -Ls https://anonysec.github.io/OVNode/install.sh)
+#        curl -Ls URL | bash -s -- --port 2083 --api-key KEY
 
-set -euo pipefail
+set -uo pipefail
 
-# ---------- Colors ----------
-readonly GREEN="$(tput setaf 2)"
-readonly RED="$(tput setaf 1)"
-readonly YELLOW="$(tput setaf 3)"
-readonly BLUE="$(tput setaf 4)"
-readonly NC="$(tput sgr0)"
-
-log_info()    { echo -e "${BLUE}[*]${NC} $*"; }
-log_ok()      { echo -e "${GREEN}[OK]${NC} $*"; }
-log_warn()    { echo -e "${YELLOW}[WARN]${NC} $*"; }
-log_error()   { echo -e "${RED}[ERROR]${NC} $*"; }
-
-# ---------- Defaults ----------
-readonly REPO_OWNER="anonysec"
-readonly REPO_NAME="OVNode"
-readonly DEFAULT_SERVICE_PORT="2083"
-readonly DEFAULT_VPN_PORT="1194"
+# ══════════════════════════════════════════════════
+#  C O N F I G
+# ══════════════════════════════════════════════════
+REPO="anonysec/OVNode"
 INSTALL_DIR="/opt/ovnode"
-ENV_FILE="${INSTALL_DIR}/.env"
-ENV_EXAMPLE_FILE="${INSTALL_DIR}/.env.example"
+DEFAULT_PORT=2083
+DEFAULT_VPN_PORT=1194
 SYSTEMD_SERVICE="ovnode.service"
 
-# ---------- State ----------
-USE_DOCKER=false
-DOCKER_COMPOSE_FILE="${INSTALL_DIR}/docker-compose.yml"
+# ══════════════════════════════════════════════════
+#  C O L O R S
+# ══════════════════════════════════════════════════
+C='\033'
+R="${C}[0m"
+BOLD="${C}[1m"
+DIM="${C}[2m"
+RED="${C}[31m"
+GREEN="${C}[32m"
+YELLOW="${C}[33m"
+BLUE="${C}[34m"
+CYAN="${C}[36m"
+WHITE="${C}[97m"
+BG_BLUE="${C}[44m"
+BG_GREEN="${C}[42m"
+BG_RED="${C}[41m"
 
-# ---------- Parse Arguments ----------
-parse_args() {
-  PORT="${DEFAULT_SERVICE_PORT}"
-  API_KEY=""
-  VPN_PORT="${DEFAULT_VPN_PORT}"
+# ══════════════════════════════════════════════════
+#  H E L P E R S
+# ══════════════════════════════════════════════════
+clear_line() { printf "\r\033[K"; }
+spin_chars='⠋⠙⠹⠸⠼⠴⠦⠧⠇⠏'
 
-  while [[ $# -gt 0 ]]; do
-    case "$1" in
-      --port)     PORT="$2"; shift 2 ;;
-      --api-key)  API_KEY="$2"; shift 2 ;;
-      --vpn-port) VPN_PORT="$2"; shift 2 ;;
-      --docker)   USE_DOCKER=true; shift ;;
-      --help)     show_help; exit 0 ;;
-      *)          log_error "Unknown argument: $1"; show_help; exit 1 ;;
-    esac
-  done
+spinner() {
+    local msg="$1" pid=$2 logfile="${3:-}"
+    local i=0
+    while kill -0 "$pid" 2>/dev/null; do
+        printf "\r  ${CYAN}%s${R} %s" "${spin_chars:$((i%10)):1}" "$msg"
+        sleep 0.1
+        ((i++))
+    done
+    wait "$pid" 2>/dev/null
+    local rc=$?
+    clear_line
+    if [[ $rc -eq 0 ]]; then
+        printf "  ${GREEN}✓${R} %s\n" "$msg"
+    else
+        printf "  ${RED}✗${R} %s (exit code: %d)\n" "$msg" "$rc"
+        return 1
+    fi
+    return 0
 }
 
+step_ok()   { echo -e "  ${GREEN}✓${R} $1"; }
+step_warn() { echo -e "  ${YELLOW}⚠${R} $1"; }
+step_fail() { echo -e "  ${RED}✗${R} $1"; }
+step_info() { echo -e "  ${BLUE}●${R} $1"; }
+step_dim()  { echo -e "  ${DIM}$1${R}"; }
+
+box_line() { echo -e "  ${CYAN}│${R} $1"; }
+
+banner() {
+    clear
+    printf "\n"
+    printf "  ${BG_BLUE}${WHITE}${BOLD}                                                              ${R}\n"
+    printf "  ${BG_BLUE}${WHITE}${BOLD}    ██████╗ ███████╗██╗   ██╗██╗  ███████╗██╗   ██╗███████╗  ${R}\n"
+    printf "  ${BG_BLUE}${WHITE}${BOLD}    ██╔══██╗██╔════╝██║   ██║██║  ██╔════╝╚██╗ ██╔╝██╔════╝  ${R}\n"
+    printf "  ${BG_BLUE}${WHITE}${BOLD}    ██║  ██║█████╗  ██║   ██║██║  █████╗   ╚████╔╝ ███████╗  ${R}\n"
+    printf "  ${BG_BLUE}${WHITE}${BOLD}    ██║  ██║██╔══╝  ╚██╗ ██╔╝██║  ██╔══╝    ╚██╔╝  ╚════██║  ${R}\n"
+    printf "  ${BG_BLUE}${WHITE}${BOLD}    ██████╔╝███████╗ ╚████╔╝ ██║  ███████╗   ██║   ███████║  ${R}\n"
+    printf "  ${BG_BLUE}${WHITE}${BOLD}    ╚═════╝ ╚══════╝  ╚═══╝  ╚═╝  ╚══════╝   ╚═╝   ╚══════╝  ${R}\n"
+    printf "  ${BG_BLUE}${WHITE}${BOLD}                                                              ${R}\n"
+    printf "\n"
+    printf "  ${DIM}OpenVPN Node Agent Installer${R}  ${DIM}v2.0${R}\n"
+    printf "  ${DIM}https://github.com/${REPO}${R}\n"
+    printf "\n"
+}
+
+divider() {
+    printf "  ${DIM}──────────────────────────────────────────────────────────────${R}\n"
+}
+
+header() {
+    printf "\n  ${BOLD}${BLUE}┌──────────────────────────────────────┐${R}\n"
+    printf "  ${BOLD}${BLUE}│${R}  ${BOLD}${WHITE}%-36s${R}  ${BOLD}${BLUE}│${R}\n" "$1"
+    printf "  ${BOLD}${BLUE}└──────────────────────────────────────┘${R}\n\n"
+}
+
+# ══════════════════════════════════════════════════
+#  E R R O R   H A N D L I N G
+# ══════════════════════════════════════════════════
+die() {
+    printf "\n  ${BG_RED}${WHITE}${BOLD} ERROR ${R} %s\n\n" "$1" >&2
+    exit 1
+}
+
+trap 'die "Installation interrupted by user"' INT TERM
+
+# ══════════════════════════════════════════════════
+#  H E L P
+# ══════════════════════════════════════════════════
 show_help() {
-  cat <<-HEREDOC
-	OVNode OpenVPN Node Agent Installer
+    cat << 'EOF'
 
-	Usage:
-	  curl -sSL https://anonysec.github.io/OVNode/install.sh | bash
-	  curl -sSL URL | bash -s -- [--port PORT] [--api-key KEY] [--vpn-port PORT] [--docker] [--help]
+  OVNode OpenVPN Node Agent Installer
 
-	Flags:
-	  --port PORT       Service port (default: 2083)
-	  --api-key KEY     API key (auto-generated if empty and not provided)
-	  --vpn-port PORT   OpenVPN port (default: 1194)
-	  --docker          Use docker-compose instead of native install
-	  --help            Show this help message
+  Usage:
+    bash <(curl -Ls https://anonysec.github.io/OVNode/install.sh)
+    curl -Ls URL | bash -s -- --port 2083 --api-key KEY
 
-	Environment Variables:
-	  SERVICE_PORT      Same as --port
-	  API_KEY           Same as --api-key
-	  OPENVPN_PORT      Same as --vpn-port
-HEREDOC
+  Flags:
+    --port PORT         Service port (default: 2083)
+    --api-key KEY       API key for panel connection (auto-generated if empty)
+    --vpn-port PORT     OpenVPN port (default: 1194)
+    --uninstall         Remove OVNode
+    --help              Show this help
+
+EOF
+    exit 0
 }
 
-# ---------- Error Handling ----------
-cleanup_on_error() {
-  log_error "Installation failed at line $1. Attempting cleanup..."
-  uninstall_cleanup_only
-  exit 1
-}
-trap 'cleanup_on_error $LINENO' ERR
+# ══════════════════════════════════════════════════
+#  P A R S E   A R G S
+# ══════════════════════════════════════════════════
+PORT="" API_KEY="" VPN_PORT="" UNINSTALL=0
 
-# ---------- Utilities ----------
-command_exists() { command -v "$1" >/dev/null 2>&1; }
+parse_args() {
+    while [[ $# -gt 0 ]]; do
+        case "$1" in
+            --port)      PORT="$2"; shift 2 ;;
+            --api-key)   API_KEY="$2"; shift 2 ;;
+            --vpn-port)  VPN_PORT="$2"; shift 2 ;;
+            --uninstall) UNINSTALL=1; shift ;;
+            --help|-h)   show_help ;;
+            *)           die "Unknown option: $1" ;;
+        esac
+    done
+}
+
+# ══════════════════════════════════════════════════
+#  I N T E R A C T I V E   M E N U
+# ══════════════════════════════════════════════════
+prompt_value() {
+    local var_name="$1" label="$2" default="$3" hidden="${4:-}"
+    local val=""
+    if [[ -t 0 ]]; then
+        if [[ "$hidden" == "hidden" ]]; then
+            printf "  ${WHITE}%-18s${R} [${DIM}%s${R}]: " "$label" "$default"
+            read -rs val
+            printf "\n"
+        else
+            printf "  ${WHITE}%-18s${R} [${DIM}%s${R}]: " "$label" "$default"
+            read -r val
+        fi
+    fi
+    [[ -z "$val" ]] && val="$default"
+    eval "$var_name='$val'"
+}
+
+interactive_setup() {
+    header "Configuration"
+
+    prompt_value PORT "Service port" "$DEFAULT_PORT"
+    prompt_value API_KEY "API key" "$(python3 -c 'import uuid;print(uuid.uuid4().hex)' 2>/dev/null || openssl rand -hex 16)"
+    prompt_value VPN_PORT "OpenVPN port" "$DEFAULT_VPN_PORT"
+
+    divider
+    printf "\n  ${BOLD}Summary:${R}\n"
+    box_line "Service port: ${CYAN}${PORT}${R}"
+    box_line "API key:      ${CYAN}${API_KEY}${R}"
+    box_line "VPN port:     ${CYAN}${VPN_PORT}${R}"
+    box_line "Install dir:  ${CYAN}${INSTALL_DIR}${R}"
+    printf "\n"
+
+    if [[ -t 0 ]]; then
+        printf "  ${BOLD}Proceed with installation?${R} [${GREEN}Y${R}/n]: "
+        read -r confirm
+        if [[ "$confirm" =~ ^[Nn]$ ]]; then
+            die "Installation cancelled."
+        fi
+    fi
+}
+
+# ══════════════════════════════════════════════════
+#  D E P S
+# ══════════════════════════════════════════════════
+check_root() {
+    [[ "$EUID" -ne 0 ]] && die "Must run as root. Use: sudo bash <(curl -Ls URL)"
+}
 
 check_deps() {
-  local missing=()
-  for cmd in curl tar systemctl; do
-    command_exists "$cmd" || missing+=("$cmd")
-  done
-  if [[ ${#missing[@]} -gt 0 ]]; then
-    log_warn "Missing required commands: ${missing[*]}"
-    log_info "Attempting to install missing dependencies via apt..."
-    apt-get update -qq && apt-get install -y -qq curl tar || {
-      log_error "Failed to install required packages. Please install manually: curl tar systemctl"
-      exit 1
-    }
-  fi
-}
-
-# ---------- Docker Detection ----------
-detect_docker_compose() {
-  : # Only use Docker when --docker flag is explicitly passed
-}
-
-# ---------- OpenVPN / easy-rsa ----------
-ensure_openvpn() {
-  if command_exists openvpn && command_exists easyrsa; then
-    log_info "OpenVPN and easy-rsa already installed."
-    return 0
-  fi
-  log_info "Installing OpenVPN and easy-rsa..."
-  if command_exists apt-get; then
-    apt-get update -qq && apt-get install -y -qq openvpn easy-rsa || {
-      log_error "Failed to install OpenVPN and easy-rsa via apt."
-      return 1
-    }
-  elif command_exists yum; then
-    yum install -y openvpn easy-rsa || {
-      log_error "Failed to install OpenVPN and easy-rsa via yum."
-      return 1
-    }
-  else
-    log_error "Could not find package manager to install OpenVPN and easy-rsa."
-    return 1
-  fi
-  log_ok "OpenVPN and easy-rsa installed successfully."
-}
-
-# ---------- Git or Tarball ----------
-clone_or_download() {
-  local repo_url="https://github.com/${REPO_OWNER}/${REPO_NAME}.git"
-  local tarball_url="https://github.com/${REPO_OWNER}/${REPO_NAME}/archive/refs/heads/main.tar.gz"
-
-  if command_exists git; then
-    log_info "Cloning repository..."
-    if [[ -d "${INSTALL_DIR}/.git" ]]; then
-      cd "$INSTALL_DIR" && git pull --ff-only origin main 2>/dev/null || {
-        log_warn "Git pull failed, re-cloning..."
-        rm -rf "$INSTALL_DIR"
-        git clone --depth 1 "$repo_url" "$INSTALL_DIR"
-      }
+    local missing=()
+    for cmd in curl tar openssl git; do
+        command -v "$cmd" >/dev/null 2>&1 || missing+=("$cmd")
+    done
+    if [[ ${#missing[@]} -gt 0 ]]; then
+        step_warn "Installing missing deps: ${missing[*]}"
+        apt-get update -qq >/dev/null 2>&1 && apt-get install -y -qq "${missing[@]}" >/dev/null 2>&1 \
+            || die "Failed to install: ${missing[*]}"
+        step_ok "Dependencies installed"
     else
-      git clone --depth 1 "$repo_url" "$INSTALL_DIR"
+        step_ok "All dependencies found"
     fi
-  else
-    log_info "Git not found, downloading tarball..."
-    ensure_openvpn || true  # tarball install may not need pki immediately
-    command_exists curl || { log_error "curl required for tarball download."; exit 1; }
-    local tmp_tar=$(mktemp --suffix=.tar.gz)
-    log_info "Downloading tarball..."
-    curl -sSLL "$tarball_url" -o "$tmp_tar"
-    mkdir -p "$INSTALL_DIR"
-    tar xzf "$tmp_tar" -C "$INSTALL_DIR" --strip-components=1
-    rm -f "$tmp_tar"
-    log_ok "Tarball extracted."
-  fi
 
-  if [[ ! -f "${INSTALL_DIR}/main.py" && ! -f "${INSTALL_DIR}/main.py" ]]; then
-    log_error "Repository does not contain expected application files."
-    exit 1
-  fi
+    # OpenVPN (for PKI)
+    if ! command -v openvpn >/dev/null 2>&1; then
+        step_warn "Installing OpenVPN..."
+        apt-get install -y -qq openvpn easy-rsa >/dev/null 2>&1 \
+            || step_warn "OpenVPN install failed — PKI will need manual setup"
+        step_ok "OpenVPN installed"
+    else
+        step_ok "OpenVPN found"
+    fi
 }
 
-# ---------- uv ----------
-ensure_uv() {
-  if command_exists uv; then
-    log_info "uv already installed."
-    return 0
-  fi
-  log_info "Installing uv..."
-  if command_exists pip; then
-    pip install uv || {
-      log_error "Failed to install uv via pip."
-      return 1
-    }
-  elif command_exists python3; then
-    python3 -m pip install uv || {
-      log_error "Failed to install uv via python3 -m pip."
-      return 1
-    }
-  else
-    log_error "No python3/pip available to install uv."
-    return 1
-  fi
-  log_ok "uv installed."
-}
+# ══════════════════════════════════════════════════
+#  I N S T A L L
+# ══════════════════════════════════════════════════
+do_install() {
+    [[ -d "$INSTALL_DIR" ]] && die "Already installed at $INSTALL_DIR. Run with --uninstall first."
 
-uv_sync() {
-  log_info "Running uv sync..."
-  cd "$INSTALL_DIR"
-  cd "$INSTALL_DIR" && uv sync || error_exit "uv sync failed"
-  log_ok "uv sync complete."
-}
+    header "Installing OVNode"
 
-# ---------- .env ----------
-generate_api_key() {
-  if command_exists python3; then
-    python3 -c "import uuid; print(uuid.uuid4().hex)"
-  else
-    # Fallback: use /dev/urandom
-    head -c 16 /dev/urandom | xxd -p | tr -d '\n'
-  fi
-}
+    # 1. Source
+    step_info "Downloading source..."
+    if command -v git >/dev/null 2>&1; then
+        git clone --depth 1 --branch main "https://github.com/${REPO}.git" "$INSTALL_DIR" >/dev/null 2>&1 &
+        spinner "Cloning repository" $!
+    else
+        curl -sSLo /tmp/ovnode.tar.gz "https://github.com/${REPO}/archive/refs/heads/main.tar.gz" >/dev/null 2>&1 &
+        spinner "Downloading tarball" $!
+        tar -xzf /tmp/ovnode.tar.gz -C /opt/ 2>/dev/null
+        mv "/opt/$(basename ${REPO})-main" "$INSTALL_DIR" 2>/dev/null || \
+        mv "/opt/OVNode-main" "$INSTALL_DIR" 2>/dev/null || \
+        die "Failed to extract"
+        rm -f /tmp/ovnode.tar.gz
+    fi
 
-write_env() {
-  if [[ -f "$ENV_EXAMPLE_FILE" ]]; then
-    log_info "Creating .env from example template."
-    cp "$ENV_EXAMPLE_FILE" "$ENV_FILE"
-  else
-    log_warn ".env.example not found, creating a minimal .env manually."
-    cat >"$ENV_FILE" <<EOF
+    # 2. Backend
+    step_info "Setting up backend..."
+    cd "$INSTALL_DIR"
+    uv sync --quiet 2>&1 &
+    spinner "Installing Python dependencies" $!
+
+    # 3. Config
+    step_info "Writing configuration..."
+    local env_file="$INSTALL_DIR/.env"
+    if [[ -f "$INSTALL_DIR/.env.example" ]]; then
+        cp "$INSTALL_DIR/.env.example" "$env_file"
+    else
+        : > "$env_file"
+    fi
+    cat > "$env_file" << ENVEOF
 SERVICE_PORT=${PORT}
-API_KEY=${API_KEY:-$(generate_api_key)}
-VPN_PORT=${VPN_PORT}
-EOF
-  fi
+API_KEY=${API_KEY}
+OPENVPN_PORT=${VPN_PORT}
+ENVEOF
+    step_ok "Configuration written"
 
-  # Override with provided values (overwrites example defaults)
-  sed -i "s/^SERVICE_PORT=.*/SERVICE_PORT=${PORT}/" "$ENV_FILE" 2>/dev/null || \
-    echo "SERVICE_PORT=${PORT}" >>"$ENV_FILE"
-  sed -i "s/^API_KEY=.*/API_KEY=${API_KEY:-$(generate_api_key)}/" "$ENV_FILE" 2>/dev/null || \
-    echo "API_KEY=${API_KEY:-$(generate_api_key)}" >>"$ENV_FILE"
-  sed -i "s/^VPN_PORT=.*/VPN_PORT=${VPN_PORT}/" "$ENV_FILE" 2>/dev/null || \
-    echo "VPN_PORT=${VPN_PORT}" >>"$ENV_FILE"
-
-  # Prefer env var overrides from outer environment
-  : "${SERVICE_PORT:=${PORT}}"
-  : "${API_KEY:=}"
-  : "${OPENVPN_PORT:=${VPN_PORT}}"
-
-  if [[ -n "${SERVICE_PORT}" ]]; then
-    sed -i "s/^SERVICE_PORT=.*/SERVICE_PORT=${SERVICE_PORT}/" "$ENV_FILE" 2>/dev/null || echo "SERVICE_PORT=${SERVICE_PORT}" >>"$ENV_FILE"
-  fi
-  if [[ -n "${API_KEY:-}" ]]; then
-    sed -i "s/^API_KEY=.*/API_KEY=${API_KEY}/" "$ENV_FILE" 2>/dev/null || echo "API_KEY=${API_KEY}" >>"$ENV_FILE"
-  fi
-  if [[ -n "${OPENVPN_PORT:-}" ]]; then
-    sed -i "s/^VPN_PORT=.*/VPN_PORT=${OPENVPN_PORT}/" "$ENV_FILE" 2>/dev/null || echo "VPN_PORT=${OPENVPN_PORT}" >>"$ENV_FILE"
-  fi
-
-  log_ok ".env written."
-  cat "$ENV_FILE"
-}
-
-# ---------- Systemd ----------
-install_systemd_service() {
-  if [[ "$USE_DOCKER" == true ]]; then
-    log_info "Docker mode selected, skipping systemd service installation."
-    return 0
-  fi
-
-  local service_file="/etc/systemd/system/${SYSTEMD_SERVICE}"
-  log_info "Creating systemd service: ${service_file}"
-
-  cat >"/tmp/${SYSTEMD_SERVICE}" <<EOF
+    # 4. Service
+    step_info "Creating systemd service..."
+    local real_uv
+    real_uv=$(command -v uv)
+    cat > "/etc/systemd/system/${SYSTEMD_SERVICE}" << SVCEOF
 [Unit]
 Description=OVNode OpenVPN Node Agent
 After=network.target
+After=openvpn.service
 
 [Service]
 Type=simple
 User=root
 WorkingDirectory=${INSTALL_DIR}
-EnvironmentFile=${ENV_FILE}
-ExecStart=$(command -v uv) run main.py
+Environment="PATH=${INSTALL_DIR/.venv/bin}:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin"
+ExecStart=${real_uv} run main.py
 Restart=on-failure
-RestartSec=5
+RestartSec=3
 
 [Install]
 WantedBy=multi-user.target
-EOF
+SVCEOF
 
-  cp "/tmp/${SYSTEMD_SERVICE}" "$service_file"
-  systemctl daemon-reload
-  systemctl enable "$SYSTEMD_SERVICE"
-  systemctl restart "$SYSTEMD_SERVICE"
+    # Fix: escape . in path for sed
+    local escaped_venv="${INSTALL_DIR}/.venv/bin"
+    sed -i "s|{INSTALL_DIR/.venv/bin}|${escaped_venv}|" "/etc/systemd/system/${SYSTEMD_SERVICE}"
 
-  if systemctl is-active --quiet "$SYSTEMD_SERVICE"; then
-    log_ok "systemd service started and enabled."
-  else
-    log_error "systemd service failed to start. Check with: systemctl status ${SYSTEMD_SERVICE}"
-    exit 1
-  fi
+    systemctl daemon-reload >/dev/null 2>&1
+    systemctl enable "$SYSTEMD_SERVICE" >/dev/null 2>&1
+    systemctl restart "$SYSTEMD_SERVICE" >/dev/null 2>&1 &
+    spinner "Starting ovnode service" $!
+
+    # Done
+    divider
+    printf "\n"
+    printf "  ${BG_GREEN}${WHITE}${BOLD}  ✓  INSTALLED SUCCESSFULLY  ${R}\n\n"
+    printf "  ${BOLD}Service:${R}  ${CYAN}http://$(hostname -I | awk '{print $1}'):${PORT}/sync/health${R}\n"
+    printf "  ${BOLD}API key:${R}  ${GREEN}${API_KEY}${R}\n\n"
+    printf "  ${DIM}Connect from OVManager panel:${R}\n"
+    printf "    ${DIM}Node URL: http://$(hostname -I | awk '{print $1}'):${PORT}${R}\n"
+    printf "    ${DIM}API Key:  ${API_KEY}${R}\n\n"
+    printf "  ${DIM}Commands:${R}\n"
+    printf "    ${DIM}systemctl status ${SYSTEMD_SERVICE}${R}\n"
+    printf "    ${DIM}systemctl restart ${SYSTEMD_SERVICE}${R}\n"
+    printf "    ${DIM}journalctl -u ${SYSTEMD_SERVICE} -f${R}\n\n"
 }
 
-install_docker_compose() {
-  mkdir -p "$INSTALL_DIR"
-  log_info "Creating docker-compose.yml..."
-  cat >"$DOCKER_COMPOSE_FILE" <<EOF
-version: '3.8'
-services:
-  ovnode:
-    image: ovnode/ovnode:latest
-    container_name: ovnode
-    restart: unless-stopped
-    ports:
-      - "${PORT}:${PORT}/tcp"
-      - "${VPN_PORT}:${VPN_PORT}/udp"
-    volumes:
-      - ${INSTALL_DIR}/.env:.env
-      - ovnode_data:/opt/ovnode/data
-    environment:
-      - SERVICE_PORT=${PORT}
-      - API_KEY=${API_KEY:-$(generate_api_key)}
-      - VPN_PORT=${VPN_PORT}
-volumes:
-  ovnode_data:
-EOF
-  log_ok "docker-compose.yml created."
-
-  cd "$INSTALL_DIR"
-  if command_exists docker-compose; then
-    docker-compose up -d
-  else
-    docker compose up -d
-  fi
-  log_ok "Docker container started."
-}
-
-# ---------- Uninstall ----------
-uninstall() {
-  log_warn "Running uninstall..."
-  if [[ "$USE_DOCKER" == true ]] && [[ -f "$DOCKER_COMPOSE_FILE" ]]; then
-    cd "$INSTALL_DIR" && (docker compose down || docker-compose down) 2>/dev/null || true
-  fi
-  if [[ -f "/etc/systemd/system/${SYSTEMD_SERVICE}" ]]; then
-    systemctl stop "$SYSTEMD_SERVICE" 2>/dev/null || true
-    systemctl disable "$SYSTEMD_SERVICE" 2>/dev/null || true
-    rm -f "/etc/systemd/system/${SYSTEMD_SERVICE}"
-    systemctl daemon-reload
-  fi
-  rm -rf "$INSTALL_DIR"
-  rm -f /tmp/${SYSTEMD_SERVICE}
-  log_ok "Uninstall complete."
-}
-
-uninstall_cleanup_only() {
-  log_warn "Cleanup (no systemd removal)..."
-  if [[ "$USE_DOCKER" == true ]] && [[ -f "$DOCKER_COMPOSE_FILE" ]]; then
-    cd "$INSTALL_DIR" && (docker compose down || docker-compose down) 2>/dev/null || true
-  fi
-  rm -rf "$INSTALL_DIR"
-  rm -f /tmp/${SYSTEMD_SERVICE}
-}
-
-# ---------- Update ----------
+# ══════════════════════════════════════════════════
+#  U P D A T E
+# ══════════════════════════════════════════════════
 do_update() {
-  log_info "Updating OVNode..."
-  if [[ "$USE_DOCKER" == true ]]; then
-    log_info "Pulling latest docker image..."
-    cd "$INSTALL_DIR" && (docker compose pull || docker-compose pull) 2>/dev/null || {
-      log_error "Docker compose pull failed."
-      exit 1
-    }
-    if [[ -f "$DOCKER_COMPOSE_FILE" ]]; then
-      cd "$INSTALL_DIR" && (docker compose up -d || docker-compose up -d)
-    fi
-  else
-    if [[ -d "${INSTALL_DIR}/.git" ]]; then
-      cd "$INSTALL_DIR" && git pull --ff-only origin main || {
-        log_error "Git pull failed."
-        exit 1
-      }
-    else
-      log_error "Update requested but repo is not git-based. Re-run installer manually."
-      exit 1
-    fi
-    if [[ -f "/etc/systemd/system/${SYSTEMD_SERVICE}" ]]; then
-      systemctl stop "$SYSTEMD_SERVICE" || true
-    fi
-    uv_sync
-    if [[ -f "/etc/systemd/system/${SYSTEMD_SERVICE}" ]]; then
-      systemctl start "$SYSTEMD_SERVICE" || true
-    fi
-  fi
-  log_ok "Update complete."
+    [[ ! -d "$INSTALL_DIR" ]] && die "Not installed at $INSTALL_DIR"
+    header "Updating OVNode"
+    cd "$INSTALL_DIR"
+    git pull origin main 2>&1 &
+    spinner "Pulling latest changes" $!
+    uv sync 2>&1 | tail -1 &
+    spinner "Updating Python dependencies" $!
+    systemctl restart "$SYSTEMD_SERVICE" >/dev/null 2>&1 &
+    spinner "Restarting service" $!
+    divider
+    printf "  ${BG_GREEN}${WHITE}${BOLD}  ✓  UPDATED  ${R}\n\n"
 }
 
-# ---------- Main ----------
+# ══════════════════════════════════════════════════
+#  U N I N S T A L L
+# ══════════════════════════════════════════════════
+do_uninstall() {
+    header "Uninstalling OVNode"
+    if [[ -t 0 ]]; then
+        printf "  ${RED}Remove ${INSTALL_DIR} and stop service?${R} [y/N]: "
+        read -r confirm
+        [[ ! "$confirm" =~ ^[Yy]$ ]] && die "Cancelled."
+    fi
+    systemctl stop "$SYSTEMD_SERVICE" 2>/dev/null
+    systemctl disable "$SYSTEMD_SERVICE" 2>/dev/null
+    rm -f "/etc/systemd/system/${SYSTEMD_SERVICE}"
+    systemctl daemon-reload 2>/dev/null
+    rm -rf "$INSTALL_DIR"
+    step_ok "Service removed"
+    step_ok "Installation directory removed"
+    divider
+    printf "  ${BG_GREEN}${WHITE}${BOLD}  ✓  UNINSTALLED  ${R}\n\n"
+}
+
+# ══════════════════════════════════════════════════
+#  M A I N
+# ══════════════════════════════════════════════════
 main() {
-  # Parse global flags before subcommands
-  if [[ "${1:-}" == "--help" ]]; then
-    show_help
-    exit 0
-  fi
+    parse_args "$@"
+    banner
 
-  # Support inline override via env vars before parsing flags
-  : "${SERVICE_PORT:=}"
-  : "${API_KEY:=}"
-  : "${OPENVPN_PORT:=}"
-
-  # Determine mode
-  if [[ "${1:-}" == "--docker" ]]; then
-    USE_DOCKER=true
-    shift
-  fi
-
-  # Check for subcommands
-  if [[ "${1:-}" == "update" ]]; then
-    do_update
-    exit 0
-  elif [[ "${1:-}" == "uninstall" ]]; then
-    uninstall
-    exit 0
-  fi
-
-  # Parse install flags
-  parse_args "$@"
-
-  # Port from env override
-  if [[ -n "${SERVICE_PORT:-}" ]]; then
-    PORT="${SERVICE_PORT}"
-  fi
-  if [[ -n "${OPENVPN_PORT:-}" ]]; then
-    VPN_PORT="${OPENVPN_PORT}"
-  fi
-  if [[ -n "${API_KEY:-}" ]]; then
-    API_KEY="${API_KEY}"
-  fi
-
-  check_deps
-  detect_docker_compose
-
-  log_info "OVNode OpenVPN Node Agent Installer"
-  log_info "Install directory: ${INSTALL_DIR}"
-  log_info "Service port: ${PORT}"
-  log_info "VPN port: ${VPN_PORT}"
-  log_info "Docker mode: ${USE_DOCKER}"
-
-  if [[ "$USE_DOCKER" == true ]]; then
-    install_docker_compose
-  else
-    if [[ -d "$INSTALL_DIR" ]]; then
-      log_warn "${INSTALL_DIR} already exists. Update mode recommended."
-      read -r -p "Continue and overwrite? [y/N] " response
-      case "$response" in
-        [yY][eE][sS]|[yY]) ;;
-        *) log_info "Aborted."; exit 1 ;;
-      esac
+    if [[ $UNINSTALL -eq 1 ]]; then
+        do_uninstall
+        exit 0
     fi
 
-    mkdir -p "$INSTALL_DIR"
-    clone_or_download
-    ensure_uv
-    uv_sync
-    write_env
-    install_systemd_service
-  fi
+    if [[ -z "$PORT" && -z "$API_KEY" ]]; then
+        interactive_setup
+    else
+        : "${PORT:=$DEFAULT_PORT}"
+        : "${API_KEY:=$(python3 -c 'import uuid;print(uuid.uuid4().hex)' 2>/dev/null || openssl rand -hex 16)}"
+        : "${VPN_PORT:=$DEFAULT_VPN_PORT}"
+    fi
 
-  log_ok "OVNode installation complete!"
-  log_info "Check status: systemctl status ${SYSTEMD_SERVICE}"
-  log_info "Uninstall with: curl -sSL URL | bash -s -- --uninstall"
+    check_root
+    check_deps
+    do_install
 }
 
 main "$@"
