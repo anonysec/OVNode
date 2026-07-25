@@ -502,14 +502,25 @@ interactive_setup() {
     line "  ${WH}4${NC})  Custom cert path"
     line "  ${WH}5${NC})  None (HTTP)"
     if [[ -t 0 ]]; then
-        printf "  Select [${GR}5${NC}] : "
+        printf "  Select [${GR}2${NC}] : "
         read -r tls_choice
     else
         tls_choice=5
     fi
     case "${tls_choice:-5}" in
-        1) TLS_METHOD="letsencrypt"; prompt_val TLS_DOMAIN "Domain" "" ;;
-        2) TLS_METHOD="letsencrypt-ip"; TLS_DOMAIN=$(hostname -I | awk '{print $1}') ;;
+        1|2)
+            if [[ "$tls_choice" == "2" ]]; then
+                TLS_METHOD="letsencrypt-ip"
+            else
+                TLS_METHOD="letsencrypt"
+            fi
+            local ip_hint=$(hostname -I | awk '{print $1}')
+            if [[ -t 0 ]]; then
+                printf "  ${WH}Domain/IP${NC} [${GR}%s${NC}] : " "$ip_hint"
+                read -r TLS_DOMAIN
+            fi
+            [[ -z "$TLS_DOMAIN" ]] && TLS_DOMAIN="$ip_hint"
+            ;;
         3) TLS_METHOD="selfsigned" ;;
         4) TLS_METHOD="custom"; prompt_val TLS_KEY "TLS key path" ""; prompt_val TLS_CERT "TLS cert path" "" ;;
         *) TLS_METHOD="none" ;;
