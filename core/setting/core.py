@@ -44,9 +44,7 @@ def change_config(request: SetSettingsModel) -> bool:
         # Reject regex metacharacters that could alter the replacement.
         _TUNNEL_RE = re.compile(r"^[A-Za-z0-9._:-]+$")
         if tunnel_addr and not _TUNNEL_RE.match(tunnel_addr):
-            raise ValueError(
-                f"Invalid tunnel_address: {tunnel_addr!r}"
-            )
+            raise ValueError(f"Invalid tunnel_address: {tunnel_addr!r}")
         if tunnel_addr:
             template = re.sub(
                 r"^remote\s+\S+\s+\d+",
