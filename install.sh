@@ -100,19 +100,7 @@ check_deps() {
 
 # ---------- Docker Detection ----------
 detect_docker_compose() {
-  if [[ "$USE_DOCKER" == false ]]; then
-    if command_exists docker-compose; then
-      USE_DOCKER=true
-      log_info "Docker compose detected, switching to Docker mode."
-    elif command_exists docker; then
-      local dc_version
-      dc_version=$(docker compose version --short 2>/dev/null || true)
-      if [[ -n "$dc_version" ]]; then
-        USE_DOCKER=true
-        log_info "Docker detected (compose plugin), switching to Docker mode."
-      fi
-    fi
-  fi
+  : # Only use Docker when --docker flag is explicitly passed
 }
 
 # ---------- OpenVPN / easy-rsa ----------
@@ -201,7 +189,7 @@ ensure_uv() {
 uv_sync() {
   log_info "Running uv sync..."
   cd "$INSTALL_DIR"
-  uv sync --dev
+  cd "$INSTALL_DIR" && uv sync || error_exit "uv sync failed"
   log_ok "uv sync complete."
 }
 
@@ -275,7 +263,7 @@ Type=simple
 User=root
 WorkingDirectory=${INSTALL_DIR}
 EnvironmentFile=${ENV_FILE}
-ExecStart=$(command -v uv run || which uv) run main.py
+ExecStart=$(command -v uv) run main.py
 Restart=on-failure
 RestartSec=5
 
@@ -297,6 +285,7 @@ EOF
 }
 
 install_docker_compose() {
+  mkdir -p "$INSTALL_DIR"
   log_info "Creating docker-compose.yml..."
   cat >"$DOCKER_COMPOSE_FILE" <<EOF
 version: '3.8'
