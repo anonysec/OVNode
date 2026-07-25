@@ -1,5 +1,5 @@
 #!/bin/bash
-# OVNode OpenVPN Node Agent Installer
+# OVNode — OpenVPN Node Agent Installer
 # Usage: bash <(curl -Ls https://anonysec.github.io/OVNode/install.sh)
 
 set -uo pipefail
@@ -12,57 +12,34 @@ INSTALL_DIR="/opt/ovnode"
 DEFAULT_PORT=2083
 DEFAULT_VPN=1194
 SYSTEMD_SERVICE="ovnode.service"
+VERSION="2.0"
 
 # ═══════════════════════════════════════
 #  C O L O R S
 # ═══════════════════════════════════════
-NC=$'\033[0m'
-B=$'\033[1m'
-WH=$'\033[97m'
-GR=$'\033[32m'
-RD=$'\033[31m'
-YL=$'\033[33m'
-BL=$'\033[34m'
-CY=$'\033[36m'
-GY=$'\033[90m' 
+NC=$'\033[0m'; B=$'\033[1m'; D=$'\033[2m'
+WH=$'\033[97m'; GR=$'\033[32m'; RD=$'\033[31m'
+YL=$'\033[33m'; CY=$'\033[36m'; GY=$'\033[90m'
 
 # ═══════════════════════════════════════
-#  U I   H E L P E R S
+#  U I
 # ═══════════════════════════════════════
-W=58
-
-box_top()    { echo -e "  ${BL}┌$(printf '─%.0s' $(seq 1 $W))┐${NC}"; }
-box_mid()    { echo -e "  ${BL}├$(printf '─%.0s' $(seq 1 $W))┤${NC}"; }
-box_bot()    { echo -e "  ${BL}└$(printf '─%.0s' $(seq 1 $W))┘${NC}"; }
-box_line()   { printf "  ${BL}│${NC} %-$((W-2))s${BL}│${NC}\n" "$1"; }
-box_empty()  { echo -e "  ${BL}│${NC}$(printf '%*s' $W '')${BL}│${NC}"; }
-
-title() {
-    box_empty
-    box_line "  ${B}$1${NC}"
-    [[ -n "${2:-}" ]] && box_line "  ${GY}$2${NC}"
-    box_empty
-}
-
-field() {
-    local label="$1" value="$2"
-    printf "  ${BL}│${NC}   ${GY}%-14s${NC}%s${BL}│${NC}\n" "$label" "$value"
-}
-
-step() {
-    printf "  ${BL}│${NC}  %s %-$((W-4))s${BL}│${NC}\n" "$1" "$2"
-}
+line()   { echo -e "  $1"; }
+step()   { line "${GR}  ✓${NC} $1"; }
+info()   { line "${CY}  →${NC} $1"; }
+sep()    { line "${GY}$(printf '%.0s─' {1..52})${NC}"; }
+field()  { printf "  ${GY}%-16s${NC} %s\n" "$1" "$2"; }
 
 spinner() {
     local msg="$1" pid=$2 chars='⠋⠙⠹⠸⠼⠴⠦⠧⠇⠏' i=0
     while kill -0 "$pid" 2>/dev/null; do
-        printf "\r  ${BL}│${NC}  ${CY}%s${NC} %-$((W-4))s${BL}│${NC}" "${chars:$((i%9)):1}" "$msg"
+        printf "\r  ${CY}%s${NC} %-48s" "${chars:$((i%9)):1}" "$msg"
         sleep 0.1; ((i++))
     done
     wait "$pid" 2>/dev/null
     local rc=$?
     printf "\r\033[K"
-    [[ $rc -eq 0 ]] && step "${GR}✓${NC}" "$msg" || { step "${RD}✗${NC}" "$msg"; return 1; }
+    [[ $rc -eq 0 ]] && step "$msg" || { line "${RD}  ✗${NC} $msg"; return 1; }
 }
 
 prompt_val() {
@@ -70,10 +47,10 @@ prompt_val() {
     local val=""
     if [[ -t 0 ]]; then
         if [[ "$hidden" == "h" ]]; then
-            printf "  ${BL}│${NC}   ${WH}%-14s${NC} ${GY}[${default}]${NC} : " "$label"
+            printf "  ${WH}%-16s${NC} ${GY}[%s]${NC} : " "$label" "$default"
             read -rs val; printf "\n"
         else
-            printf "  ${BL}│${NC}   ${WH}%-14s${NC} ${GY}[${default}]${NC} : " "$label"
+            printf "  ${WH}%-16s${NC} ${GY}[%s]${NC} : " "$label" "$default"
             read -r val
         fi
     fi
@@ -81,12 +58,9 @@ prompt_val() {
     eval "$var='$val'"
 }
 
-die() { echo -e "\n  ${RD}ERROR:${NC} $1\n"; exit 1; }
+die() { echo -e "\n  ${RD}Error:${NC} $1\n"; exit 1; }
 trap 'echo -e "\n  ${RD}Interrupted.${NC}"; exit 1' INT TERM
 
-# ═══════════════════════════════════════
-#  H E L P / A R G S
-# ═══════════════════════════════════════
 show_help() {
     cat << 'EOF'
   Usage:
@@ -118,27 +92,19 @@ parse_args() {
     done
 }
 
-# ═══════════════════════════════════════
-#  I N T E R A C T I V E
-# ═══════════════════════════════════════
 interactive_setup() {
     prompt_val PORT      "Service port" "$DEFAULT_PORT"
     prompt_val API_KEY   "API key"      "$(python3 -c 'import uuid;print(uuid.uuid4().hex)' 2>/dev/null || openssl rand -hex 16)"
     prompt_val VPN_PORT  "OpenVPN port" "$DEFAULT_VPN"
-
-    box_mid
+    sep
     field "Install dir" "$INSTALL_DIR"
-    box_mid
-
+    sep
     if [[ -t 0 ]]; then
-        printf "  ${BL}│${NC}   Proceed? [${GR}Y${NC}/n] : "
+        printf "  Proceed with installation? [${GR}Y${NC}/n] : "
         read -r c; [[ "$c" =~ ^[Nn]$ ]] && die "Cancelled."
     fi
 }
 
-# ═══════════════════════════════════════
-#  D E P S
-# ═══════════════════════════════════════
 check_root() {
     [[ "$EUID" -ne 0 ]] && die "Must run as root."
 }
@@ -149,32 +115,26 @@ check_deps() {
         command -v "$cmd" >/dev/null 2>&1 || missing+=("$cmd")
     done
     if [[ ${#missing[@]} -gt 0 ]]; then
-        step "${YL}↓${NC}" "Installing: ${missing[*]}"
+        info "Installing missing dependencies: ${missing[*]}"
         apt-get update -qq >/dev/null && apt-get install -y -qq "${missing[@]}" >/dev/null \
-            || die "Failed: ${missing[*]}"
+            || die "Failed to install: ${missing[*]}"
     fi
-    step "${GR}✓${NC}" "Dependencies OK"
+    step "All system dependencies are available"
 
     if ! command -v openvpn >/dev/null 2>&1; then
-        step "${YL}↓${NC}" "Installing OpenVPN"
+        info "Installing OpenVPN and easy-rsa for PKI management..."
         apt-get install -y -qq openvpn easy-rsa >/dev/null 2>&1 \
-            || step "${YL}⚠${NC}" "OpenVPN install failed — manual PKI setup needed"
+            || warn "OpenVPN install failed — manual PKI setup may be needed"
     else
-        step "${GR}✓${NC}" "OpenVPN found"
+        step "OpenVPN is already installed"
     fi
 }
 
-# ═══════════════════════════════════════
-#  I N S T A L L
-# ═══════════════════════════════════════
 do_install() {
-    [[ -d "$INSTALL_DIR" ]] && die "Already installed. Use --uninstall first."
+    [[ -d "$INSTALL_DIR" ]] && die "Already installed at $INSTALL_DIR. Use --uninstall first."
 
-    box_empty; box_mid; box_empty
-    box_line "  ${B}${WH}Installing${NC}"
-    box_empty
-
-    # Source
+    sep
+    info "Cloning OVNode repository..."
     if command -v git >/dev/null 2>&1; then
         git clone --depth 1 --branch main "https://github.com/${REPO}.git" "$INSTALL_DIR" >/dev/null 2>&1 &
         spinner "Cloning repository" $!
@@ -186,20 +146,20 @@ do_install() {
         rm -f /tmp/ovn.tar.gz
     fi
 
-    # Backend
+    info "Installing Python packages with uv..."
     cd "$INSTALL_DIR"
     uv sync --quiet 2>&1 &
-    spinner "Installing dependencies" $!
+    spinner "Python packages installed" $!
 
-    # Config
+    info "Writing .env configuration..."
     cat > "$INSTALL_DIR/.env" << ENVEOF
 SERVICE_PORT=${PORT}
 API_KEY=${API_KEY}
 OPENVPN_PORT=${VPN_PORT}
 ENVEOF
-    step "${GR}✓${NC}" "Configuration written"
+    step "Configuration saved to $INSTALL_DIR/.env"
 
-    # Service
+    info "Setting up systemd service..."
     local real_uv; real_uv=$(command -v uv)
     cat > "/etc/systemd/system/${SYSTEMD_SERVICE}" << SVCEOF
 [Unit]
@@ -221,37 +181,38 @@ SVCEOF
     systemctl daemon-reload >/dev/null 2>&1
     systemctl enable "$SYSTEMD_SERVICE" >/dev/null 2>&1
     systemctl restart "$SYSTEMD_SERVICE" >/dev/null 2>&1 &
-    spinner "Starting service" $!
+    spinner "Service started" $!
 
-    # Done
-    box_mid; box_empty
-    box_line "  ${GR}${B}✓  INSTALLED${NC}"
-    box_empty
-    box_line "  ${WH}http://$(hostname -I | awk '{print $1}'):${PORT}/sync/health${NC}"
-    box_line "  ${GY}API key: ${WH}${API_KEY}${NC}"
-    box_empty
-    box_line "  ${GY}systemctl status ${SYSTEMD_SERVICE}${NC}"
-    box_line "  ${GY}systemctl restart ${SYSTEMD_SERVICE}${NC}"
-    box_empty
-    box_bot
-    echo ""
+    sep
+    line ""
+    step "${B}Installation complete!${NC}"
+    line ""
+    line "  ${WH}Health:${NC}  http://$(hostname -I | awk '{print $1}'):${PORT}/sync/health"
+    line "  ${WH}API key:${NC} ${GR}${API_KEY}${NC}"
+    line ""
+    line "  ${GY}Manage:${NC}  systemctl status ${SYSTEMD_SERVICE}"
+    line "  ${GY}Logs:${NC}    journalctl -u ${SYSTEMD_SERVICE} -f"
+    line ""
 }
 
 do_update() {
-    [[ ! -d "$INSTALL_DIR" ]] && die "Not installed"
+    [[ ! -d "$INSTALL_DIR" ]] && die "Not installed at $INSTALL_DIR"
+    line ""
+    info "Updating OVNode..."
     cd "$INSTALL_DIR"
     git pull origin main 2>&1 &
-    spinner "Pulling changes" $!
+    spinner "Pulling latest changes" $!
     uv sync --quiet 2>&1 &
-    spinner "Updating dependencies" $!
+    spinner "Updating Python dependencies" $!
     systemctl restart "$SYSTEMD_SERVICE" >/dev/null 2>&1 &
-    spinner "Restarting service" $!
-    box_empty; step "${GR}✓${NC}" "Updated"; box_bot; echo ""
+    spinner "Service restarted" $!
+    step "Update complete"
+    line ""
 }
 
 do_uninstall() {
     if [[ -t 0 ]]; then
-        printf "  Remove ${INSTALL_DIR}? [y/N] : "; read -r c
+        printf "  Remove ${INSTALL_DIR} and stop service? [y/N] : "; read -r c
         [[ ! "$c" =~ ^[Yy]$ ]] && die "Cancelled."
     fi
     systemctl stop "$SYSTEMD_SERVICE" 2>/dev/null
@@ -259,20 +220,20 @@ do_uninstall() {
     rm -f "/etc/systemd/system/${SYSTEMD_SERVICE}"
     systemctl daemon-reload 2>/dev/null
     rm -rf "$INSTALL_DIR"
-    echo -e "  ${GR}✓ Uninstalled${NC}\n"
+    step "Uninstalled"
+    line ""
 }
 
-# ═══════════════════════════════════════
-#  M A I N
-# ═══════════════════════════════════════
 main() {
     parse_args "$@"
     clear
 
     [[ $UNINSTALL -eq 1 ]] && { do_uninstall; exit 0; }
 
-    box_top
-    title "OVNode" "OpenVPN Node Agent  v2.0"
+    line ""
+    line "  ${B}OVNode${NC} — OpenVPN Node Agent Installer ${GY}v${VERSION}${NC}"
+    sep
+    line ""
 
     if [[ -z "$PORT" && -z "$API_KEY" ]]; then
         interactive_setup
@@ -283,7 +244,8 @@ main() {
         field "Service port" "$PORT"
         field "API key"      "${API_KEY:0:8}..."
         field "OpenVPN port" "$VPN_PORT"
-        box_mid
+        field "Install dir"  "$INSTALL_DIR"
+        sep
     fi
 
     check_root
