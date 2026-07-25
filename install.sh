@@ -138,7 +138,7 @@ check_deps() {
 }
 
 do_install() {
-    [[ -d "$INSTALL_DIR" ]] && die "Already installed at $INSTALL_DIR. Use --uninstall first."
+    [[ -d "$INSTALL_DIR" ]] && die "Already installed. Use --uninstall first."
 
     sep
     info "Cloning OVNode repository..."
@@ -203,7 +203,7 @@ SVCEOF
 }
 
 do_update() {
-    [[ ! -d "$INSTALL_DIR" ]] && die "Not installed at $INSTALL_DIR"
+    [[ ! -d "$INSTALL_DIR" ]] && die "Not installed"
     line ""
     info "Updating OVNode..."
     cd "$INSTALL_DIR"
@@ -219,7 +219,7 @@ do_update() {
 
 do_uninstall() {
     if [[ -t 0 ]]; then
-        printf "  Remove ${INSTALL_DIR} and stop service? [y/N] : "; read -r c
+        printf "  Remove OVNode and stop service? [y/N] : "; read -r c
         [[ ! "$c" =~ ^[Yy]$ ]] && die "Cancelled."
     fi
     systemctl stop "$SYSTEMD_SERVICE" 2>/dev/null
@@ -246,21 +246,42 @@ main() {
     esac
 
     if [[ -d "$INSTALL_DIR" ]]; then
-        warn "OVNode is already installed at $INSTALL_DIR"
-        line ""
-        if [[ -t 0 ]]; then
-            printf "  What would you like to do? [${GR}1${NC}=Update / ${RD}2${NC}=Reinstall / q=Quit] : "
-            read -r choice
-            case "$choice" in
-                1|"") do_update; exit 0 ;;
-                2)    do_uninstall; do_install ;;
-                *)    line ""; die "Aborted." ;;
-            esac
-        else
-            info "Running update..."
-            do_update; exit 0
-        fi
-    fi
+     warn "OVNode is already installed"
+     line ""
+     cd "$INSTALL_DIR" 2>/dev/null
+     git fetch origin main --quiet 2>/dev/null
+     local LOCAL=$(git rev-parse HEAD 2>/dev/null)
+     local REMOTE=$(git rev-parse origin/main 2>/dev/null)
+     local HAS_UPDATE=0
+     [[ "$LOCAL" != "$REMOTE" ]] && HAS_UPDATE=1
+
+     if [[ -t 0 ]]; then
+         if [[ $HAS_UPDATE -eq 1 ]]; then
+             line "  ${GR}1${NC})  Update to latest version"
+         fi
+         line "  ${RD}2${NC})  Reinstall (remove and install fresh)"
+         line "  ${GY}3${NC})  Quit"
+         line ""
+         printf "  Select [${GR}1${NC}] : "
+         read -r choice
+         if [[ $HAS_UPDATE -eq 1 ]]; then
+             case "${choice:-1}" in
+                 1|"") do_update; exit 0 ;;
+                 2)    do_uninstall; do_install ;;
+                 *)    line ""; exit 0 ;;
+             esac
+         else
+             case "${choice:-2}" in
+                 2)    do_uninstall; do_install ;;
+                 *)    line ""; exit 0 ;;
+             esac
+         fi
+     else
+         [[ $HAS_UPDATE -eq 1 ]] && { info "New version available, updating..."; do_update; exit 0; }
+         info "Already up to date."
+         exit 0
+     fi
+ fi
 
     if [[ -z "$PORT" && -z "$API_KEY" ]]; then
         interactive_setup
