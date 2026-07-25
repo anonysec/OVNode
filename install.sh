@@ -65,19 +65,24 @@ show_help() {
     cat << 'EOF'
   Usage:
     bash <(curl -Ls https://anonysec.github.io/OVNode/install.sh)
-    curl -Ls URL | bash -s -- --port 2083 --api-key KEY
+    bash <(curl -Ls URL) update
+    bash <(curl -Ls URL) uninstall
+
+  Commands:
+    (none)              Install or update OVNode
+    update              Pull latest changes and restart
+    uninstall           Remove OVNode completely
 
   Flags:
     --port PORT     Service port (default: 2083)
     --api-key KEY   API key (auto-generated if empty)
     --vpn-port PORT OpenVPN port (default: 1194)
-    --uninstall     Remove OVNode
     --help          Show this help
 EOF
     exit 0
 }
 
-PORT="" API_KEY="" VPN_PORT="" UNINSTALL=0
+PORT="" API_KEY="" VPN_PORT="" ACTION="install"
 
 parse_args() {
     while [[ $# -gt 0 ]]; do
@@ -85,9 +90,11 @@ parse_args() {
             --port)      PORT="$2"; shift 2 ;;
             --api-key)   API_KEY="$2"; shift 2 ;;
             --vpn-port)  VPN_PORT="$2"; shift 2 ;;
-            --uninstall) UNINSTALL=1; shift ;;
+            --uninstall) ACTION="uninstall"; shift ;;
             --help|-h)   show_help ;;
-            *)           die "Unknown option: $1" ;;
+            uninstall)   ACTION="uninstall"; shift ;;
+            update)      ACTION="update"; shift ;;
+            *)           die "Unknown option: $1. Use --help for usage." ;;
         esac
     done
 }
@@ -228,12 +235,32 @@ main() {
     parse_args "$@"
     clear
 
-    [[ $UNINSTALL -eq 1 ]] && { do_uninstall; exit 0; }
-
     line ""
     line "  ${B}OVNode${NC} — OpenVPN Node Agent Installer ${GY}v${VERSION}${NC}"
     sep
     line ""
+
+    case "$ACTION" in
+        uninstall) do_uninstall; exit 0 ;;
+        update)    do_update; exit 0 ;;
+    esac
+
+    if [[ -d "$INSTALL_DIR" ]]; then
+        warn "OVNode is already installed at $INSTALL_DIR"
+        line ""
+        if [[ -t 0 ]]; then
+            printf "  What would you like to do? [${GR}1${NC}=Update / ${RD}2${NC}=Reinstall / q=Quit] : "
+            read -r choice
+            case "$choice" in
+                1|"") do_update; exit 0 ;;
+                2)    do_uninstall; do_install ;;
+                *)    line ""; die "Aborted." ;;
+            esac
+        else
+            info "Running update..."
+            do_update; exit 0
+        fi
+    fi
 
     if [[ -z "$PORT" && -z "$API_KEY" ]]; then
         interactive_setup
