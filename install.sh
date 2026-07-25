@@ -215,22 +215,42 @@ obtain_letsencrypt_cert() {
     local outdir="/etc/letsencrypt/${domain}"
     mkdir -p "$outdir"
 
-    if [[ "$TLS_METHOD" == "letsencrypt-ip" ]]; then
-        # Short-lived cert for an IP address
-        ~/.acme.sh/acme.sh --issue -d "$domain" --standalone \
-            --certificate-profile shortlived --days 6 \
-            --key-file "$outdir/privkey.pem" --full-chain-file "$outdir/fullchain.pem" \
-            --reloadcmd "sleep 0"
-    else
-        ~/.acme.sh/acme.sh --issue -d "$domain" --standalone \
-            --key-file "$outdir/privkey.pem" --full-chain-file "$outdir/fullchain.pem" \
-            --reloadcmd "sleep 0"
+    # Check if valid cert already exists
+    if [[ -f "$outdir/fullchain.pem" ]]; then
+        local expiry=$(openssl x509 -enddate -noout -in "$outdir/fullchain.pem" 2>/dev/null | cut -d= -f2)
+        local expiry_epoch=$(date -d "$expiry" +%s 2>/dev/null)
+        local now_epoch=$(date +%s)
+        local days_left=$(( (expiry_epoch - now_epoch) / 86400 ))
+        if [[ $days_left -gt 7 ]]; then
+            step "Existing certificate valid for $days_left more days ($outdir)"
+            echo "$outdir"
+            return 0
+        fi
+        warn "Certificate expires in $days_left days — renewing..."
     fi
-    # Deploy certs from acme.sh to our expected location
+
+    local extra_args=""
+    if [[ "$TLS_METHOD" == "letsencrypt-ip" ]]; then
+        info "Issuing short-lived certificate for IP $domain (6 days)..."
+        extra_args="--certificate-profile shortlived --days 6"
+    else
+        info "Issuing certificate for domain $domain..."
+    fi
+
+    # Issue cert
+    ~/.acme.sh/acme.sh --issue -d "$domain" --standalone \
+        $extra_args \
+        --reloadcmd "true" 2>&1 | grep -E "Cert success|Error|error" \
+        || die "Failed to issue Let's Encrypt certificate for $domain"
+
+    # Install cert to target directory
     ~/.acme.sh/acme.sh --install-cert -d "$domain" \
-        --key-file "$outdir/privkey.pem" --full-chain-file "$outdir/fullchain.pem" \
-        --reloadcmd "sleep 0" >/dev/null 2>&1
-    step "Let's Encrypt certificate obtained for ${domain}"
+        --key-file "$outdir/privkey.pem" \
+        --fullchain-file "$outdir/fullchain.pem" \
+        --reloadcmd "true" 2>&1 | tail -3 \
+        || die "Failed to install certificate to $outdir"
+
+    step "Certificate installed to $outdir"
     echo "$outdir"
 }
 
@@ -346,14 +366,12 @@ do_install() {
 
     # ── TLS / PKI ────────────────────────────────────────
     local certdir=""
-
-    local certdir=""
     case "$TLS_METHOD" in
         none)
             step "TLS disabled (HTTP)"
             ;;
         selfsigned)
-            certdir=$(generate_selfsigned_cert "$NODE_NAME")
+            certdir=$(generate_selfsigned_cert)
             ;;
         letsencrypt|letsencrypt-ip)
             if [[ "$TLS_METHOD" == "letsencrypt-ip" ]]; then
@@ -433,7 +451,7 @@ DOCKEREOF
     field "OpenVPN port" "$VPN_PORT"
     field "TLS method"    "$TLS_METHOD"
     field "Data dir"      "$DATA_BASE/${NODE_NAME}"
-    field "Systemd"      "ovnode-${NODE_NAME}.service"
+    field "Systemd"      "${SYSTEMD_SERVICE}"
     line ""
     if [[ "$TLS_METHOD" != "none" ]]; then
         line "  Health:  https://$(hostname -I | awk '{print $1}'):${PORT}/sync/health"
@@ -447,8 +465,8 @@ DOCKEREOF
         line "  ${GY}Docker mode:${NC} docker-compose at ${DATA_BASE}/${NODE_NAME}/docker-compose.yml"
         line "  Start with:${NC} docker compose -f ${DATA_BASE}/${NODE_NAME}/docker-compose.yml up -d"
     else
-        line "  ${GY}Manage:${NC}  systemctl status ovnode-${NODE_NAME}.service"
-        line "  ${GY}Logs:${NC}    journalctl -u ovnode-${NODE_NAME}.service -f"
+        line "  ${GY}Manage:${NC}  systemctl status ${SYSTEMD_SERVICE}"
+        line "  ${GY}Logs:${NC}    journalctl -u ${SYSTEMD_SERVICE} -f"
     fi
     line ""
 }
@@ -457,7 +475,7 @@ DOCKEREOF
 #  U P D A T E
 # ──────────────────────────────────────────────────────
 do_update() {
-    [[ -d "$APP_DIR" ]] && die "Not installed"
+    [[ ! -d "$APP_DIR" ]] && die "Not installed"
     line ""
     info "Updating OVNode ($NODE_NAME)..."
     cd "$APP_DIR"
@@ -484,7 +502,7 @@ do_uninstall() {
     rm -f "/etc/systemd/system/${SYSTEMD_SERVICE}"
     systemctl daemon-reload 2>/dev/null
     rm -rf "$APP_DIR"
-    rm -rf "$DATA_BASE"
+    rm -rf "$DATA_BASE/${NODE_NAME}"
     step "Uninstalled"
     line ""
 }
@@ -511,7 +529,7 @@ interactive_setup() {
         printf "  Select [${GR}2${NC}] : "
         read -r tls_choice
     else
-        tls_choice=5
+        tls_choice=2
     fi
     case "${tls_choice:-5}" in
         1)
