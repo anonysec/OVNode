@@ -26,7 +26,7 @@ YL='\033[33m'; CY='\033[36m'; GY='\033[90m'
 # ──────────────────────────────────────────────────────
 #  U I
 # ──────────────────────────────────────────────────────
-line()   { echo -e "  $1"; }
+line()   { echo -e "  $1" >&2; }
 step()   { line "${GR}  ✓${NC} $1"; }
 info()   { line "${CY}  →${NC} $1"; }
 warn()   { line "${YL}  ⚠${NC} $1"; }
@@ -35,12 +35,12 @@ field()  { printf "  ${GY}%-16s${NC} %s\n" "$1" "$2"; }
 spinner() {
     local msg="$1" pid=$2 chars='⠋⠙⠹⠸⠼⠴⠦⠧⠇⠏' i=0
     while kill -0 "$pid" 2>/dev/null; do
-        printf "\r  ${CY}%s${NC} %-48s" "${chars:$((i%9)):1}" "$msg"
+        printf "\r  ${CY}%s${NC} %-48s" "${chars:$((i%9)):1}" "$msg" >&2
         sleep 0.1; ((i++))
     done
     wait "$pid" 2>/dev/null
     local rc=$?
-    printf "\r\033[K"
+    printf "\r\033[K" >&2
     [[ $rc -eq 0 ]] && step "$msg" || { line "${RD}  ✗${NC} $msg"; return 1; }
 }
 prompt_val() {
