@@ -39,11 +39,18 @@ def change_config(request: SetSettingsModel) -> bool:
         # Update the client template
         with open(template_file) as file:
             template = file.read()
-        if request.tunnel_address and request.tunnel_address.strip() != "":
-            # Update both address and port
+        tunnel_addr = request.tunnel_address.strip() if request.tunnel_address else ""
+        # Validate tunnel_address contains only safe characters (IP or hostname).
+        # Reject regex metacharacters that could alter the replacement.
+        _TUNNEL_RE = re.compile(r"^[A-Za-z0-9._:-]+$")
+        if tunnel_addr and not _TUNNEL_RE.match(tunnel_addr):
+            raise ValueError(
+                f"Invalid tunnel_address: {tunnel_addr!r}"
+            )
+        if tunnel_addr:
             template = re.sub(
                 r"^remote\s+\S+\s+\d+",
-                f"remote {request.tunnel_address} {request.ovpn_port}",
+                f"remote {tunnel_addr} {request.ovpn_port}",
                 template,
                 flags=re.MULTILINE,
             )
