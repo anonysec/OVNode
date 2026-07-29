@@ -4,7 +4,7 @@ import re
 
 from core.logger import logger
 from core.schema.all_schemas import SetSettingsModel
-from core.service.user_managment import CLIENTS_DIR
+from core.service.user_management import CLIENTS_DIR
 
 
 def change_config(request: SetSettingsModel) -> bool:

@@ -10,9 +10,11 @@ import logging
 import os
 import subprocess
 
+from core.easyrsa import run_easyrsa as _easyrsa
+
 logger = logging.getLogger("pki_setup")
 
-# Path constants — must match user_managment.py
+# Re-export for backward compatibility with user_management.py
 EASYRSA_DIR = "/etc/openvpn/server/easy-rsa"
 PKI_DIR = "/etc/openvpn/server/pki"
 SERVER_CONF = "/etc/openvpn/server/server.conf"
@@ -47,37 +49,6 @@ def _setup_easyrsa():
     if os.path.exists(src):
         subprocess.run(["cp", "-r", f"{src}/.", EASYRSA_DIR], check=True)
         os.chmod(os.path.join(EASYRSA_DIR, "easyrsa"), 0o755)
-
-
-def _easyrsa(*args, timeout=120):
-    """Run easyrsa --pki-dir=PKI_DIR with EASYRSA_BATCH=1. Returns True on success."""
-    easyrsa_bin = os.path.join(EASYRSA_DIR, "easyrsa")
-    if not os.path.exists(easyrsa_bin):
-        logger.error("easyrsa not found at %s", easyrsa_bin)
-        return False
-    try:
-        cmd = [easyrsa_bin, f"--pki-dir={PKI_DIR}"] + list(args)
-        env = {**os.environ, "EASYRSA_BATCH": "1"}
-        subprocess.run(
-            cmd,
-            cwd=EASYRSA_DIR,
-            env=env,
-            check=True,
-            capture_output=True,
-            timeout=timeout,
-        )
-        return True
-    except subprocess.CalledProcessError as e:
-        logger.error(
-            "easyrsa %s failed (rc=%d): %s",
-            " ".join(args),
-            e.returncode,
-            e.stderr[-300:].decode() if e.stderr else str(e),
-        )
-        return False
-    except Exception as e:
-        logger.error("easyrsa %s error: %s", " ".join(args), e)
-        return False
 
 
 def _ensure_dir_tree():
