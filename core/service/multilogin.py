@@ -26,15 +26,15 @@ from core.logger import logger
 SERVER_CONF = "/etc/openvpn/server/server.conf"
 SCRIPTS_DST_DIR = "/etc/openvpn/scripts"
 LIMITS_DIR = "/etc/openvpn/limits"
-ACTIVE_DIR = "/etc/openvpn/ovpanel-active"
+ACTIVE_DIR = "/etc/openvpn/ovnode-active"
 LOCK_FILE = os.path.join(ACTIVE_DIR, ".lock")
 SCRIPTS_SRC_DIR = os.path.join(os.path.dirname(__file__), "..", "scripts")
 
-CONNECT_DST = os.path.join(SCRIPTS_DST_DIR, "ovpanel-client-connect.sh")
-DISCONNECT_DST = os.path.join(SCRIPTS_DST_DIR, "ovpanel-client-disconnect.sh")
+CONNECT_DST = os.path.join(SCRIPTS_DST_DIR, "ovnode-client-connect.sh")
+DISCONNECT_DST = os.path.join(SCRIPTS_DST_DIR, "ovnode-client-disconnect.sh")
 
 # Path the connect script reads to count live sessions. Must match the
-# `status` directive in server.conf and OVPANEL_STATUS_FILE in the script.
+# `status` directive in server.conf and OVNODE_STATUS_FILE in the script.
 STATUS_FILE = "/var/log/openvpn-status.log"
 
 # Directives we need in server.conf for an exact N-device per-cert limit.
@@ -94,8 +94,8 @@ def _install_scripts() -> bool:
     _fix_runtime_permissions()
 
     for fname, dst in (
-        ("ovpanel-client-connect.sh", CONNECT_DST),
-        ("ovpanel-client-disconnect.sh", DISCONNECT_DST),
+        ("ovnode-client-connect.sh", CONNECT_DST),
+        ("ovnode-client-disconnect.sh", DISCONNECT_DST),
     ):
         src = os.path.join(SCRIPTS_SRC_DIR, fname)
         if not os.path.exists(src):

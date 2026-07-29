@@ -3,9 +3,9 @@
 
 set -euo pipefail
 
-ACTIVE_DIR="/etc/openvpn/ovpanel-active"
+ACTIVE_DIR="/etc/openvpn/ovnode-active"
 LOCK_FILE="${ACTIVE_DIR}/.lock"
-LOG_TAG="ovpanel-mlogin"
+LOG_TAG="ovnode-mlogin"
 
 cn="${common_name:-${1:-}}"
 

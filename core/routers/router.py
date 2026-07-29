@@ -5,10 +5,10 @@ from fastapi.responses import FileResponse
 from core.auth.auth import check_api_key
 from core.schema.all_schemas import ResponseModel, SetSettingsModel, User, UserLimit
 from core.service.sessions import disconnect_user, user_diagnostics
-from core.service.user_managment import (
+from core.service.user_management import (
     change_user_status as change_user_status_on_server,
 )
-from core.service.user_managment import (
+from core.service.user_management import (
     create_user_on_server,
     delete_user_on_server,
     download_ovpn_file,
@@ -79,7 +79,7 @@ async def get_session_diagnostics(
 @router.post("/user/{uid}/disconnect", response_model=ResponseModel)
 async def disconnect_user_sessions(uid: str, api_key: str = Depends(check_api_key)):
     """Best-effort disconnect for a user; also clears stale active markers."""
-    from core.service.user_managment import _cn_from_uid
+    from core.service.user_management import _cn_from_uid
 
     cn = _cn_from_uid(uid)
     return ResponseModel(

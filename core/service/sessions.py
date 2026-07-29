@@ -14,9 +14,9 @@ from core.logger import logger
 from core.validation import _CLIENT_NAME_RE
 
 STATUS_FILE = "/var/log/openvpn-status.log"
-ACTIVE_DIR = "/etc/openvpn/ovpanel-active"
-MANAGEMENT_HOST = os.getenv("OVPANEL_OPENVPN_MANAGEMENT_HOST", "127.0.0.1")
-MANAGEMENT_PORT = int(os.getenv("OVPANEL_OPENVPN_MANAGEMENT_PORT", "7505"))
+ACTIVE_DIR = "/etc/openvpn/ovnode-active"
+MANAGEMENT_HOST = os.getenv("OVNODE_MANAGEMENT_HOST", "127.0.0.1")
+MANAGEMENT_PORT = int(os.getenv("OVNODE_MANAGEMENT_PORT", "7505"))
 
 
 def _split_real_address(real_address: str) -> tuple[str, str]:
@@ -29,36 +29,9 @@ def _split_real_address(real_address: str) -> tuple[str, str]:
 
 
 def _read_status_sessions() -> list[dict[str, Any]]:
-    sessions: list[dict[str, Any]] = []
-    try:
-        with open(STATUS_FILE, encoding="utf-8", errors="ignore") as f:
-            for line in f:
-                line = line.strip()
-                if not (line.startswith("CLIENT_LIST,") or line.startswith("CLIENT_LIST\t")):
-                    continue
-                if "Common Name" in line:
-                    continue
-                parts = line.split("\t") if "\t" in line else line.split(",")
-                if len(parts) < 7:
-                    continue
-                ip, port = _split_real_address(parts[2])
-                sessions.append(
-                    {
-                        "common_name": parts[1],
-                        "real_address": parts[2],
-                        "trusted_ip": ip,
-                        "trusted_port": port,
-                        "virtual_address": parts[3] if len(parts) > 3 else "",
-                        "bytes_received": int(parts[5] or 0),
-                        "bytes_sent": int(parts[6] or 0),
-                        "connected_since": parts[7] if len(parts) > 7 else "",
-                    }
-                )
-    except FileNotFoundError:
-        logger.warning("OpenVPN status file not found: %s", STATUS_FILE)
-    except Exception as e:
-        logger.warning("Failed to parse OpenVPN status file: %s", e)
-    return sessions
+    """Read live sessions from the OpenVPN status file."""
+    from core.service.status_parser import parse_sessions
+    return parse_sessions()
 
 
 def _read_active_files() -> list[dict[str, Any]]:
@@ -96,14 +69,14 @@ def _journal_lines(hours: int) -> list[str]:
     since = f"{max(1, min(int(hours or 8), 168))} hours ago"
     try:
         out = subprocess.check_output(
-            ["journalctl", "-t", "ovpanel-mlogin", "--since", since, "--no-pager"],
+            ["journalctl", "-t", "ovnode-mlogin", "--since", since, "--no-pager"],
             text=True,
             errors="ignore",
             timeout=8,
         )
         return out.splitlines()
     except Exception as e:
-        logger.warning("Failed to read ovpanel-mlogin journal: %s", e)
+        logger.warning("Failed to read ovnode-mlogin journal: %s", e)
         return []
 
 
