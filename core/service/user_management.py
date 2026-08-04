@@ -6,6 +6,7 @@ import subprocess
 from core.easyrsa import run_easyrsa as _easyrsa
 from core.logger import logger as logger
 from core.pki_setup import PKI_DIR
+from core.validation import DeleteResult
 
 # Get the node-specific logger
 
@@ -196,20 +197,24 @@ def create_user_on_server(uid: str, name: str, max_logins: int = 1) -> bool:
     return os.path.exists(paths["ovpn"])
 
 
-def delete_user_on_server(uid: str) -> bool | str:
-    """Delete/revoke a client certificate."""
+def delete_user_on_server(uid: str) -> DeleteResult:
+    """Delete/revoke a client certificate. Returns a DeleteResult."""
     cn = _cn_from_uid(uid)
     paths = _client_paths(uid)
 
     # Check if user actually exists
     if not os.path.exists(paths["crt"]) and not os.path.exists(paths["ovpn"]):
         logger.warning("User '%s' (uid=%s) not found on node", cn, uid)
-        return "not_found"
+        return DeleteResult.NOT_FOUND
 
     # Revoke with easyrsa
-    if os.path.exists(paths["crt"]):
-        _easyrsa("revoke", cn)
-        _easyrsa("gen-crl")
+    try:
+        if os.path.exists(paths["crt"]):
+            _easyrsa("revoke", cn)
+            _easyrsa("gen-crl")
+    except Exception as e:
+        logger.error("Failed to revoke user '%s': %s", cn, e)
+        return DeleteResult.FAILED
 
     # Remove local files
     for key in ["ovpn", "crt", "inline", "ccd", "limit"]:
@@ -222,7 +227,7 @@ def delete_user_on_server(uid: str) -> bool | str:
 
     _remove_name(uid)
     logger.info("Revoked and cleaned up user '%s' (uid=%s)", cn, uid)
-    return True
+    return DeleteResult.OK
 
 
 def change_user_status(uid: str, status: str) -> bool:

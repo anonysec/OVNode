@@ -18,7 +18,6 @@ when it actually changed something.
 
 import os
 import shutil
-import subprocess
 from pathlib import Path
 
 from core.logger import logger
@@ -154,15 +153,9 @@ def _patch_server_conf() -> bool:
 
 
 def _restart_openvpn() -> None:
-    try:
-        subprocess.run(
-            ["/usr/bin/systemctl", "restart", "openvpn-server@server"],
-            check=True,
-            timeout=30,
-        )
-        logger.info("multilogin: OpenVPN restarted")
-    except Exception as e:
-        logger.error("multilogin: failed to restart OpenVPN: %s", e)
+    from core.service.openvpn_control import restart_openvpn
+    if not restart_openvpn():
+        logger.error("multilogin: failed to restart OpenVPN")
 
 
 def ensure_multilogin_setup() -> None:

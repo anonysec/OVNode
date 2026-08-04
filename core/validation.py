@@ -12,6 +12,7 @@ validated by validate_user_id().
 
 from __future__ import annotations
 
+import enum
 import re
 import uuid
 
@@ -27,6 +28,12 @@ _UUID_RE = re.compile(
 
 # Simple numeric or alphanumeric ID (panel may use auto-increment ints or short strings)
 _SIMPLE_ID_RE = re.compile(r"^[A-Za-z0-9_-]{1,64}$")
+
+
+class DeleteResult(enum.Enum):
+    OK = "ok"
+    NOT_FOUND = "not_found"
+    FAILED = "failed"
 
 
 def validate_client_name(name: str | None) -> str | None:

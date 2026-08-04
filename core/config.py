@@ -20,5 +20,13 @@ class Settings(BaseSettings):
 
     model_config = {"env_file": os.path.join(os.path.dirname(__file__), "../.env")}
 
+    def __init__(self, **data):
+        super().__init__(**data)
+        if len(self.api_key) < 16:
+            raise ValueError(
+                "API_KEY must be at least 16 characters for security. "
+                "Generate one with: openssl rand -hex 32"
+            )
+
 
 settings = Settings()

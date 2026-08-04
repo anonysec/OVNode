@@ -175,9 +175,9 @@ def test_delete_user():
     r = c.delete("/sync/user/6ca1dd29-b6a4-41c8-adc9-e154cf3f8557", headers=headers)
     assert r.status_code == 200
     body = r.json()
-    # Delete fails without OpenVPN backend
+    # Delete fails without OpenVPN backend OR if user not found
     assert body["success"] is False
-    assert body["msg"] == "Failed to delete user"
+    assert body["msg"] in ("User not found", "Failed to delete user")
 
 
 def test_delete_user_simple_id():
@@ -187,7 +187,7 @@ def test_delete_user_simple_id():
     assert r.status_code == 200
     body = r.json()
     assert body["success"] is False
-    assert body["msg"] == "Failed to delete user"
+    assert body["msg"] in ("User not found", "Failed to delete user")
 
 
 def test_delete_user_invalid_id():
@@ -198,6 +198,16 @@ def test_delete_user_invalid_id():
     body = r.json()
     assert body["success"] is False
     assert body["msg"] == "Invalid user id (must be UUID)"
+
+
+def test_delete_user_not_found():
+    """DELETE /user/{uid} with non-existent UUID."""
+    c, headers = _client()
+    r = c.delete("/sync/user/d3c9a618-6311-4f8a-9b6c-7e2d2a1b3c44", headers=headers)
+    assert r.status_code == 200
+    body = r.json()
+    assert body["success"] is False
+    assert body["msg"] == "User not found"
 
 
 def test_download_ovpn_missing():
