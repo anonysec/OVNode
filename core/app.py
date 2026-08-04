@@ -3,11 +3,22 @@ from contextlib import asynccontextmanager
 
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
+from starlette.middleware.base import BaseHTTPMiddleware
 
 from core.config import settings
 from core.logger import logger
 from core.pki_setup import init_pki
 from core.routers import core_router
+
+
+class SecurityHeadersMiddleware(BaseHTTPMiddleware):
+    async def dispatch(self, request, call_next):
+        response = await call_next(request)
+        response.headers["X-Content-Type-Options"] = "nosniff"
+        response.headers["X-Frame-Options"] = "DENY"
+        if request.url.scheme == "https":
+            response.headers["Strict-Transport-Security"] = "max-age=31536000"
+        return response
 
 
 @asynccontextmanager
@@ -31,10 +42,11 @@ api = FastAPI(
 # Apply security headers middleware
 api.add_middleware(
     CORSMiddleware,
-    allow_origins=[os.getenv("PANEL_ORIGINS", "*")],
-    allow_credentials=os.getenv("PANEL_ORIGINS", "") != "*",
+    allow_origins=os.getenv("PANEL_ORIGINS", "http://localhost:5173,http://localhost:2095").split(","),
+    allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
 )
+api.add_middleware(SecurityHeadersMiddleware)
 
 api.include_router(core_router)

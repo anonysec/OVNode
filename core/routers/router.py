@@ -16,7 +16,7 @@ from core.service.user_management import (
     set_user_limit,
 )
 from core.setting.core import change_config
-from core.validation import validate_user_id
+from core.validation import DeleteResult, validate_user_id
 from core.version import __version__
 
 router = APIRouter(prefix="/sync", tags=["node_sync"])
@@ -111,13 +111,13 @@ async def delete_user(uid: str, api_key: str = Depends(check_api_key)):
     if safe_id is None:
         return ResponseModel(success=False, msg="Invalid user id (must be UUID)")
     result = delete_user_on_server(safe_id)
-    if result is True:
+    if result == DeleteResult.OK:
         return ResponseModel(
             success=True,
             msg="User deleted successfully",
             data={"id": safe_id},
         )
-    if result == "not_found":
+    if result == DeleteResult.NOT_FOUND:
         return ResponseModel(success=False, msg="User not found")
     return ResponseModel(success=False, msg="Failed to delete user")
 

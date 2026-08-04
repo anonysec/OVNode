@@ -130,6 +130,7 @@ def user_diagnostics(common_name: str | None = None, hours: int = 8) -> dict[str
 def _management_available() -> bool:
     try:
         with socket.create_connection((MANAGEMENT_HOST, MANAGEMENT_PORT), timeout=1.0) as s:
+            s.settimeout(1.0)
             s.recv(512)
             s.sendall(b"quit\n")
         return True

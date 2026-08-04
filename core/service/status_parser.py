@@ -1,7 +1,7 @@
 """Parse OpenVPN status file (version 2/3). Two functions. That's it."""
 
-import os
 import logging
+import os
 
 logger = logging.getLogger("ovnode")
 STATUS_FILE = "/var/log/openvpn-status.log"

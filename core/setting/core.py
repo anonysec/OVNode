@@ -112,57 +112,7 @@ def _invalidate_cached_ovpn() -> None:
 
 
 def restart_openvpn() -> None:
-    """Restart the OpenVPN service.
-
-    Tries systemctl first (for non-Docker installs), then falls back to
-    sending SIGHUP to the OpenVPN master process (for Docker containers
-    where systemd is not available).
-    """
-    import signal
-    import subprocess
-
-    logger.info("Restarting OpenVPN service...")
-
-    # Try systemctl first (works on bare-metal / systemd installs)
-    try:
-        subprocess.run(
-            ["/usr/bin/systemctl", "restart", "openvpn-server@server"],
-            check=True,
-            timeout=30,
-        )
-        logger.info("OpenVPN service restarted successfully via systemctl.")
-        return
-    except FileNotFoundError:
-        logger.info("systemctl not found (likely Docker); falling back to SIGHUP.")
-    except subprocess.TimeoutExpired:
-        logger.error("Timeout while restarting OpenVPN service via systemctl")
-    except Exception as e:
-        logger.warning(f"systemctl restart failed ({e}); falling back to SIGHUP.")
-
-    # Fallback: send SIGHUP to the OpenVPN master process
-    try:
-        pids = glob.glob("/run/openvpn-server/*.pid")
-        if not pids:
-            # Try finding openvpn process directly
-            result = subprocess.run(
-                ["pgrep", "-f", "openvpn"],
-                capture_output=True,
-                text=True,
-                timeout=5,
-            )
-            pids = result.stdout.strip().split() if result.stdout.strip() else []
-        for pid_file in pids:
-            try:
-                if pid_file.isdigit():
-                    pid = int(pid_file)
-                else:
-                    with open(pid_file) as f:
-                        pid = int(f.read().strip())
-                os.kill(pid, signal.SIGHUP)
-                logger.info("Sent SIGHUP to OpenVPN PID %s.", pid)
-            except (ValueError, FileNotFoundError, ProcessLookupError) as e:
-                logger.warning("Could not signal PID from %s: %s", pid_file, e)
-        if not pids:
-            logger.warning("No OpenVPN process found to restart; config will apply on next start.")
-    except Exception as e:
-        logger.error("Error restarting OpenVPN via SIGHUP: %s", e)
+    """Restart the OpenVPN service (delegates to shared module)."""
+    from core.service.openvpn_control import restart_openvpn
+    if not restart_openvpn():
+        logger.error("Failed to restart OpenVPN from setting/core.py")
