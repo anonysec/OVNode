@@ -519,45 +519,27 @@ interactive_setup() {
     prompt_val API_KEY      "API key"       "$api_default"
 
     sep
-    line "  TLS:"
-    line "  ${WH}1${NC})  Let's Encrypt (domain)"
-    line "  ${WH}2${NC})  Let's Encrypt (IP)"
-    line "  ${WH}3${NC})  Self-signed cert"
-    line "  ${WH}4${NC})  Custom cert path"
-    line "  ${WH}5${NC})  None (HTTP)"
-    if [[ -t 0 ]]; then
-        printf "  Select [${GR}2${NC}] : "
-        read -r tls_choice
-    else
-        tls_choice=2
+    if [[ -z "$TLS_METHOD" ]]; then
+        line "  TLS:"
+        line "  ${WH}1${NC})  Let's Encrypt (domain)"
+        line "  ${WH}2${NC})  Let's Encrypt (IP)"
+        line "  ${WH}3${NC})  Self-signed cert"
+        line "  ${WH}4${NC})  Custom cert path"
+        line "  ${WH}5${NC})  None (HTTP)"
+        if [[ -t 0 ]]; then
+            printf "  Select [${GR}5${NC}] : "
+            read -r tls_choice
+        else
+            tls_choice=5
+        fi
+        case "${tls_choice:-5}" in
+            1) TLS_METHOD="letsencrypt" ;;
+            2) TLS_METHOD="letsencrypt-ip" ;;
+            3) TLS_METHOD="selfsigned" ;;
+            4) TLS_METHOD="custom" ;;
+            *) TLS_METHOD="none" ;;
+        esac
     fi
-    case "${tls_choice:-5}" in
-        1)
-            TLS_METHOD="letsencrypt"
-            while [[ -z "$TLS_DOMAIN" ]]; do
-                if [[ -t 0 ]]; then
-                    printf "  ${WH}Domain${NC} [${GY}example.com${NC}] : "
-                    read -r TLS_DOMAIN
-                else
-                    die "Domain is required for Let's Encrypt (use --tls-domain DOMAIN)"
-                fi
-            done
-            ;;
-        2)
-            TLS_METHOD="letsencrypt-ip"
-            if [[ -z "$TLS_DOMAIN" ]]; then
-                local real_ip=$(hostname -I | awk '{print $1}')
-                if [[ -t 0 ]]; then
-                    printf "  ${WH}IP${NC} [${GR}%s${NC}] : " "$real_ip"
-                    read -r TLS_DOMAIN
-                fi
-                [[ -z "$TLS_DOMAIN" ]] && TLS_DOMAIN="$real_ip"
-            fi
-            ;;
-        3) TLS_METHOD="selfsigned" ;;
-        4) TLS_METHOD="custom"; prompt_val TLS_KEY "TLS key path" ""; prompt_val TLS_CERT "TLS cert path" "" ;;
-        *) TLS_METHOD="none" ;;
-    esac
 
     sep
     field "Node name"     "$NODE_NAME"
@@ -621,6 +603,11 @@ main() {
     }
 
     [[ -z "$PORT" && -z "$API_KEY" ]] && interactive_setup
+
+    # Validate API key length if provided
+    if [[ -n "$API_KEY" && ${#API_KEY} -lt 16 ]]; then
+        die "API key must be at least 16 characters (generate with: openssl rand -hex 32)"
+    fi
 
     check_root
     check_deps
