@@ -39,13 +39,12 @@ api = FastAPI(
     lifespan=lifespan,
 )
 
-# Apply security headers middleware
+# CORS middleware - default to empty (same-origin only).
+# PANEL_ORIGINS must be explicitly set by installer for cross-origin access.
 api.add_middleware(
     CORSMiddleware,
-    allow_origins=os.getenv("PANEL_ORIGINS", "http://localhost:5173,http://localhost:2095").split(
-        ","
-    ),
-    allow_credentials=True,
+    allow_origins=os.getenv("PANEL_ORIGINS", "").split(",") if os.getenv("PANEL_ORIGINS") else [],
+    allow_credentials=False,
     allow_methods=["*"],
     allow_headers=["*"],
 )
