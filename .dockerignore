@@ -1,6 +1,36 @@
+# VCS
 .git
-.venv
+.github
+.gitignore
+
+# Environment
+.env
+.env.*
+!.env.example
+
+# Python
 __pycache__
-*.pyc
-data
+*.py[cod]
+*.egg-info
+.venv
+venv
+.pytest_cache
+.ruff_cache
+.coverage
+
+# Node
+node_modules
+
+# Build artifacts
+dist
+build
+
+# Tests / docs
+tests
+*.md
+
+# Editor / OS
+.idea
 .vscode
+*.swp
+.DS_Store

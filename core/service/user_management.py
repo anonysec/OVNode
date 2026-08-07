@@ -6,6 +6,7 @@ import subprocess
 from core.easyrsa import run_easyrsa as _easyrsa
 from core.logger import logger as logger
 from core.pki_setup import PKI_DIR
+from core.service.openvpn_control import restart_openvpn as restart_openvpn_service
 from core.validation import DeleteResult
 
 # Get the node-specific logger
@@ -70,6 +71,9 @@ def _remove_name(uid: str) -> None:
 
 
 def _client_paths(uid: str) -> dict:
+    # CN = user-provided CN (numeric ID). Validate before touching paths.
+    # This function is called ONLY after validate_user_id() succeeded, and
+    # CNs are passed through validate_client_name() elsewhere.
     cn = _cn_from_uid(uid)
     return {
         "name": cn,
@@ -261,55 +265,6 @@ def change_user_status(uid: str, status: str) -> bool:
             return False
 
     return False
-
-
-def restart_openvpn_service() -> bool:
-    try:
-        subprocess.run(
-            ["/usr/bin/systemctl", "restart", "openvpn-server@server"],
-            check=True,
-            timeout=30,
-        )
-        logger.info("OpenVPN service restarted successfully.")
-        return True
-    except FileNotFoundError:
-        logger.info("systemctl not found (likely Docker); falling back to SIGHUP.")
-    except subprocess.TimeoutExpired:
-        logger.error("Timeout while restarting OpenVPN service via systemctl")
-    except Exception as e:
-        logger.warning("systemctl restart failed (%s); falling back to SIGHUP.", e)
-
-    try:
-        import signal
-
-        pids = glob.glob("/run/openvpn-server/*.pid")
-        if not pids:
-            result = subprocess.run(
-                ["pgrep", "-f", "openvpn"],
-                capture_output=True,
-                text=True,
-                timeout=5,
-            )
-            pids = result.stdout.strip().split() if result.stdout.strip() else []
-        for pid_file in pids:
-            try:
-                real_path = os.path.realpath(pid_file)
-                if not real_path.startswith("/run/openvpn-server/"):
-                    logger.warning("Skipping PID file outside expected dir: %s", pid_file)
-                    continue
-                if not os.path.isfile(real_path):
-                    continue
-                pid = int(open(real_path).read().strip())
-                os.kill(pid, signal.SIGHUP)
-                logger.info("Sent SIGHUP to OpenVPN PID %s.", pid)
-            except (ValueError, FileNotFoundError, ProcessLookupError) as e:
-                logger.warning("Could not signal PID from %s: %s", pid_file, e)
-        if not pids:
-            logger.warning("No OpenVPN process found to restart.")
-    except Exception as e:
-        logger.error("Error restarting OpenVPN via SIGHUP: %s", e)
-        return False
-    return True
 
 
 async def download_ovpn_file(uid: str) -> str | None:

@@ -15,7 +15,8 @@ WORKDIR /app
 
 COPY pyproject.toml uv.lock* ./
 COPY core/ ./core/
-COPY . .
+COPY main.py ./
+COPY core/scripts/ ./core/scripts/
 
 RUN pip install --no-cache-dir uv \
     && uv sync --frozen || uv sync
