@@ -1,4 +1,3 @@
-import glob
 import json
 import os
 import subprocess
@@ -6,7 +5,6 @@ import subprocess
 from core.easyrsa import run_easyrsa as _easyrsa
 from core.logger import logger as logger
 from core.pki_setup import PKI_DIR
-from core.service.openvpn_control import restart_openvpn as restart_openvpn_service
 from core.validation import DeleteResult
 
 # Get the node-specific logger
