@@ -42,9 +42,32 @@ jobs:
       - uses: actions/checkout@v4
       - uses: actions/setup-python@v5
         with:
-          python-version: "3.11"
-      - run: pip install uv
+          python-version: "3.12"
+      - run: pip install uv pip-audit
       - run: uv sync
+      - name: Audit Python dependencies for known vulnerabilities
+        run: pip-audit -r <(uv pip freeze) || echo "::warning::pip-audit found vulnerabilities"
       - name: Build Docker image
         run: |
           docker build -t ovnode:ci . 2>/dev/null || echo "Docker not available in this runner"
+
+  security-scan:
+    needs: [test, lint]
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      security-events: write
+    steps:
+      - uses: actions/checkout@v4
+      - name: Run Trivy vulnerability scanner
+        uses: aquasecurity/trivy-action@0.24.0
+        with:
+          scan-type: 'fs'
+          scan-ref: '.'
+          format: 'sarif'
+          output: 'trivy-fs.sarif'
+      - name: Upload Trivy results to GitHub Security tab
+        uses: github/codeql-action/upload-sarif@v3
+        if: always()
+        with:
+          sarif_file: 'trivy-fs.sarif'

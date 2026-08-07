@@ -30,15 +30,9 @@ async def health_check():
 
 @router.get("/status", response_model=ResponseModel)
 async def get_status(
-    request: SetSettingsModel | None = None,
     api_key: str = Depends(check_api_key),
 ):
-    """Get the current status of the node and optionally set ovpn settings."""
-    if request is not None and request.set_new_setting:
-        change_settings = change_config(request)
-        if not change_settings:
-            return ResponseModel(success=False, msg="Failed to change settings")
-
+    """Get the current status of the node. GET is read-only."""
     status = {"status": "running", "version": __version__}
     cpu_usage = psutil.cpu_percent(interval=None)
     memory_info = psutil.virtual_memory()
@@ -49,6 +43,20 @@ async def get_status(
         }
     )
     return ResponseModel(success=True, msg="Node status retrieved successfully", data=status)
+
+
+@router.post("/config", response_model=ResponseModel)
+async def update_config(
+    request: SetSettingsModel,
+    api_key: str = Depends(check_api_key),
+):
+    """Apply VPN configuration settings."""
+    if not request.set_new_setting:
+        return ResponseModel(success=True, msg="No changes requested")
+    change_settings = change_config(request)
+    if not change_settings:
+        return ResponseModel(success=False, msg="Failed to change settings")
+    return ResponseModel(success=True, msg="Configuration updated successfully")
 
 
 @router.get("/usage", response_model=ResponseModel)
