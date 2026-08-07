@@ -154,6 +154,7 @@ def _patch_server_conf() -> bool:
 
 def _restart_openvpn() -> None:
     from core.service.openvpn_control import restart_openvpn
+
     if not restart_openvpn():
         logger.error("multilogin: failed to restart OpenVPN")
 

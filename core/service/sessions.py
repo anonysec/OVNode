@@ -31,6 +31,7 @@ def _split_real_address(real_address: str) -> tuple[str, str]:
 def _read_status_sessions() -> list[dict[str, Any]]:
     """Read live sessions from the OpenVPN status file."""
     from core.service.status_parser import parse_sessions
+
     return parse_sessions()
 
 
