@@ -44,11 +44,16 @@ def parse_sessions(path: str = STATUS_FILE) -> list[dict]:
     """Parse → list of session dicts with cn, real_address, ip, port."""
     results = []
     for cn, real_addr, virt_addr, rx, tx in _iter_client_lines(path):
-        ip, port = (real_addr.rsplit(":", 1) if ":" in real_addr else (real_addr, ""))
-        results.append({
-            "common_name": cn, "real_address": real_addr,
-            "trusted_ip": ip.strip("[]"), "trusted_port": port,
-            "virtual_address": virt_addr,
-            "bytes_received": rx, "bytes_sent": tx,
-        })
+        ip, port = real_addr.rsplit(":", 1) if ":" in real_addr else (real_addr, "")
+        results.append(
+            {
+                "common_name": cn,
+                "real_address": real_addr,
+                "trusted_ip": ip.strip("[]"),
+                "trusted_port": port,
+                "virtual_address": virt_addr,
+                "bytes_received": rx,
+                "bytes_sent": tx,
+            }
+        )
     return results

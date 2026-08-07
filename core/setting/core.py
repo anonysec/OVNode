@@ -114,5 +114,6 @@ def _invalidate_cached_ovpn() -> None:
 def restart_openvpn() -> None:
     """Restart the OpenVPN service (delegates to shared module)."""
     from core.service.openvpn_control import restart_openvpn
+
     if not restart_openvpn():
         logger.error("Failed to restart OpenVPN from setting/core.py")

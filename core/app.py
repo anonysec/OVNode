@@ -42,7 +42,9 @@ api = FastAPI(
 # Apply security headers middleware
 api.add_middleware(
     CORSMiddleware,
-    allow_origins=os.getenv("PANEL_ORIGINS", "http://localhost:5173,http://localhost:2095").split(","),
+    allow_origins=os.getenv("PANEL_ORIGINS", "http://localhost:5173,http://localhost:2095").split(
+        ","
+    ),
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],

@@ -97,7 +97,9 @@ def set_user_limit(uid: str, max_logins: int) -> bool:
             f.write(str(max_logins))
         logger.info(
             "Set login limit for uid='%s' (cn='%s') to %s",
-            uid, paths["name"], max_logins,
+            uid,
+            paths["name"],
+            max_logins,
         )
         return True
     except Exception as e:
@@ -241,7 +243,8 @@ def change_user_status(uid: str, status: str) -> bool:
                 os.remove(paths["ccd"])
                 logger.info(
                     "Soft-disabled user (removed CCD): uid='%s' cn='%s'",
-                    uid, paths["name"],
+                    uid,
+                    paths["name"],
                 )
             except Exception as e:
                 logger.error("Error removing CCD for uid='%s': %s", uid, e)
@@ -255,7 +258,8 @@ def change_user_status(uid: str, status: str) -> bool:
                 f.write("")
             logger.info(
                 "Soft-enabled user (created CCD): uid='%s' cn='%s'",
-                uid, paths["name"],
+                uid,
+                paths["name"],
             )
             return True
         except Exception as e:
@@ -287,4 +291,5 @@ async def download_ovpn_file(uid: str) -> str | None:
 def get_users_usage() -> dict | None:
     """Get per-user traffic usage from the OpenVPN status file."""
     from core.service.status_parser import parse_usage
+
     return parse_usage()
