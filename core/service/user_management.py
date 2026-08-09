@@ -36,6 +36,9 @@ def _save_uid_map(mapping: dict) -> None:
         os.makedirs(CLIENTS_DIR, exist_ok=True)
         with open(UID_MAP_FILE, "w") as f:
             json.dump(mapping, f)
+        # Restrict read access: uid_map.json maps numeric IDs to usernames —
+        # not world-readable. Only the service process needs it.
+        os.chmod(UID_MAP_FILE, 0o600)
     except Exception as e:
         logger.error("Failed to save uid map: %s", e)
 

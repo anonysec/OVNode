@@ -87,7 +87,7 @@ def restart_openvpn() -> bool:
         if not pids:
             # Try finding openvpn process directly
             result = subprocess.run(
-                ["pgrep", "-f", "openvpn"],
+                ["pgrep", "-x", "openvpn"],
                 capture_output=True,
                 text=True,
                 timeout=5,

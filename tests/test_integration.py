@@ -176,9 +176,10 @@ def test_delete_user():
     r = c.delete("/sync/user/6ca1dd29-b6a4-41c8-adc9-e154cf3f8557", headers=headers)
     assert r.status_code == 200
     body = r.json()
-    # Delete fails without OpenVPN backend OR if user not found
-    assert body["success"] is False
-    assert body["msg"] in ("User not found", "Failed to delete user")
+    # NOT_FOUND returns success=True so the panel's delete_user_on_all_nodes()
+    # can proceed even when the cert was already manually removed from the node.
+    assert body["success"] is True
+    assert body["msg"] == "User not found on node (already deleted)"
 
 
 def test_delete_user_simple_id():
@@ -187,8 +188,9 @@ def test_delete_user_simple_id():
     r = c.delete("/sync/user/42", headers=headers)
     assert r.status_code == 200
     body = r.json()
-    assert body["success"] is False
-    assert body["msg"] in ("User not found", "Failed to delete user")
+    # NOT_FOUND returns success=True so panel cleanup can proceed.
+    assert body["success"] is True
+    assert body["msg"] == "User not found on node (already deleted)"
 
 
 def test_delete_user_invalid_id():
@@ -207,8 +209,9 @@ def test_delete_user_not_found():
     r = c.delete("/sync/user/d3c9a618-6311-4f8a-9b6c-7e2d2a1b3c44", headers=headers)
     assert r.status_code == 200
     body = r.json()
-    assert body["success"] is False
-    assert body["msg"] == "User not found"
+    # NOT_FOUND returns success=True so panel cleanup can proceed.
+    assert body["success"] is True
+    assert body["msg"] == "User not found on node (already deleted)"
 
 
 def test_download_ovpn_missing():
