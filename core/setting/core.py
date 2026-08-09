@@ -8,8 +8,9 @@ from core.service.user_management import CLIENTS_DIR
 
 
 def change_config(request: SetSettingsModel) -> bool:
-    setting_file = "/etc/openvpn/server/server.conf"
-    template_file = "/etc/openvpn/server/client-common.txt"
+    openvpn_root = os.getenv("OVNODE_OPENVPN_ROOT", "/etc/openvpn")
+    setting_file = os.path.join(openvpn_root, "server", "server.conf")
+    template_file = os.path.join(openvpn_root, "server", "client-common.txt")
     # Normalize protocol to tcp/udp (ignore any tcp-server/udp6 style variants).
     proto = "tcp" if str(request.protocol).lower().startswith("tcp") else "udp"
     try:
@@ -76,7 +77,9 @@ def change_config(request: SetSettingsModel) -> bool:
         if changed:
             _invalidate_cached_ovpn()
 
-        restart_openvpn()
+        if not restart_openvpn():
+            logger.error("OpenVPN restart failed; configuration was not activated")
+            return False
 
         # CRITICAL for multi-login: re-apply scripts and server.conf directives
         try:

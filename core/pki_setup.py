@@ -15,20 +15,22 @@ from core.easyrsa import run_easyrsa as _easyrsa
 logger = logging.getLogger("pki_setup")
 
 # Re-export for backward compatibility with user_management.py
-EASYRSA_DIR = "/etc/openvpn/server/easy-rsa"
-PKI_DIR = "/etc/openvpn/server/pki"
-SERVER_CONF = "/etc/openvpn/server/server.conf"
-CLIENT_TEMPLATE = "/etc/openvpn/server/client-common.txt"
-TLS_KEY = "/etc/openvpn/server/tls.key"
+OPENVPN_ROOT = os.getenv("OVNODE_OPENVPN_ROOT", "/etc/openvpn")
+EASYRSA_DIR = os.path.join(OPENVPN_ROOT, "server", "easy-rsa")
+PKI_DIR = os.path.join(OPENVPN_ROOT, "server", "pki")
+SERVER_CONF = os.path.join(OPENVPN_ROOT, "server", "server.conf")
+CLIENT_TEMPLATE = os.path.join(OPENVPN_ROOT, "server", "client-common.txt")
+TLS_KEY = os.path.join(OPENVPN_ROOT, "server", "tls.key")
 CA_CERT = os.path.join(PKI_DIR, "ca.crt")
 SERVER_CERT = os.path.join(PKI_DIR, "issued", "server.crt")
 DH_PEM = os.path.join(PKI_DIR, "dh.pem")
+CRL_FILE = os.path.join(PKI_DIR, "crl.pem")
 
 REQUIRED_DIRS = [
-    "/etc/openvpn/server",
-    "/etc/openvpn/clients",
-    "/etc/openvpn/ccd",
-    "/etc/openvpn/limits",
+    os.path.join(OPENVPN_ROOT, "server"),
+    os.path.join(OPENVPN_ROOT, "clients"),
+    os.path.join(OPENVPN_ROOT, "ccd"),
+    os.path.join(OPENVPN_ROOT, "limits"),
 ]
 
 
@@ -104,6 +106,8 @@ def init_pki():
             )
             os.chmod(TLS_KEY, 0o600)
             logger.info("TLS key generated and permissions set.")
+        if not _ensure_crl():
+            raise RuntimeError("Certificate revocation list is unavailable")
         _ensure_server_conf()
         _ensure_client_template()
         return
@@ -119,19 +123,21 @@ def init_pki():
 
     # Build CA (non-interactive)
     if not _easyrsa("build-ca", "nopass"):
-        logger.error("CA creation failed — check logs above.")
-        return
+        raise RuntimeError("CA creation failed")
     logger.info("CA certificate created.")
 
     # Build server cert
     if not _easyrsa("build-server-full", "server", "nopass"):
-        logger.error("Server cert creation failed.")
-        return
+        raise RuntimeError("Server certificate creation failed")
     logger.info("Server certificate created.")
 
     # Generate DH params
-    _easyrsa("gen-dh")
+    if not _easyrsa("gen-dh"):
+        raise RuntimeError("DH parameter generation failed")
     logger.info("DH parameters generated.")
+
+    if not _ensure_crl():
+        raise RuntimeError("PKI initialization cannot continue without a CRL")
 
     # Generate TLS crypt key
     subprocess.run(
@@ -148,9 +154,46 @@ def init_pki():
     logger.info("PKI initialization complete.")
 
 
+def _ensure_crl() -> bool:
+    """Generate the certificate revocation list when it is missing.
+
+    OpenVPN only enforces EasyRSA revocations when the CRL is both generated
+    and referenced by server.conf. Keep the file readable by the OpenVPN
+    runtime user, but never writable by it.
+    """
+    if os.path.exists(CRL_FILE):
+        try:
+            os.chmod(CRL_FILE, 0o644)
+        except OSError:
+            pass
+        return True
+    if not _easyrsa("gen-crl"):
+        logger.error("CRL generation failed — revoked certificates may remain usable.")
+        return False
+    if not os.path.exists(CRL_FILE):
+        logger.error("EasyRSA reported CRL success but %s was not created.", CRL_FILE)
+        return False
+    try:
+        os.chmod(CRL_FILE, 0o644)
+    except OSError:
+        pass
+    logger.info("Certificate revocation list ready at %s", CRL_FILE)
+    return True
+
+
 def _ensure_server_conf():
-    """Write server.conf if missing."""
+    """Write server.conf if missing and ensure certificate revocation is enabled."""
     if os.path.exists(SERVER_CONF):
+        try:
+            with open(SERVER_CONF, encoding="utf-8") as f:
+                content = f.read()
+            directive = f"crl-verify {CRL_FILE}"
+            if directive not in content.splitlines():
+                with open(SERVER_CONF, "a", encoding="utf-8") as f:
+                    f.write(f"\n{directive}\n")
+                logger.info("Added CRL verification to existing server.conf")
+        except OSError as e:
+            logger.error("Could not ensure CRL verification in server.conf: %s", e)
         return
     port = os.environ.get("OPENVPN_PORT", "1194")
     content = f"""port {port}
@@ -161,6 +204,7 @@ cert {PKI_DIR}/issued/server.crt
 key {PKI_DIR}/private/server.key
 dh {PKI_DIR}/dh.pem
 tls-crypt {TLS_KEY}
+crl-verify {CRL_FILE}
 topology subnet
 server 10.8.0.0 255.255.255.0
 ifconfig-pool-persist /etc/openvpn/server/ipp.txt
@@ -177,12 +221,12 @@ user nobody
 group nogroup
 persist-key
 persist-tun
-status /etc/openvpn/server/status.log
-log-append /etc/openvpn/server/openvpn.log
+status {os.path.join(OPENVPN_ROOT, "server", "status.log")}
+log-append {os.path.join(OPENVPN_ROOT, "server", "openvpn.log")}
 verb 3
 explicit-exit-notify 0
-client-config-dir /etc/openvpn/ccd
-cd /etc/openvpn/server
+client-config-dir {os.path.join(OPENVPN_ROOT, "ccd")}
+cd {os.path.join(OPENVPN_ROOT, "server")}
 duplicate-cn
 max-clients 100
 """

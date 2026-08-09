@@ -11,7 +11,8 @@ import subprocess
 
 logger = logging.getLogger("ovnode.openvpn")
 
-SERVER_CONF = "/etc/openvpn/server/server.conf"
+_OPENVPN_ROOT = os.getenv("OVNODE_OPENVPN_ROOT", "/etc/openvpn")
+SERVER_CONF = os.path.join(_OPENVPN_ROOT, "server", "server.conf")
 
 
 def _openvpn_runtime_user_group() -> tuple[str, str]:

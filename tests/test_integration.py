@@ -44,7 +44,8 @@ def test_status_with_auth():
     body = r.json()
     assert body["success"] is True
     data = body["data"]
-    assert data["version"] == "1.5.0"
+    from core.version import __version__
+    assert data["version"] == __version__
     assert "cpu_usage" in data
     assert "memory_usage" in data
 

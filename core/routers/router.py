@@ -89,7 +89,10 @@ async def disconnect_user_sessions(uid: str, api_key: str = Depends(check_api_ke
     """Best-effort disconnect for a user; also clears stale active markers."""
     from core.service.user_management import _cn_from_uid
 
-    cn = _cn_from_uid(uid)
+    safe_id = validate_user_id(uid)
+    if safe_id is None:
+        raise HTTPException(status_code=400, detail="Invalid user id")
+    cn = _cn_from_uid(safe_id)
     return ResponseModel(
         success=True,
         msg="Disconnect command processed",
@@ -169,7 +172,10 @@ async def set_user_login_limit(payload: UserLimit, api_key: str = Depends(check_
 
 @router.get("/download/ovpn/{uid}")
 async def download_ovpn(uid: str, api_key: str = Depends(check_api_key)):
-    response = await download_ovpn_file(uid)
+    safe_id = validate_user_id(uid)
+    if safe_id is None:
+        raise HTTPException(status_code=400, detail="Invalid user id")
+    response = await download_ovpn_file(safe_id)
     if response:
         return FileResponse(
             path=response,

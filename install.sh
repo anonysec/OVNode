@@ -3,7 +3,7 @@
 # TLS-enabled, multi-node, Docker-aware installer
 # Usage: bash <(curl -Ls URL)
 
-set -uo pipefail
+set -Eeuo pipefail
 
 # ──────────────────────────────────────────────────────
 #  C O N F I G
@@ -38,8 +38,8 @@ spinner() {
         printf "\r  ${CY}%s${NC} %-48s" "${chars:$((i%9)):1}" "$msg" >&2
         sleep 0.1; ((i++))
     done
-    wait "$pid" 2>/dev/null
-    local rc=$?
+    local rc=0
+    wait "$pid" 2>/dev/null || rc=$?
     printf "\r\033[K" >&2
     [[ $rc -eq 0 ]] && step "$msg" || { line "${RD}  ✗${NC} $msg"; return 1; }
 }
@@ -56,7 +56,13 @@ prompt_val() {
         fi
     fi
     [[ -z "$val" ]] && val="$default"
-    eval "$var='$val'"
+    case "$var" in
+        NODE_NAME) NODE_NAME="$val" ;;
+        PORT) PORT="$val" ;;
+        VPN_PORT) VPN_PORT="$val" ;;
+        API_KEY) API_KEY="$val" ;;
+        *) die "Unknown installer variable: $var" ;;
+    esac
 }
 
 die() { echo -e "\n  ${RD}Error:${NC} $1\n"; exit 1; }
@@ -604,8 +610,11 @@ main() {
 
     [[ -z "$PORT" && -z "$API_KEY" ]] && interactive_setup
 
-    # Validate API key length if provided
-    if [[ -n "$API_KEY" && ${#API_KEY} -lt 16 ]]; then
+    # API key is mandatory for every installation path.
+    if [[ -z "$API_KEY" ]]; then
+        die "API key is required. Use --api-key or run the interactive installer."
+    fi
+    if [[ ${#API_KEY} -lt 16 ]]; then
         die "API key must be at least 16 characters (generate with: openssl rand -hex 32)"
     fi
 

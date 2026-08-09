@@ -13,8 +13,9 @@ from typing import Any
 from core.logger import logger
 from core.validation import _CLIENT_NAME_RE
 
-STATUS_FILE = "/var/log/openvpn-status.log"
-ACTIVE_DIR = "/etc/openvpn/ovnode-active"
+_OPENVPN_ROOT = os.getenv("OVNODE_OPENVPN_ROOT", "/etc/openvpn")
+STATUS_FILE = os.getenv("OVNODE_STATUS_FILE", os.path.join(_OPENVPN_ROOT, "server", "status.log"))
+ACTIVE_DIR = os.path.join(_OPENVPN_ROOT, "ovnode-active")
 MANAGEMENT_HOST = os.getenv("OVNODE_MANAGEMENT_HOST", "127.0.0.1")
 MANAGEMENT_PORT = int(os.getenv("OVNODE_MANAGEMENT_PORT", "7505"))
 

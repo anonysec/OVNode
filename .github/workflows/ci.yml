@@ -18,8 +18,7 @@ jobs:
       - run: uv sync
       - name: Create .env for tests
         run: |
-          if [ -f .env.example ]; then cp .env.example .env; fi
-          if [ ! -f .env ]; then echo "API_KEY=test_ci_key_for_import_only" > .env; fi
+          printf 'API_KEY=test_ci_key_for_import_only\n' > .env
       - run: uv run python -c "from core.app import api; print('App imports OK')"
       - run: uv run python -c "from core.config import settings; print('Config loads OK')"
 

@@ -35,6 +35,9 @@ data/*.db-wal
 # uv
 .python-version
 
+# Test fixtures
+.test-openvpn/
+
 # Logs
 *.log
 
