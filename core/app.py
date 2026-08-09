@@ -42,7 +42,7 @@ api = FastAPI(
 # Apply security headers middleware
 _panel_origins = [
     origin.strip()
-    for origin in os.getenv("PANEL_ORIGINS", "http://localhost:5173,http://localhost:2095").split(",")
+    for origin in os.getenv("PANEL_ORIGINS", "").split(",")
     if origin.strip()
 ]
 api.add_middleware(

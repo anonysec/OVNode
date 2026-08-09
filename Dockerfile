@@ -24,4 +24,4 @@ RUN pip install --no-cache-dir uv \
 EXPOSE 2083 1194/udp
 HEALTHCHECK --interval=30s --timeout=5s --start-period=5s --retries=3 \
     CMD curl -sf http://localhost:2083/sync/health || exit 1
-CMD ["sh", "-c", "uv run main.py"]
+CMD ["uv", "run", "main.py"]

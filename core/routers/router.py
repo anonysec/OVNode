@@ -129,7 +129,11 @@ async def delete_user(uid: str, api_key: str = Depends(check_api_key)):
             data={"id": safe_id},
         )
     if result == DeleteResult.NOT_FOUND:
-        return ResponseModel(success=False, msg="User not found")
+        # Treat NOT_FOUND as success: the cert is already gone from this node.
+        # The panel's delete_user_on_all_nodes() requires all() == True, so
+        # returning success here allows panel-side cleanup to proceed even when
+        # the cert was already manually removed from the node.
+        return ResponseModel(success=True, msg="User not found on node (already deleted)")
     return ResponseModel(success=False, msg="Failed to delete user")
 
 

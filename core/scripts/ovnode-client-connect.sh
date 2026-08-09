@@ -111,8 +111,18 @@ if [[ -z "$cn" ]]; then
 fi
 
 safe_cn="$(sanitize "$cn")"
-mkdir -p "$LIMITS_DIR" "$DISABLED_DIR" "$ACTIVE_DIR"
-chmod 755 "$ACTIVE_DIR" "$DISABLED_DIR" 2>/dev/null || true
+mkdir -p "$LIMITS_DIR" "$ACTIVE_DIR"
+chmod 755 "$ACTIVE_DIR" 2>/dev/null || true
+
+# DISABLED_DIR must exist and be readable. If it is missing or inaccessible
+# we fail-closed: deny the connection rather than risk allowing a disabled user.
+# The directory is created by ensure_multilogin_setup() at OVNode startup; its
+# absence indicates a filesystem or permissions problem that must be fixed.
+if [[ ! -d "$DISABLED_DIR" ]]; then
+    log "CN=$cn DISABLED_DIR missing or not a directory — fail-closed; REJECT"
+    exit 1
+fi
+chmod 755 "$DISABLED_DIR" 2>/dev/null || true
 
 # A missing CCD file is not an authentication denial. Keep an explicit
 # disabled marker so an already-issued certificate cannot reconnect after

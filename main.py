@@ -21,8 +21,13 @@ def main():
     from uvicorn import Config, Server
 
     from core.config import settings
+    import os as _os
     ssl_kwargs = {}
     if settings.ssl_certfile and settings.ssl_keyfile:
+        if not _os.path.isfile(settings.ssl_certfile):
+            raise SystemExit(f"SSL cert file not found: {settings.ssl_certfile}")
+        if not _os.path.isfile(settings.ssl_keyfile):
+            raise SystemExit(f"SSL key file not found: {settings.ssl_keyfile}")
         ssl_kwargs = {"ssl_certfile": settings.ssl_certfile, "ssl_keyfile": settings.ssl_keyfile}
 
     config = Config(app=api, host="0.0.0.0", port=settings.service_port, reload=False, workers=1, **ssl_kwargs)
