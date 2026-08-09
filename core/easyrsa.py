@@ -11,8 +11,9 @@ import subprocess
 logger = logging.getLogger("easyrsa")
 
 # Must match the paths used by pki_setup.py
-EASYRSA_DIR = "/etc/openvpn/server/easy-rsa"
-PKI_DIR = "/etc/openvpn/server/pki"
+_OPENVPN_ROOT = os.getenv("OVNODE_OPENVPN_ROOT", "/etc/openvpn")
+EASYRSA_DIR = os.path.join(_OPENVPN_ROOT, "server", "easy-rsa")
+PKI_DIR = os.path.join(_OPENVPN_ROOT, "server", "pki")
 
 
 def run_easyrsa(*args: str, timeout: int = 120, pki_dir: str | None = None) -> bool:

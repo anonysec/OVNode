@@ -10,10 +10,12 @@ from core.validation import DeleteResult
 # Get the node-specific logger
 
 # Where per-client simultaneous-login limits are stored.
-LIMITS_DIR = "/etc/openvpn/limits"
+_OPENVPN_ROOT = os.getenv("OVNODE_OPENVPN_ROOT", "/etc/openvpn")
+LIMITS_DIR = os.path.join(_OPENVPN_ROOT, "limits")
+DISABLED_DIR = os.path.join(_OPENVPN_ROOT, "disabled")
 
 # Where generated .ovpn config files are cached.
-CLIENTS_DIR = "/etc/openvpn/clients"
+CLIENTS_DIR = os.path.join(_OPENVPN_ROOT, "clients")
 
 # Mapping file: uid (numeric id as string) -> display name (for panel use)
 UID_MAP_FILE = os.path.join(CLIENTS_DIR, "uid_map.json")
@@ -78,8 +80,8 @@ def _client_paths(uid: str) -> dict:
         "ovpn": os.path.join(CLIENTS_DIR, f"{cn}.ovpn"),
         "crt": f"{PKI_DIR}/issued/{cn}.crt",
         "inline": f"{PKI_DIR}/inline/private/{cn}.inline",
-        "template": "/etc/openvpn/server/client-common.txt",
-        "ccd": f"/etc/openvpn/ccd/{cn}",
+        "template": os.path.join(_OPENVPN_ROOT, "server", "client-common.txt"),
+        "ccd": os.path.join(_OPENVPN_ROOT, "ccd", cn),
         "limit": os.path.join(LIMITS_DIR, cn),
     }
 
@@ -163,7 +165,7 @@ def create_user_on_server(uid: str, name: str, max_logins: int = 1) -> bool:
     if os.path.exists(paths["ovpn"]):
         if os.path.exists(paths["inline"]):
             _generate_ovpn_from_existing_cert(uid)
-        os.makedirs("/etc/openvpn/ccd", exist_ok=True)
+        os.makedirs(os.path.join(_OPENVPN_ROOT, "ccd"), exist_ok=True)
         open(paths["ccd"], "a").close()
         set_user_limit(uid, max_logins if max_logins is not None else 1)
         return True
@@ -171,7 +173,7 @@ def create_user_on_server(uid: str, name: str, max_logins: int = 1) -> bool:
     # Certificate exists but cached .ovpn missing — regenerate
     if os.path.exists(paths["crt"]) or os.path.exists(paths["inline"]):
         if _generate_ovpn_from_existing_cert(uid):
-            os.makedirs("/etc/openvpn/ccd", exist_ok=True)
+            os.makedirs(os.path.join(_OPENVPN_ROOT, "ccd"), exist_ok=True)
             open(paths["ccd"], "a").close()
             set_user_limit(uid, max_logins if max_logins is not None else 1)
             return True
@@ -194,7 +196,7 @@ def create_user_on_server(uid: str, name: str, max_logins: int = 1) -> bool:
     if os.path.exists(paths["inline"]):
         _generate_ovpn_from_existing_cert(uid)
 
-    os.makedirs("/etc/openvpn/ccd", exist_ok=True)
+    os.makedirs(os.path.join(_OPENVPN_ROOT, "ccd"), exist_ok=True)
     open(paths["ccd"], "a").close()
     set_user_limit(uid, max_logins if max_logins is not None else 1)
 
@@ -211,16 +213,28 @@ def delete_user_on_server(uid: str) -> DeleteResult:
         logger.warning("User '%s' (uid=%s) not found on node", cn, uid)
         return DeleteResult.NOT_FOUND
 
-    # Revoke with easyrsa
+    # Revoke with easyrsa and require both operations to succeed. Removing
+    # local files after a failed revoke would leave an untracked valid cert.
     try:
         if os.path.exists(paths["crt"]):
-            _easyrsa("revoke", cn)
-            _easyrsa("gen-crl")
+            if not _easyrsa("revoke", cn):
+                logger.error("Failed to revoke user '%s'", cn)
+                return DeleteResult.FAILED
+            if not _easyrsa("gen-crl"):
+                logger.error("Failed to regenerate CRL after revoking '%s'", cn)
+                return DeleteResult.FAILED
     except Exception as e:
         logger.error("Failed to revoke user '%s': %s", cn, e)
         return DeleteResult.FAILED
 
-    # Remove local files
+    # Remove local files and any explicit disabled marker.
+    try:
+        os.remove(os.path.join(DISABLED_DIR, _cn_from_uid(uid)))
+    except FileNotFoundError:
+        pass
+    except OSError as e:
+        logger.warning("Could not remove disabled marker for uid='%s': %s", uid, e)
+
     for key in ["ovpn", "crt", "inline", "ccd", "limit"]:
         fpath = paths.get(key)
         if fpath and os.path.exists(fpath):
@@ -237,33 +251,43 @@ def delete_user_on_server(uid: str) -> DeleteResult:
 def change_user_status(uid: str, status: str) -> bool:
     paths = _client_paths(uid)
 
-    if status == "deactivate":
-        if os.path.exists(paths["ccd"]):
-            try:
-                os.remove(paths["ccd"])
-                logger.info(
-                    "Soft-disabled user (removed CCD): uid='%s' cn='%s'",
-                    uid,
-                    paths["name"],
-                )
-            except Exception as e:
-                logger.error("Error removing CCD for uid='%s': %s", uid, e)
-                return False
-        return True
+    disabled_marker = os.path.join(DISABLED_DIR, paths["name"])
 
-    elif status == "activate":
+    if status == "deactivate":
         try:
-            os.makedirs("/etc/openvpn/ccd", exist_ok=True)
-            with open(paths["ccd"], "w") as f:
-                f.write("")
-            logger.info(
-                "Soft-enabled user (created CCD): uid='%s' cn='%s'",
-                uid,
-                paths["name"],
-            )
+            os.makedirs(DISABLED_DIR, exist_ok=True)
+            with open(disabled_marker, "w", encoding="utf-8") as f:
+                f.write("disabled\n")
+            os.chmod(disabled_marker, 0o644)
+            if os.path.exists(paths["ccd"]):
+                os.remove(paths["ccd"])
+            # Best effort disconnect: the disabled marker prevents reconnects
+            # even when the management socket is unavailable.
+            try:
+                from core.service.sessions import disconnect_user
+                disconnect_user(paths["name"])
+            except Exception as e:
+                logger.warning("Could not disconnect disabled uid='%s': %s", uid, e)
+            logger.info("Disabled user uid='%s' cn='%s'", uid, paths["name"])
             return True
         except Exception as e:
-            logger.error("Error creating CCD for uid='%s': %s", uid, e)
+            logger.error("Error disabling user uid='%s': %s", uid, e)
+            return False
+
+    if status == "activate":
+        try:
+            os.makedirs(os.path.join(_OPENVPN_ROOT, "ccd"), exist_ok=True)
+            os.makedirs(DISABLED_DIR, exist_ok=True)
+            try:
+                os.remove(disabled_marker)
+            except FileNotFoundError:
+                pass
+            with open(paths["ccd"], "w", encoding="utf-8") as f:
+                f.write("")
+            logger.info("Enabled user uid='%s' cn='%s'", uid, paths["name"])
+            return True
+        except Exception as e:
+            logger.error("Error enabling user uid='%s': %s", uid, e)
             return False
 
     return False

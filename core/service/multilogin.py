@@ -22,10 +22,13 @@ from pathlib import Path
 
 from core.logger import logger
 
-SERVER_CONF = "/etc/openvpn/server/server.conf"
-SCRIPTS_DST_DIR = "/etc/openvpn/scripts"
-LIMITS_DIR = "/etc/openvpn/limits"
-ACTIVE_DIR = "/etc/openvpn/ovnode-active"
+_OPENVPN_ROOT = os.getenv("OVNODE_OPENVPN_ROOT", "/etc/openvpn")
+SERVER_CONF = os.path.join(_OPENVPN_ROOT, "server", "server.conf")
+CRL_FILE = os.path.join(_OPENVPN_ROOT, "server", "pki", "crl.pem")
+SCRIPTS_DST_DIR = os.path.join(_OPENVPN_ROOT, "scripts")
+LIMITS_DIR = os.path.join(_OPENVPN_ROOT, "limits")
+ACTIVE_DIR = os.path.join(_OPENVPN_ROOT, "ovnode-active")
+DISABLED_DIR = os.path.join(_OPENVPN_ROOT, "disabled")
 LOCK_FILE = os.path.join(ACTIVE_DIR, ".lock")
 SCRIPTS_SRC_DIR = os.path.join(os.path.dirname(__file__), "..", "scripts")
 
@@ -34,7 +37,7 @@ DISCONNECT_DST = os.path.join(SCRIPTS_DST_DIR, "ovnode-client-disconnect.sh")
 
 # Path the connect script reads to count live sessions. Must match the
 # `status` directive in server.conf and OVNODE_STATUS_FILE in the script.
-STATUS_FILE = "/var/log/openvpn-status.log"
+STATUS_FILE = os.getenv("OVNODE_STATUS_FILE", os.path.join(_OPENVPN_ROOT, "server", "status.log"))
 
 # Directives we need in server.conf for an exact N-device per-cert limit.
 REQUIRED_DIRECTIVES = [
@@ -42,6 +45,7 @@ REQUIRED_DIRECTIVES = [
     "script-security 2",
     f"client-connect {CONNECT_DST}",
     f"client-disconnect {DISCONNECT_DST}",
+    f"crl-verify {CRL_FILE}",
 ]
 
 
@@ -71,6 +75,7 @@ def _fix_runtime_permissions() -> None:
     """Make the registry writable by the OpenVPN hook runtime user."""
     os.makedirs(LIMITS_DIR, exist_ok=True)
     os.makedirs(ACTIVE_DIR, exist_ok=True)
+    os.makedirs(DISABLED_DIR, exist_ok=True)
     Path(LOCK_FILE).touch(exist_ok=True)
 
     user, group = _openvpn_runtime_user_group()
@@ -81,6 +86,7 @@ def _fix_runtime_permissions() -> None:
         logger.warning("multilogin: failed to chown registry to %s:%s: %s", user, group, e)
     try:
         os.chmod(ACTIVE_DIR, 0o755)
+        os.chmod(DISABLED_DIR, 0o755)
         os.chmod(LOCK_FILE, 0o664)
     except Exception as e:
         logger.warning("multilogin: failed to chmod registry/lock: %s", e)

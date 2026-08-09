@@ -4,7 +4,8 @@ import logging
 import os
 
 logger = logging.getLogger("ovnode")
-STATUS_FILE = "/var/log/openvpn-status.log"
+_OPENVPN_ROOT = os.getenv("OVNODE_OPENVPN_ROOT", "/etc/openvpn")
+STATUS_FILE = os.getenv("OVNODE_STATUS_FILE", os.path.join(_OPENVPN_ROOT, "server", "status.log"))
 
 
 def _iter_client_lines(path: str):

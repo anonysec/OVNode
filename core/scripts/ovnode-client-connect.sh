@@ -20,9 +20,10 @@
 set -euo pipefail
 
 LIMITS_DIR="/etc/openvpn/limits"
+DISABLED_DIR="/etc/openvpn/disabled"
 ACTIVE_DIR="/etc/openvpn/ovnode-active"
 LOCK_FILE="${ACTIVE_DIR}/.lock"
-STATUS_FILE="${OVNODE_STATUS_FILE:-/var/log/openvpn-status.log}"
+STATUS_FILE="${OVNODE_STATUS_FILE:-/etc/openvpn/server/status.log}"
 MGMT_HOST="${OVNODE_MGMT_HOST:-127.0.0.1}"
 MGMT_PORT="${OVNODE_MGMT_PORT:-7505}"
 DEFAULT_LIMIT=1
@@ -35,6 +36,15 @@ cn="${common_name:-${1:-}}"
 
 log() { logger -t "$LOG_TAG" "$*" 2>/dev/null || echo "$LOG_TAG: $*" >&2; }
 sanitize() { printf '%s' "$1" | sed 's/[^A-Za-z0-9_.-]/_/g'; }
+
+mgmt_available() {
+    python3 - "$MGMT_HOST" "$MGMT_PORT" <<'PYPROBE' >/dev/null 2>&1
+import socket, sys
+host, port = sys.argv[1], int(sys.argv[2])
+with socket.create_connection((host, port), timeout=2):
+    pass
+PYPROBE
+}
 
 mgmt_send() {
     local cmd="$1"
@@ -101,8 +111,16 @@ if [[ -z "$cn" ]]; then
 fi
 
 safe_cn="$(sanitize "$cn")"
-mkdir -p "$LIMITS_DIR" "$ACTIVE_DIR"
-chmod 755 "$ACTIVE_DIR" 2>/dev/null || true
+mkdir -p "$LIMITS_DIR" "$DISABLED_DIR" "$ACTIVE_DIR"
+chmod 755 "$ACTIVE_DIR" "$DISABLED_DIR" 2>/dev/null || true
+
+# A missing CCD file is not an authentication denial. Keep an explicit
+# disabled marker so an already-issued certificate cannot reconnect after
+# Manager disables the user.
+if [[ -f "${DISABLED_DIR}/${safe_cn}" ]]; then
+    log "CN=$cn is disabled; REJECT"
+    exit 1
+fi
 
 limit="$DEFAULT_LIMIT"
 limit_file="${LIMITS_DIR}/${cn}"
@@ -208,10 +226,29 @@ if [[ "$status_count" -gt "$cur" ]]; then cur="$status_count"; fi
 
 if (( cur >= limit )); then
     if [[ "$limit" -eq 1 ]]; then
+        # Takeover must fail closed if the management socket is unavailable;
+        # otherwise the old session can remain connected while the new one is
+        # accepted, violating the single-login policy.
+        if ! mgmt_available; then
+            log "CN=$cn limit=1 active=$active_files status=$status_count; management unavailable; REJECT"
+            exit 1
+        fi
         log "CN=$cn limit=1 active=$active_files status=$status_count; TAKEOVER"
         kill_existing_sessions "$cn" "$current_real"
-        rm -f "${ACTIVE_DIR}/${safe_cn}."* 2>/dev/null || true
         sleep 0.3
+        remaining=0
+        if [[ -f "$STATUS_FILE" ]]; then
+            remaining="$(awk -v cn="$cn" -v current="$current_real" '
+                BEGIN { FS="\t" }
+                $1 == "CLIENT_LIST" && $2 == cn && $3 != current { c++ }
+                END { print c+0 }
+            ' "$STATUS_FILE" 2>/dev/null || echo 1)"
+        fi
+        if [[ "$remaining" -gt 0 ]]; then
+            log "CN=$cn takeover could not verify old session termination; REJECT"
+            exit 1
+        fi
+        rm -f "${ACTIVE_DIR}/${safe_cn}."* 2>/dev/null || true
     else
         log "CN=$cn limit=$limit active=$active_files status=$status_count; REJECT"
         exit 1

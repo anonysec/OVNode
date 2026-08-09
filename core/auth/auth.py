@@ -1,6 +1,7 @@
+import hashlib
 import hmac
 import time
-from collections import defaultdict
+from collections import OrderedDict
 from threading import Lock
 
 from fastapi import Header, HTTPException, status
@@ -11,19 +12,28 @@ from core.logger import logger
 # Simple in-memory per-key rate limiter.
 # Prevents a misconfigured/compromised panel from hammering the node,
 # which could saturate the OpenVPN management socket.
-_KEY = "_ovnode_ratelimit"
 _WINDOW = 60  # seconds
 _MAX_REQUESTS = 120  # per window
 
 
-_ratelimit_locks = defaultdict(Lock)
-_ratelimit_buckets: dict[str, list[float]] = {}
+_ratelimit_lock = Lock()
+_ratelimit_buckets: OrderedDict[str, list[float]] = OrderedDict()
+_MAX_BUCKETS = 10_000
 
 
 def _allowed(api_key: str) -> bool:
     now = time.monotonic()
-    key = str(api_key)
-    with _ratelimit_locks[key]:
+    # Do not retain attacker-controlled API-key strings in memory.
+    key = hashlib.sha256(str(api_key).encode()).hexdigest()[:32]
+    with _ratelimit_lock:
+        stale = [
+            k for k, values in _ratelimit_buckets.items()
+            if not values or now - values[-1] >= _WINDOW
+        ]
+        for stale_key in stale:
+            _ratelimit_buckets.pop(stale_key, None)
+        while len(_ratelimit_buckets) >= _MAX_BUCKETS and key not in _ratelimit_buckets:
+            _ratelimit_buckets.popitem(last=False)
         bucket = [ts for ts in _ratelimit_buckets.get(key, []) if now - ts < _WINDOW]
         if len(bucket) >= _MAX_REQUESTS:
             _ratelimit_buckets[key] = bucket
