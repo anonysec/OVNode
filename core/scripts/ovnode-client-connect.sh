@@ -25,7 +25,7 @@ ACTIVE_DIR="/etc/openvpn/ovnode-active"
 LOCK_FILE="${ACTIVE_DIR}/.lock"
 STATUS_FILE="${OVNODE_STATUS_FILE:-/etc/openvpn/server/status.log}"
 MGMT_HOST="${OVNODE_MGMT_HOST:-127.0.0.1}"
-MGMT_PORT="${OVNODE_MGMT_PORT:-7505}"
+MGMT_PORT="${OVNODE_MANAGEMENT_PORT:-7505}"
 DEFAULT_LIMIT=1
 LOG_TAG="ovnode-mlogin"
 # Grace period (seconds): same-CN reconnects within this window are

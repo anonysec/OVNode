@@ -40,13 +40,19 @@ DISCONNECT_DST = os.path.join(SCRIPTS_DST_DIR, "ovnode-client-disconnect.sh")
 STATUS_FILE = os.getenv("OVNODE_STATUS_FILE", os.path.join(_OPENVPN_ROOT, "server", "status.log"))
 
 # Directives we need in server.conf for an exact N-device per-cert limit.
-REQUIRED_DIRECTIVES = [
-    "duplicate-cn",
-    "script-security 2",
-    f"client-connect {CONNECT_DST}",
-    f"client-disconnect {DISCONNECT_DST}",
-    f"crl-verify {CRL_FILE}",
-]
+# The management interface is required by the connect script for takeover
+# (limit=1) and by the agent for disconnects.
+def _required_directives() -> list[str]:
+    mgmt_port = os.getenv("OVNODE_MANAGEMENT_PORT", "7505")
+    return [
+        "duplicate-cn",
+        "script-security 2",
+        f"client-connect {CONNECT_DST}",
+        f"client-disconnect {DISCONNECT_DST}",
+        f"crl-verify {CRL_FILE}",
+        f"management 127.0.0.1 {mgmt_port}",
+        f"writepid {os.path.join(_OPENVPN_ROOT, 'server', 'ovnode.pid')}",
+    ]
 
 
 def _openvpn_runtime_user_group() -> tuple[str, str]:
@@ -126,7 +132,7 @@ def _patch_server_conf() -> bool:
 
     lines = content.splitlines()
     existing = {ln.strip() for ln in lines}
-    to_add = [d for d in REQUIRED_DIRECTIVES if d not in existing]
+    to_add = [d for d in _required_directives() if d not in existing]
 
     # The connect script and the traffic parser count sessions from the status
     # log, so a `status` directive must be present. Only add one if no status

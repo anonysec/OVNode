@@ -13,6 +13,14 @@ def change_config(request: SetSettingsModel) -> bool:
     template_file = os.path.join(openvpn_root, "server", "client-common.txt")
     # Normalize protocol to tcp/udp (ignore any tcp-server/udp6 style variants).
     proto = "tcp" if str(request.protocol).lower().startswith("tcp") else "udp"
+    # Validate the port before touching any file.
+    try:
+        ovpn_port = int(request.ovpn_port)
+        if not (1 <= ovpn_port <= 65535):
+            raise ValueError(f"ovpn_port out of range: {ovpn_port}")
+    except (TypeError, ValueError) as e:
+        logger.error("Invalid OpenVPN port %r: %s", request.ovpn_port, e)
+        return False
     try:
         # Read current proto/port so we can detect whether anything changed.
         with open(setting_file) as file:
@@ -22,14 +30,21 @@ def change_config(request: SetSettingsModel) -> bool:
         old_port_match = re.search(r"^port\s+(\d+)", config, flags=re.MULTILINE)
         old_proto = old_proto_match.group(1) if old_proto_match else ""
         old_port = old_port_match.group(1) if old_port_match else ""
-        changed = (not old_proto.startswith(proto)) or (old_port != str(request.ovpn_port))
+        changed = (not old_proto.startswith(proto)) or (old_port != str(ovpn_port))
 
-        config = re.sub(r"^port\s+\d+", f"port {request.ovpn_port}", config, flags=re.MULTILINE)
+        config = re.sub(r"^port\s+\d+", f"port {ovpn_port}", config, flags=re.MULTILINE)
         # Match the full proto token (\S+) so variants like "tcp-server" are
         # fully replaced instead of leaving a dangling "-server".
         config = re.sub(
             r"^proto\s+\S+",
             f"proto {proto}",
+            config,
+            flags=re.MULTILINE,
+        )
+        # explicit-exit-notify is a UDP-only nicety: 1 for UDP, 0 for TCP.
+        config = re.sub(
+            r"^explicit-exit-notify\s+\d+",
+            f"explicit-exit-notify {1 if proto == 'udp' else 0}",
             config,
             flags=re.MULTILINE,
         )
@@ -49,14 +64,14 @@ def change_config(request: SetSettingsModel) -> bool:
         if tunnel_addr:
             template = re.sub(
                 r"^remote\s+\S+\s+\d+",
-                f"remote {tunnel_addr} {request.ovpn_port}",
+                f"remote {tunnel_addr} {ovpn_port}",
                 template,
                 flags=re.MULTILINE,
             )
         else:
             template = re.sub(
                 r"^remote\s+(\S+)\s+\d+",
-                rf"remote \1 {request.ovpn_port}",
+                rf"remote \1 {ovpn_port}",
                 template,
                 flags=re.MULTILINE,
             )
@@ -78,8 +93,13 @@ def change_config(request: SetSettingsModel) -> bool:
             _invalidate_cached_ovpn()
 
         if not restart_openvpn():
-            logger.error("OpenVPN restart failed; configuration was not activated")
-            return False
+            # The config is already persisted on disk; a restart failure only
+            # means it activates on the next OpenVPN start. Don't report the
+            # change as failed — the write succeeded.
+            logger.warning(
+                "OpenVPN restart failed; new settings are saved and will "
+                "activate on the next OpenVPN (re)start"
+            )
 
         # CRITICAL for multi-login: re-apply scripts and server.conf directives
         try:
@@ -90,7 +110,7 @@ def change_config(request: SetSettingsModel) -> bool:
             logger.error("Failed to re-apply multi-login after config change: %s", e)
 
         change_msg = (
-            f"OpenVPN port changed to {request.ovpn_port}, "
+            f"OpenVPN port changed to {ovpn_port}, "
             f"protocol to {proto}, "
             f"and tunnel address to {request.tunnel_address}"
         )

@@ -16,6 +16,10 @@ class SecurityHeadersMiddleware(BaseHTTPMiddleware):
         response = await call_next(request)
         response.headers["X-Content-Type-Options"] = "nosniff"
         response.headers["X-Frame-Options"] = "DENY"
+        # API-only service: no inline scripts/styles needed anywhere.
+        response.headers["Content-Security-Policy"] = (
+            "default-src 'none'; frame-ancestors 'none'; form-action 'none'"
+        )
         if request.url.scheme == "https":
             response.headers["Strict-Transport-Security"] = "max-age=31536000"
         return response
@@ -23,12 +27,22 @@ class SecurityHeadersMiddleware(BaseHTTPMiddleware):
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
-    """Initialize PKI (idempotent — skips if CA already exists)."""
+    """Initialize PKI + OpenVPN config (idempotent)."""
     logger.info("Starting OV-Node — initializing PKI...")
     init_pki()
     from core.service.multilogin import ensure_multilogin_setup
 
     ensure_multilogin_setup()
+
+    from core.service.openvpn_control import openvpn_is_running
+
+    if openvpn_is_running():
+        logger.info("OpenVPN server is running.")
+    else:
+        logger.warning(
+            "OpenVPN server is not running — start it with: "
+            "systemctl restart openvpn-server@server (or check /dev/net/tun)"
+        )
     yield
     logger.info("OV-Node shutting down.")
 
