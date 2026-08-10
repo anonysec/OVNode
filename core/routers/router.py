@@ -42,7 +42,44 @@ async def get_status(
             "memory_usage": memory_info.percent,
         }
     )
+    # TLS certificate expiry (ISO date) when the node serves HTTPS — lets the
+    # panel warn before the certificate lapses and breaks node connectivity.
+    status["cert_expiry"] = _cert_expiry()
     return ResponseModel(success=True, msg="Node status retrieved successfully", data=status)
+
+
+def _cert_expiry() -> str | None:
+    """Return the server certificate expiry as an ISO date, or None.
+
+    Reads the configured SSL cert file and parses its notAfter value.
+    Returns None when TLS is not configured or the cert is unreadable.
+    """
+    try:
+        from core.config import settings
+
+        cert_file = settings.ssl_certfile
+        if not cert_file:
+            return None
+        import subprocess
+
+        out = subprocess.run(
+            ["openssl", "x509", "-enddate", "-noout", "-in", cert_file],
+            capture_output=True,
+            text=True,
+            timeout=10,
+        )
+        if out.returncode != 0:
+            return None
+        line = out.stdout.strip()
+        if not line.startswith("notAfter="):
+            return None
+        # OpenSSL emits RFC2822 (e.g. "Aug 12 12:00:00 2027 GMT").
+        import datetime as _dt
+
+        parsed = _dt.datetime.strptime(line[len("notAfter="):].strip(), "%b %d %H:%M:%S %Y %Z")
+        return parsed.date().isoformat()
+    except Exception:
+        return None
 
 
 @router.post("/config", response_model=ResponseModel)

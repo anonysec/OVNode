@@ -4,7 +4,7 @@ import subprocess
 
 from core.easyrsa import run_easyrsa as _easyrsa
 from core.logger import logger as logger
-from core.pki_setup import PKI_DIR
+from core.pki_setup import PKI_DIR, tls_crypt_block
 from core.validation import DeleteResult
 
 # Get the node-specific logger
@@ -144,6 +144,11 @@ def _generate_ovpn_from_existing_cert(uid: str) -> bool:
                 check=True,
                 timeout=30,
             )
+            # server.conf uses tls-crypt; the client .ovpn must embed the same
+            # pre-shared key inline or the handshake fails.
+            tls_block = tls_crypt_block()
+            if tls_block:
+                out.write(tls_block)
         os.chmod(paths["ovpn"], 0o600)
         logger.info("Regenerated OVPN file for uid='%s' (cn='%s')", uid, paths["name"])
         return True

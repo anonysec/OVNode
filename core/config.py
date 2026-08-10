@@ -17,6 +17,17 @@ class Settings(BaseSettings):
     data_dir: str = ""
     openvpn_port: int = 1194
     tls_method: str = "none"
+    # OpenVPN server tuning (OVNODE_* env vars; see .env.example)
+    ovnode_runtime_user: str = "nobody"
+    ovnode_runtime_group: str = "nogroup"
+    ovnode_management_port: int = 7505
+    ovnode_vpn_network: str = "10.8.0.0"
+    ovnode_vpn_netmask: str = "255.255.255.0"
+    ovnode_vpn_dns1: str = "1.1.1.1"
+    ovnode_vpn_dns2: str = "8.8.8.8"
+    ovnode_max_clients: int = 100
+    ovnode_enable_ipv6: bool = False
+    ovnode_ipv6_prefix: str = "fd42:42:42:42::/64"
 
     model_config = {"env_file": os.path.join(os.path.dirname(__file__), "../.env")}
 
