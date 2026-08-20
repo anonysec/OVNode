@@ -1,3 +1,6 @@
+# Copyright (c) 2025 anonysec. All rights reserved.
+# Proprietary and confidential. Unauthorized copying, distribution, or use is prohibited.
+
 """Input validation for node-facing API parameters.
 
 OpenVPN's client identity is the certificate Common Name (CN), which the node

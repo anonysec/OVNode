@@ -1,3 +1,6 @@
+# Copyright (c) 2025 anonysec. All rights reserved.
+# Proprietary and confidential. Unauthorized copying, distribution, or use is prohibited.
+
 #!/usr/bin/env bash
 # OVManager local disconnect hook. Removes local active-session marker only.
 

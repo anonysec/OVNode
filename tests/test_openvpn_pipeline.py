@@ -1,3 +1,6 @@
+# Copyright (c) 2025 anonysec. All rights reserved.
+# Proprietary and confidential. Unauthorized copying, distribution, or use is prohibited.
+
 """Functional test of the overhauled OpenVPN PKI/config pipeline.
 
 Runs the whole pipeline in an isolated subprocess with a dedicated

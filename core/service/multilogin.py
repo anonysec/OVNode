@@ -1,3 +1,6 @@
+# Copyright (c) 2025 anonysec. All rights reserved.
+# Proprietary and confidential. Unauthorized copying, distribution, or use is prohibited.
+
 """Idempotent setup for the multi-login (per-config connection limit) feature.
 
 This wires the OpenVPN server so that ovmanager's per-user ``max_logins`` is

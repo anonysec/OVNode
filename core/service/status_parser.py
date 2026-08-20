@@ -1,3 +1,6 @@
+# Copyright (c) 2025 anonysec. All rights reserved.
+# Proprietary and confidential. Unauthorized copying, distribution, or use is prohibited.
+
 """Parse OpenVPN status file (version 2/3). Two functions. That's it."""
 
 import logging

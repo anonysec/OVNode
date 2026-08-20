@@ -1,3 +1,6 @@
+# Copyright (c) 2025 anonysec. All rights reserved.
+# Proprietary and confidential. Unauthorized copying, distribution, or use is prohibited.
+
 """OpenVPN service management for OVNode.
 
 Single shared module for checking and restarting OpenVPN after config changes.
