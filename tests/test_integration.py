@@ -1,3 +1,6 @@
+# Copyright (c) 2025 anonysec. All rights reserved.
+# Proprietary and confidential. Unauthorized copying, distribution, or use is prohibited.
+
 """Integration tests for the OVNode sync API (simulating panel requests).
 
 These tests verify the API contract between OVManager and OVNode:
