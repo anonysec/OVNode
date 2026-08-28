@@ -91,7 +91,7 @@ ok("dh /etc/openvpn/server/pki/dh.pem" not in dh_fixed, "broken dh reference rem
 
 # /sync/config
 from core.api.schemas import SetSettingsModel
-from core.openvpn.settings_apply import change_config
+from core.openvpn.control import change_config
 req = SetSettingsModel(
     tunnel_address="vpn.example.com", protocol="udp", ovpn_port=1195, set_new_setting=True
 )

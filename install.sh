@@ -480,7 +480,8 @@ ROTATE
 
 # ── OpenVPN scaffolding ────────────────────────────────────────────────
 ensure_openvpn_dirs() {
-    mkdir -p "$OPENVPN_ROOT/server" "$OPENVPN_ROOT/clients" "$OPENVPN_ROOT/ccd" "$OPENVPN_ROOT/limits"
+    mkdir -p "$OPENVPN_ROOT/server" "$OPENVPN_ROOT/ccd" \
+             "$OPENVPN_ROOT/ovnode/users" "$OPENVPN_ROOT/ovnode/sessions" "$OPENVPN_ROOT/ovnode/scripts"
     # Some distros (Arch) lack the "nogroup" group that the generated
     # server.conf references — create it so OpenVPN can start.
     getent group nogroup >/dev/null 2>&1 || groupadd -r nogroup 2>/dev/null || true

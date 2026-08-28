@@ -344,11 +344,12 @@ def test_usage_maps_cn_to_username():
     """
     import os
 
+    from core.openvpn import store
     from core.openvpn import users as um
 
     status_file = os.environ["OVNODE_STATUS_FILE"]
     os.makedirs(os.path.dirname(status_file), exist_ok=True)
-    um._set_name("42", "alice")
+    store.set_name("42", "alice")
     try:
         with open(status_file, "w") as f:
             f.write(
@@ -370,7 +371,7 @@ def test_usage_maps_cn_to_username():
         assert usage["sessions"]["7"] == {"5.6.7.8:6666": 30}
     finally:
         os.remove(status_file)
-        um._remove_name("42")
+        store.delete_user("42")
 
 
 def test_ovpn_identity_resolution():

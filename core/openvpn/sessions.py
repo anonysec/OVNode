@@ -23,11 +23,11 @@ from collections import Counter
 from typing import Any
 
 from core.logger import logger
+from core.openvpn.store import SESSIONS_DIR
 from core.validation import _CLIENT_NAME_RE
 
 _OPENVPN_ROOT = os.getenv("OVNODE_OPENVPN_ROOT", "/etc/openvpn")
 STATUS_FILE = os.getenv("OVNODE_STATUS_FILE", os.path.join(_OPENVPN_ROOT, "server", "status.log"))
-ACTIVE_DIR = os.path.join(_OPENVPN_ROOT, "ovnode-active")
 MANAGEMENT_HOST = os.getenv("OVNODE_MANAGEMENT_HOST", "127.0.0.1")
 MANAGEMENT_PORT = int(os.getenv("OVNODE_MANAGEMENT_PORT", "7505"))
 
@@ -46,7 +46,7 @@ def _read_status_sessions() -> list[dict[str, Any]]:
 
 def _read_active_files() -> list[dict[str, Any]]:
     rows: list[dict[str, Any]] = []
-    for path in glob.glob(os.path.join(ACTIVE_DIR, "*")):
+    for path in glob.glob(os.path.join(SESSIONS_DIR, "*")):
         base = os.path.basename(path)
         if base == ".lock" or not os.path.isfile(path):
             continue

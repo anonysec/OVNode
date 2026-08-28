@@ -22,7 +22,8 @@ import subprocess
 from datetime import UTC
 
 from core.logger import logger
-from core.openvpn.easyrsa import run_easyrsa as _easyrsa
+from core.openvpn.store import SCRIPTS_DIR
+from core.openvpn.store import ensure_layout as _ensure_store_layout
 
 _OPENVPN_ROOT = os.getenv("OVNODE_OPENVPN_ROOT", "/etc/openvpn")
 EASYRSA_DIR = os.path.join(_OPENVPN_ROOT, "server", "easy-rsa")
@@ -34,18 +35,48 @@ CA_CERT = os.path.join(PKI_DIR, "ca.crt")
 SERVER_CERT = os.path.join(PKI_DIR, "issued", "server.crt")
 DH_PEM = os.path.join(PKI_DIR, "dh.pem")
 CRL_FILE = os.path.join(PKI_DIR, "crl.pem")
-SCRIPTS_DIR = os.path.join(_OPENVPN_ROOT, "scripts")
 PID_FILE = os.path.join(_OPENVPN_ROOT, "server", "ovnode.pid")
 
 REQUIRED_DIRS = [
     os.path.join(_OPENVPN_ROOT, "server"),
-    os.path.join(_OPENVPN_ROOT, "clients"),
     os.path.join(_OPENVPN_ROOT, "ccd"),
-    os.path.join(_OPENVPN_ROOT, "limits"),
-    os.path.join(_OPENVPN_ROOT, "disabled"),
-    os.path.join(_OPENVPN_ROOT, "ovnode-active"),
-    os.path.join(_OPENVPN_ROOT, "scripts"),
 ]
+
+
+def run_easyrsa(*args: str, timeout: int = 120, pki_dir: str | None = None) -> bool:
+    """Run easyrsa in batch mode. Returns True on success."""
+    easyrsa_bin = os.path.join(EASYRSA_DIR, "easyrsa")
+    if not os.path.exists(easyrsa_bin):
+        logger.error("easyrsa not found at %s", easyrsa_bin)
+        return False
+    try:
+        cmd = [easyrsa_bin, f"--pki-dir={pki_dir or PKI_DIR}"] + list(args)
+        subprocess.run(
+            cmd,
+            cwd=EASYRSA_DIR,
+            env={**os.environ, "EASYRSA_BATCH": "1"},
+            check=True,
+            capture_output=True,
+            timeout=timeout,
+        )
+        return True
+    except subprocess.CalledProcessError as e:
+        logger.error(
+            "easyrsa %s failed (rc=%d): %s",
+            " ".join(args),
+            e.returncode,
+            e.stderr[-500:].decode() if e.stderr else str(e),
+        )
+        return False
+    except subprocess.TimeoutExpired:
+        logger.error("easyrsa %s timed out after %ds", " ".join(args), timeout)
+        return False
+    except Exception as e:
+        logger.error("easyrsa %s error: %s", " ".join(args), e)
+        return False
+
+
+_easyrsa = run_easyrsa
 
 
 def _env(name: str, default: str) -> str:
@@ -533,6 +564,9 @@ def init_pki() -> None:
     """Initialize PKI + OpenVPN config. Safe to call on every startup."""
     for d in REQUIRED_DIRS:
         os.makedirs(d, exist_ok=True)
+    # Store layout first: it also migrates any legacy on-disk layout, and
+    # everything below (template, hooks config) points into the new tree.
+    _ensure_store_layout()
 
     _setup_easyrsa()
 
