@@ -19,6 +19,7 @@ Responsibilities (all idempotent, safe to call on every startup):
 
 import os
 import subprocess
+from datetime import UTC
 
 from core.logger import logger
 from core.openvpn.easyrsa import run_easyrsa as _easyrsa
@@ -230,14 +231,85 @@ def _gen_tls_key() -> None:
 
 # ── CRL ──────────────────────────────────────────────────────────────
 
+# Regenerate the CRL when it is within this many days of its nextUpdate.
+# EasyRSA CRLs are valid for EASYRSA_CRL_DAYS (365); with `crl-verify`,
+# OpenVPN rejects ALL clients once the CRL expires — so a node that never
+# revokes anyone would lock every user out after a year without this.
+_CRL_RENEW_THRESHOLD_DAYS = 30
+
+
+def _crl_days_remaining() -> int | None:
+    """Days until the CRL's nextUpdate, or None when it cannot be read."""
+    try:
+        out = subprocess.check_output(
+            ["openssl", "crl", "-nextupdate", "-noout", "-in", CRL_FILE],
+            text=True,
+            timeout=10,
+        )
+    except Exception as e:
+        logger.warning("Could not read CRL nextUpdate: %s", e)
+        return None
+    return _days_until_openssl_date(out)
+
+
+_MONTHS = {
+    "Jan": 1, "Feb": 2, "Mar": 3, "Apr": 4, "May": 5, "Jun": 6,
+    "Jul": 7, "Aug": 8, "Sep": 9, "Oct": 10, "Nov": 11, "Dec": 12,
+}  # fmt: skip
+
+
+def _days_until_openssl_date(raw: str) -> int | None:
+    """Parse 'nextUpdate=Aug 28 12:00:00 2027 GMT' → whole days from now.
+
+    Parsed by hand because openssl always prints English month names while
+    strptime('%b') is locale-dependent.
+    """
+    from datetime import datetime
+
+    try:
+        value = raw.split("=", 1)[1].strip()
+        month_s, day_s, time_s, year_s, _tz = value.split()
+        hour_s, minute_s, second_s = time_s.split(":")
+        expiry = datetime(
+            int(year_s),
+            _MONTHS[month_s],
+            int(day_s),
+            int(hour_s),
+            int(minute_s),
+            int(second_s),
+            tzinfo=UTC,
+        )
+        return int((expiry - datetime.now(UTC)).total_seconds() // 86400)
+    except (IndexError, KeyError, ValueError) as e:
+        logger.warning("Unparseable CRL date %r: %s", raw.strip(), e)
+        return None
+
 
 def _ensure_crl() -> bool:
-    """Generate the CRL when missing; keep it world-readable for OpenVPN."""
+    """Generate the CRL when missing or near expiry; keep it OpenVPN-readable."""
     if os.path.exists(CRL_FILE):
+        days = _crl_days_remaining()
+        if days is not None and days > _CRL_RENEW_THRESHOLD_DAYS:
+            try:
+                os.chmod(CRL_FILE, 0o644)
+            except OSError:
+                pass
+            return True
+        # Unreadable or expiring: fall through and regenerate. If that fails
+        # but the current CRL is still valid, keep serving it.
+        logger.warning(
+            "CRL expires in %s days (threshold %d) — regenerating",
+            days,
+            _CRL_RENEW_THRESHOLD_DAYS,
+        )
+        if not _easyrsa("gen-crl"):
+            logger.error("CRL renewal failed — clients will be rejected once it expires!")
+            return days is not None and days > 0
         try:
             os.chmod(CRL_FILE, 0o644)
         except OSError:
             pass
+        logger.info("CRL renewed at %s", CRL_FILE)
         return True
     if not _easyrsa("gen-crl"):
         logger.error("CRL generation failed — revoked certs may remain usable.")

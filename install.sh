@@ -31,6 +31,7 @@ NAT_SERVICE="ovnode-nat.service"
 NAT_SCRIPT="/usr/local/sbin/ovnode-nat.sh"
 NAT_CONF="/etc/default/ovnode-nat"
 SYSCTL_CONF="/etc/sysctl.d/99-ovnode.conf"
+LOGROTATE_CONF="/etc/logrotate.d/ovnode"
 VERSION="3.0"
 
 # ── Colors / UI ────────────────────────────────────────────────────────
@@ -451,6 +452,32 @@ setup_nat() {
     write_nat_files
 }
 
+# ── Log rotation ───────────────────────────────────────────────────────
+# server.conf uses `log-append openvpn.log`, which grows without bound and
+# will eventually fill a small VPS disk (killing OpenVPN with it). The
+# agent log rotates itself; the OpenVPN log needs logrotate. copytruncate
+# is used because OpenVPN keeps the file descriptor open.
+setup_logrotate() {
+    if ! command -v logrotate >/dev/null 2>&1; then
+        if [[ -n "$PKG_INSTALL" ]]; then
+            pkg_install logrotate
+        else
+            warn "logrotate not found — install it so openvpn.log gets rotated"
+        fi
+    fi
+    cat > "$LOGROTATE_CONF" << ROTATE
+${OPENVPN_ROOT}/server/openvpn.log {
+    size 10M
+    rotate 3
+    compress
+    missingok
+    notifempty
+    copytruncate
+}
+ROTATE
+    step "Log rotation configured ($LOGROTATE_CONF)"
+}
+
 # ── OpenVPN scaffolding ────────────────────────────────────────────────
 ensure_openvpn_dirs() {
     mkdir -p "$OPENVPN_ROOT/server" "$OPENVPN_ROOT/clients" "$OPENVPN_ROOT/ccd" "$OPENVPN_ROOT/limits"
@@ -633,6 +660,8 @@ $( [[ -n "$TLS_CERT" ]] && echo "      SSL_CERTFILE: ${TLS_CERT}" )
         max-size: "1m"
         max-file: "3"
 COMPOSE
+    # The compose file embeds the API key — keep it root-only, like .env.
+    chmod 600 "$compose"
 
     info "Building and starting Docker container (first build takes a while)..."
     ( cd "$APP_DIR" && docker compose -f "$compose" up -d --build ) >/dev/null 2>&1 &
@@ -682,6 +711,7 @@ do_install() {
     # it on the host for native installs.
     if [[ "$DOCKER" -eq 0 ]]; then start_openvpn_service; fi
     setup_nat
+    setup_logrotate
     open_firewall_ports
 
     sep; line ""
@@ -724,6 +754,7 @@ do_update() {
     : "${TLS_METHOD:=none}"
 
     line ""; info "Updating OVNode..."
+    detect_os
     # Auto-detect the deployment mode: a compose file means this install was
     # done with --docker, even when `update` is called without the flag.
     if [[ -f "$DATA_BASE/$NODE_NAME/docker-compose.yml" ]]; then
@@ -763,6 +794,7 @@ do_update() {
         spinner "Node agent restarted" $!
     fi
     setup_nat
+    setup_logrotate
     wait_health "${scheme}://127.0.0.1:${PORT}/sync/health" 30 \
         || warn "Agent did not answer /sync/health after update — check: journalctl -u $SYSTEMD_SERVICE -n 50"
     step "Update complete"
@@ -787,7 +819,7 @@ do_uninstall() {
         docker rm -f "ovnode-$NODE_NAME" >/dev/null 2>&1 || true
     fi
 
-    rm -f "$NAT_SCRIPT" "$NAT_CONF" "$SYSCTL_CONF"
+    rm -f "$NAT_SCRIPT" "$NAT_CONF" "$SYSCTL_CONF" "$LOGROTATE_CONF"
     rm -rf "$APP_DIR"
     if [[ "$PURGE" -eq 1 ]]; then
         backup_dir "$DATA_BASE" "node-pre-purge"
