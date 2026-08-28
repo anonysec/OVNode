@@ -65,9 +65,22 @@ bash <(curl -sSL URL) --purge uninstall
 
 ## Docker
 
+One container runs both the sync agent **and** the OpenVPN daemon, supervised by the entrypoint: OpenVPN is started as soon as the agent has generated `server.conf` (first boot included) and is restarted with backoff if it ever crashes — without taking the API down. Host networking is used on purpose (no double NAT, honest client IPs, multi-port without port-mapping edits); the entrypoint enables forwarding and sets up MASQUERADE/multi-port NAT itself via `CAP_NET_ADMIN`.
+
+Via installer (generates a per-node compose file):
+
 ```bash
 bash <(curl -sSL URL) --docker
 ```
+
+Or manually with the bundled compose file:
+
+```bash
+cp .env.example .env   # set API_KEY at minimum
+docker compose up -d
+```
+
+All state (PKI + `ovnode/` store) lives in the `/etc/openvpn` volume — the container is fully replaceable. `OVNODE_SKIP_OPENVPN=1` runs the agent alone (debugging).
 
 ## Configuration (env vars)
 

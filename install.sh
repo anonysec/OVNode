@@ -628,8 +628,30 @@ setup_docker() {
     docker compose version >/dev/null 2>&1 || command -v docker-compose >/dev/null 2>&1 \
         || die "Docker Compose v2 is required (docker compose plugin)"
 
+    # The image's entrypoint runs OpenVPN inside the container; the host only
+    # needs the tun module loaded and the device node present.
+    modprobe tun >/dev/null 2>&1 || true
+    if [[ ! -c /dev/net/tun ]]; then
+        mkdir -p /dev/net && mknod /dev/net/tun c 10 200 2>/dev/null || true
+    fi
+    [[ -c /dev/net/tun ]] || warn "/dev/net/tun missing — the VPN cannot start until the tun module is available"
+
     local compose="$DATA_BASE/$NODE_NAME/docker-compose.yml"
     mkdir -p "$DATA_BASE/$NODE_NAME"
+
+    # TLS material lives on host paths (letsencrypt/self-signed/custom) —
+    # mount them read-only or the agent cannot serve HTTPS. Let's Encrypt
+    # needs the whole tree: live/ contains symlinks into archive/.
+    local tls_mounts="" d
+    for f in "$TLS_KEY" "$TLS_CERT"; do
+        [[ -n "$f" ]] || continue
+        case "$f" in
+            /etc/letsencrypt/*) d="/etc/letsencrypt" ;;
+            *) d="$(dirname "$f")" ;;
+        esac
+        [[ "$tls_mounts" == *"- ${d}:${d}:ro"* ]] || tls_mounts+="      - ${d}:${d}:ro"$'\n'
+    done
+
     cat > "$compose" << COMPOSE
 services:
   ovnode:
@@ -653,12 +675,12 @@ $( [[ -n "$TLS_CERT" ]] && echo "      SSL_CERTFILE: ${TLS_CERT}" )
       - ${OPENVPN_ROOT}:/etc/openvpn
       - ${DATA_BASE}/${NODE_NAME}:/app/data
       - /dev/net/tun:/dev/net/tun
+$( [[ -n "$tls_mounts" ]] && printf '%s' "$tls_mounts" )
     cap_add:
       - NET_ADMIN
-      - SYS_MODULE
     logging:
       options:
-        max-size: "1m"
+        max-size: "5m"
         max-file: "3"
 COMPOSE
     # The compose file embeds the API key — keep it root-only, like .env.
