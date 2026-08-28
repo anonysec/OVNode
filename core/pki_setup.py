@@ -42,7 +42,6 @@ REQUIRED_DIRS = [
     os.path.join(_OPENVPN_ROOT, "ccd"),
     os.path.join(_OPENVPN_ROOT, "limits"),
     os.path.join(_OPENVPN_ROOT, "disabled"),
-    os.path.join(_OPENVPN_ROOT, "names"),
     os.path.join(_OPENVPN_ROOT, "ovnode-active"),
     os.path.join(_OPENVPN_ROOT, "scripts"),
 ]

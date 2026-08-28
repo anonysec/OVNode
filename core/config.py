@@ -20,14 +20,6 @@ class Settings(BaseSettings):
     data_dir: str = ""
     openvpn_port: int = 1194
     tls_method: str = "none"
-    # OVManager panel base URL (e.g. https://panel.example.com:8443).
-    # When set, the client-connect hook performs the GLOBAL (cross-node)
-    # max-login check against the panel's /mlogin/status/{username} endpoint,
-    # authenticating with this node's name + API key (X-Node-Name / key headers).
-    panel_url: str = ""
-    # When the panel is unreachable during the global check: fail-open (default,
-    # allow the connection) or fail-closed (reject).
-    ovnode_global_fail_closed: bool = False
     # OpenVPN server tuning (OVNODE_* env vars; see .env.example)
     ovnode_runtime_user: str = "nobody"
     ovnode_runtime_group: str = "nogroup"

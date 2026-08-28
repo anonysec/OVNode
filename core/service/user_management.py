@@ -20,13 +20,9 @@ DISABLED_DIR = os.path.join(_OPENVPN_ROOT, "disabled")
 # Where generated .ovpn config files are cached.
 CLIENTS_DIR = os.path.join(_OPENVPN_ROOT, "clients")
 
-# Mapping file: uid (numeric id as string) -> display name (for panel use)
+# Mapping file: uid (numeric id as string) -> display name. Used to key
+# usage reports by username the way the panel's traffic collector expects.
 UID_MAP_FILE = os.path.join(CLIENTS_DIR, "uid_map.json")
-
-# Per-CN username files readable by the OpenVPN hook runtime user. The
-# client-connect script needs the panel username (not the CN) to query
-# OVManager's /mlogin/status/{username} global max-login endpoint.
-NAMES_DIR = os.path.join(_OPENVPN_ROOT, "names")
 
 
 def _load_uid_map() -> dict:
@@ -75,23 +71,6 @@ def _set_name(uid: str, name: str) -> None:
     mapping = _load_uid_map()
     mapping[str(uid)] = name
     _save_uid_map(mapping)
-    _write_name_file(str(uid), name)
-
-
-def _write_name_file(cn: str, name: str) -> None:
-    """Expose cn→username for the client-connect hook (global mlogin check).
-
-    The hook runs as the OpenVPN runtime user (nobody), which cannot read the
-    0600 uid_map.json — so each CN gets a small world-readable name file.
-    """
-    try:
-        os.makedirs(NAMES_DIR, exist_ok=True)
-        path = os.path.join(NAMES_DIR, cn)
-        with open(path, "w", encoding="utf-8") as f:
-            f.write(name.strip() + "\n")
-        os.chmod(path, 0o644)
-    except Exception as e:
-        logger.warning("Could not write name file for cn='%s': %s", cn, e)
 
 
 def _remove_name(uid: str) -> None:
@@ -100,12 +79,6 @@ def _remove_name(uid: str) -> None:
     if uid_str in mapping:
         del mapping[uid_str]
         _save_uid_map(mapping)
-    try:
-        os.remove(os.path.join(NAMES_DIR, uid_str))
-    except FileNotFoundError:
-        pass
-    except OSError as e:
-        logger.warning("Could not remove name file for cn='%s': %s", uid, e)
 
 
 def _client_paths(uid: str) -> dict:
