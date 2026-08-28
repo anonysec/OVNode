@@ -3,7 +3,7 @@
 .github
 .gitignore
 
-# Environment
+# Environment / secrets
 .env
 .env.*
 !.env.example
@@ -18,16 +18,17 @@ venv
 .ruff_cache
 .coverage
 
-# Node
-node_modules
+# Runtime state (mounted as a volume, never baked in)
+data
 
-# Build artifacts
-dist
-build
-
-# Tests / docs
+# Not needed inside the image
 tests
+install.sh
+docker-compose.yml
+.pre-commit-config.yaml
+.python-version
 *.md
+LICENSE
 
 # Editor / OS
 .idea
