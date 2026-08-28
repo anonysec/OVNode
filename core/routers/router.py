@@ -1,6 +1,31 @@
 # Copyright (c) 2025 anonysec. All rights reserved.
 # Proprietary and confidential. Unauthorized copying, distribution, or use is prohibited.
 
+"""OVNode sync API — the node side of the OVManager ⇄ OVNode contract.
+
+Each endpoint corresponds 1:1 to a method of OVManager's ``NodeRequests``
+client (backend/node/requests.py):
+
+    GET    /sync/health                      (Docker healthcheck — no auth)
+    GET    /sync/status                      check_node / get_node_info
+    GET    /sync/usage                       get_usage
+    GET    /sync/sessions                    get_sessions
+    POST   /sync/config                      update_config
+    POST   /sync/user                        create_user
+    PUT    /sync/user                        change_user_status
+    PUT    /sync/user/limit                  set_user_limit
+    DELETE /sync/user/{uid}                  delete_user
+    POST   /sync/user/{uid}/disconnect       disconnect_user
+    GET    /sync/download/ovpn/{uid}         download_ovpn_client / _bytes
+
+The panel treats a call as successful ONLY when the response is HTTP 200
+with ``{"success": true}`` — so handlers report business failures inside the
+envelope instead of raising, except where the panel explicitly checks the
+HTTP status (ovpn download must be a raw 200 body starting with "client").
+
+Authentication: the panel sends the node API key in the ``key`` header.
+"""
+
 import psutil
 from fastapi import APIRouter, Depends, HTTPException
 from fastapi.responses import FileResponse
@@ -12,6 +37,7 @@ from core.service.user_management import (
     change_user_status as change_user_status_on_server,
 )
 from core.service.user_management import (
+    cn_from_uid,
     create_user_on_server,
     delete_user_on_server,
     download_ovpn_file,
@@ -25,6 +51,21 @@ from core.version import __version__
 router = APIRouter(prefix="/sync", tags=["node_sync"])
 
 
+def _resolve_identity(uid: str | None, name: str | None) -> str | None:
+    """Resolve the OpenVPN client identity from a panel payload.
+
+    The panel prefers the numeric user id (``NodeRequests`` includes ``id``
+    whenever it is known) but may omit it, in which case the normalized
+    username becomes the identity — mirroring the panel's own
+    ``request.name.replace(" ", "_")`` normalization.
+    """
+    if uid:
+        return validate_user_id(uid)
+    if name:
+        return validate_user_id(name.strip().replace(" ", "_"))
+    return None
+
+
 @router.get("/health", include_in_schema=False)
 async def health_check():
     """Simple health check endpoint - no auth required for Docker healthcheck."""
@@ -35,7 +76,11 @@ async def health_check():
 async def get_status(
     api_key: str = Depends(check_api_key),
 ):
-    """Get the current status of the node. GET is read-only."""
+    """Node status — consumed by check_node()/get_node_info().
+
+    The panel frontend (NodeDrawer/NodeTable) and metrics snapshots read
+    ``cpu_usage``, ``memory_usage`` and ``cert_expiry`` from ``data``.
+    """
     status = {"status": "running", "version": __version__}
     cpu_usage = psutil.cpu_percent(interval=None)
     memory_info = psutil.virtual_memory()
@@ -90,7 +135,7 @@ async def update_config(
     request: SetSettingsModel,
     api_key: str = Depends(check_api_key),
 ):
-    """Apply VPN configuration settings."""
+    """Apply VPN endpoint settings pushed by the panel (update_config())."""
     if not request.set_new_setting:
         return ResponseModel(success=True, msg="No changes requested")
     change_settings = change_config(request)
@@ -101,13 +146,16 @@ async def update_config(
 
 @router.get("/usage", response_model=ResponseModel)
 async def get_all_user_usage(api_key: str = Depends(check_api_key)):
+    """Traffic counters — consumed by get_usage() (traffic sync + mlogin).
+
+    ``data`` always carries {"users": {...}, "sessions": {...}} so the
+    panel's per-session delta path and global-mlogin live-session scan both
+    work; empty dicts simply mean nobody is connected.
+    """
     usages = get_users_usage()
-    if usages:
+    if usages.get("users"):
         return ResponseModel(success=True, msg="Latest user usage received", data=usages)
-    return ResponseModel(
-        success=True,
-        msg="No user is using it.",
-    )
+    return ResponseModel(success=True, msg="No user is using it.", data=usages)
 
 
 @router.get("/sessions", response_model=ResponseModel)
@@ -116,7 +164,11 @@ async def get_session_diagnostics(
     hours: int = 8,
     api_key: str = Depends(check_api_key),
 ):
-    """Return live sessions, stale markers and recent max-login auth errors."""
+    """Live sessions, stale markers and recent max-login auth errors.
+
+    Consumed by get_sessions() for node metrics, stale-session cleanup,
+    per-user diagnostics and the frontend NodeDrawer sessions tab.
+    """
     return ResponseModel(
         success=True,
         msg="Session diagnostics retrieved successfully",
@@ -126,9 +178,11 @@ async def get_session_diagnostics(
 
 @router.post("/user/{uid}/disconnect", response_model=ResponseModel)
 async def disconnect_user_sessions(uid: str, api_key: str = Depends(check_api_key)):
-    """Best-effort disconnect for a user; also clears stale active markers."""
-    from core.service.user_management import cn_from_uid
+    """Best-effort disconnect for a user; also clears stale active markers.
 
+    The panel passes either the numeric user id or a raw CN here
+    (clean_stale_sessions_all_nodes() forwards marker CNs verbatim).
+    """
     safe_id = validate_user_id(uid)
     if safe_id is None:
         raise HTTPException(status_code=400, detail="Invalid user id")
@@ -142,7 +196,12 @@ async def disconnect_user_sessions(uid: str, api_key: str = Depends(check_api_ke
 
 @router.post("/user", response_model=ResponseModel)
 async def create_user(user: User, api_key: str = Depends(check_api_key)):
-    uid = validate_user_id(user.id)
+    """Create a client certificate + .ovpn (create_user()).
+
+    ``id`` is optional — NodeRequests only includes it when the panel knows
+    the numeric user id. Without it the normalized name is the identity.
+    """
+    uid = _resolve_identity(user.id, user.name)
     if uid is None:
         return ResponseModel(success=False, msg="Invalid user id (must be UUID)")
     max_logins = user.max_logins if user.max_logins is not None else 1
@@ -179,7 +238,8 @@ async def delete_user(uid: str, api_key: str = Depends(check_api_key)):
 
 @router.put("/user", response_model=ResponseModel)
 async def change_user_status(user: User, api_key: str = Depends(check_api_key)):
-    uid = validate_user_id(user.id)
+    """Activate/deactivate a client (change_user_status())."""
+    uid = _resolve_identity(user.id, user.name)
     if uid is None:
         return ResponseModel(success=False, msg="Invalid user id (must be UUID)")
     # Update the stored login limit if the panel sent one.
@@ -197,9 +257,11 @@ async def change_user_status(user: User, api_key: str = Depends(check_api_key)):
 
 @router.put("/user/limit", response_model=ResponseModel)
 async def set_user_login_limit(payload: UserLimit, api_key: str = Depends(check_api_key)):
-    """Set the max simultaneous logins/devices for a client.
+    """Set the max simultaneous logins/devices for a client (set_user_limit()).
 
-    max_logins: 1 = single login, 0 = unlimited.
+    max_logins: 1 = single login, 0 = unlimited. ``id`` may be the numeric
+    user id or the username — set_user_limit_on_all_nodes() sends the name
+    when it has no user_id.
     """
     uid = validate_user_id(payload.id)
     if uid is None:
@@ -216,6 +278,13 @@ async def set_user_login_limit(payload: UserLimit, api_key: str = Depends(check_
 
 @router.get("/download/ovpn/{uid}")
 async def download_ovpn(uid: str, api_key: str = Depends(check_api_key)):
+    """Return the client's .ovpn profile (download_ovpn_client()/_bytes()).
+
+    The panel validates the raw body: it must start with "client" or contain
+    "<ca>" — which the generated profile always does. The client cert/config
+    is created lazily here on first download (the panel intentionally does
+    not create node-side users at Add User time).
+    """
     safe_id = validate_user_id(uid)
     if safe_id is None:
         raise HTTPException(status_code=400, detail="Invalid user id")

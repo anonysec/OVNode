@@ -86,6 +86,22 @@ def _journal_lines(hours: int) -> list[str]:
 
 
 def user_diagnostics(common_name: str | None = None, hours: int = 8) -> dict[str, Any]:
+    """Session diagnostics in the exact shape OVManager consumes.
+
+    Panel consumers of GET /sync/sessions ``data``:
+
+    * ``live_sessions``       — node/diagnostics.py, node/sync.py, mlogin cleanup
+    * ``sessions``            — frontend NodeDrawer "Sessions" tab (alias of
+                                live_sessions; each row needs common_name,
+                                trusted_ip, bytes_received, bytes_sent)
+    * ``stale_markers``       — node/sync.py clean_stale_sessions_all_nodes
+    * ``live_count`` / ``stale_marker_count`` / ``auth_errors`` / ``rejects``
+                              — operations/metrics.py node snapshots
+    * ``auth_errors_by_cn``   — node/diagnostics.py login_health_summary,
+                                keyed by panel USERNAME (it does
+                                ``auth_counts.get(u.name)``), so CNs are
+                                mapped to usernames here.
+    """
     live = _read_status_sessions()
     active = _read_active_files()
     live_keys = {(s["common_name"], s["trusted_ip"], s["trusted_port"]) for s in live}
@@ -116,15 +132,26 @@ def user_diagnostics(common_name: str | None = None, hours: int = 8) -> dict[str
         auth_errors[cn] += 1
         last_errors[cn] = line
 
+    # login_health_summary() looks auth counts up by username, so map CNs.
+    from core.service.user_management import display_name_for_cn
+
+    auth_errors_by_cn: dict[str, int] = {}
+    for cn, count in auth_errors.items():
+        key = display_name_for_cn(cn)
+        auth_errors_by_cn[key] = auth_errors_by_cn.get(key, 0) + count
+
     return {
         "common_name": common_name,
         "live_sessions": live,
+        # Alias consumed by the panel frontend (NodeDrawer sessions tab).
+        "sessions": live,
         "active_markers": active,
         "stale_markers": stale,
         "live_count": len(live),
         "active_marker_count": len(active),
         "stale_marker_count": len(stale),
         "auth_errors": sum(auth_errors.values()),
+        "auth_errors_by_cn": auth_errors_by_cn,
         "rejects": sum(rejects.values()),
         "global_rejects": sum(global_rejects.values()),
         "last_error": next(iter(last_errors.values()), None) if cn_filter else last_errors,

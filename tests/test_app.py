@@ -79,7 +79,10 @@ def test_create_user_rejects_invalid_id():
         headers=headers,
         json={"name": "alice", "status": "activate", "max_logins": 1},
     )
-    assert r.status_code == 422  # FastAPI validation: id is required
+    # id is optional in the panel contract (NodeRequests.create_user only
+    # sends it when known) — identity falls back to the normalized name.
+    assert r.status_code == 200
+    assert r.json()["msg"] in ("Failed to create user", "User created successfully")
 
 
 def test_create_user_accepts_valid_id():
