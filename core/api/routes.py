@@ -30,13 +30,14 @@ import psutil
 from fastapi import APIRouter, Depends, HTTPException
 from fastapi.responses import FileResponse
 
-from core.auth.auth import check_api_key
-from core.schema.all_schemas import ResponseModel, SetSettingsModel, User, UserLimit
-from core.service.sessions import disconnect_user, user_diagnostics
-from core.service.user_management import (
+from core.api.auth import check_api_key
+from core.api.schemas import ResponseModel, SetSettingsModel, User, UserLimit
+from core.openvpn.sessions import disconnect_user, user_diagnostics
+from core.openvpn.settings_apply import change_config
+from core.openvpn.users import (
     change_user_status as change_user_status_on_server,
 )
-from core.service.user_management import (
+from core.openvpn.users import (
     cn_from_uid,
     create_user_on_server,
     delete_user_on_server,
@@ -44,7 +45,6 @@ from core.service.user_management import (
     get_users_usage,
     set_user_limit,
 )
-from core.setting.core import change_config
 from core.validation import DeleteResult, validate_user_id
 from core.version import __version__
 

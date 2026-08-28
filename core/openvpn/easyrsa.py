@@ -4,7 +4,7 @@
 """Shared easyrsa utilities for OVNode.
 
 Provides a single `run_easyrsa()` helper used by both PKI initialization
-(pki_setup.py) and per-user cert management (user_management.py).
+(pki.py) and per-user cert management (users.py).
 """
 
 import logging
@@ -13,7 +13,7 @@ import subprocess
 
 logger = logging.getLogger("easyrsa")
 
-# Must match the paths used by pki_setup.py
+# Must match the paths used by pki.py
 _OPENVPN_ROOT = os.getenv("OVNODE_OPENVPN_ROOT", "/etc/openvpn")
 EASYRSA_DIR = os.path.join(_OPENVPN_ROOT, "server", "easy-rsa")
 PKI_DIR = os.path.join(_OPENVPN_ROOT, "server", "pki")

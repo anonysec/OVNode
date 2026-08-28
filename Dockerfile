@@ -1,10 +1,15 @@
+# Copyright (c) 2025 anonysec. All rights reserved.
+# Proprietary and confidential. Unauthorized copying, distribution, or use is prohibited.
+#
 # OVManager Node - Docker image
 # Manages OpenVPN locally; OpenVPN + iproute2/iptables are bundled so the node
 # is functional inside the container.
-FROM python:3.12-slim
+FROM python:3.13-slim
 ENV PYTHONUNBUFFERED=1 \
-    UV_SYSTEM_PYTHON=1 \
-    PATH="/root/.local/bin:${PATH}"
+    UV_COMPILE_BYTECODE=1 \
+    UV_LINK_MODE=copy \
+    UV_NO_CACHE=1 \
+    PATH="/app/.venv/bin:/root/.local/bin:${PATH}"
 
 # OpenVPN + networking tools + CA for client cert generation
 RUN apt-get update \
@@ -13,17 +18,17 @@ RUN apt-get update \
 
 WORKDIR /app
 
-COPY pyproject.toml uv.lock* ./
+# Dependency layer first: reinstalls only when the lockfile changes.
+COPY pyproject.toml uv.lock ./
+RUN pip install --no-cache-dir uv \
+    && (uv sync --frozen --no-dev --no-install-project || uv sync --no-dev --no-install-project)
+
 COPY core/ ./core/
 COPY main.py ./
-COPY core/scripts/ ./core/scripts/
-
-RUN pip install --no-cache-dir uv \
-    && uv sync --frozen || uv sync
 
 EXPOSE 2083 1194/udp
 HEALTHCHECK --interval=30s --timeout=5s --start-period=5s --retries=3 \
     CMD curl -sf http://localhost:2083/sync/health \
         || curl -skf https://localhost:2083/sync/health \
         || exit 1
-CMD ["uv", "run", "main.py"]
+CMD ["python", "main.py"]

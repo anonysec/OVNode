@@ -5,9 +5,9 @@ import json
 import os
 import subprocess
 
-from core.easyrsa import run_easyrsa as _easyrsa
 from core.logger import logger as logger
-from core.pki_setup import PKI_DIR, tls_crypt_block
+from core.openvpn.easyrsa import run_easyrsa as _easyrsa
+from core.openvpn.pki import PKI_DIR, tls_crypt_block
 from core.validation import DeleteResult
 
 # Get the node-specific logger
@@ -24,18 +24,33 @@ CLIENTS_DIR = os.path.join(_OPENVPN_ROOT, "clients")
 # usage reports by username the way the panel's traffic collector expects.
 UID_MAP_FILE = os.path.join(CLIENTS_DIR, "uid_map.json")
 
+# uid_map.json is read on every usage/session poll but changes only when
+# users are created/renamed/deleted — cache it keyed by (mtime, size) so the
+# hot path skips JSON parsing entirely.
+_uid_map_cache: tuple[tuple[float, int], dict] | None = None
+
 
 def _load_uid_map() -> dict:
-    if not os.path.exists(UID_MAP_FILE):
+    global _uid_map_cache
+    try:
+        stat = os.stat(UID_MAP_FILE)
+    except OSError:
+        _uid_map_cache = None
         return {}
+    key = (stat.st_mtime, stat.st_size)
+    if _uid_map_cache and _uid_map_cache[0] == key:
+        return dict(_uid_map_cache[1])
     try:
         with open(UID_MAP_FILE) as f:
-            return json.load(f)
+            mapping = json.load(f)
     except Exception:
         return {}
+    _uid_map_cache = (key, dict(mapping))
+    return mapping
 
 
 def _save_uid_map(mapping: dict) -> None:
+    global _uid_map_cache
     try:
         os.makedirs(CLIENTS_DIR, exist_ok=True)
         with open(UID_MAP_FILE, "w") as f:
@@ -43,6 +58,7 @@ def _save_uid_map(mapping: dict) -> None:
         # Restrict read access: uid_map.json maps numeric IDs to usernames —
         # not world-readable. Only the service process needs it.
         os.chmod(UID_MAP_FILE, 0o600)
+        _uid_map_cache = None
     except Exception as e:
         logger.error("Failed to save uid map: %s", e)
 
@@ -280,7 +296,7 @@ def change_user_status(uid: str, status: str) -> bool:
             # Best effort disconnect: the disabled marker prevents reconnects
             # even when the management socket is unavailable.
             try:
-                from core.service.sessions import disconnect_user
+                from core.openvpn.sessions import disconnect_user
 
                 disconnect_user(paths["name"])
             except Exception as e:
@@ -347,7 +363,7 @@ def get_users_usage() -> dict:
     So: ``users`` is keyed by username (fallback CN), ``sessions`` carries
     both the CN key and the username alias.
     """
-    from core.service.status_parser import parse_usage
+    from core.openvpn.status import parse_usage
 
     raw = parse_usage() or {"users": {}, "sessions": {}}
     mapping = _load_uid_map()

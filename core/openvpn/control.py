@@ -48,7 +48,7 @@ def _fix_runtime_permissions() -> None:
     """Make the mlogin registry writable by the OpenVPN hook runtime user."""
     from pathlib import Path
 
-    from core.service.multilogin import ACTIVE_DIR, LIMITS_DIR, LOCK_FILE
+    from core.openvpn.multilogin import ACTIVE_DIR, LIMITS_DIR, LOCK_FILE
 
     os.makedirs(LIMITS_DIR, exist_ok=True)
     os.makedirs(ACTIVE_DIR, exist_ok=True)

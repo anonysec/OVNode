@@ -1,7 +1,15 @@
 # Copyright (c) 2025 anonysec. All rights reserved.
 # Proprietary and confidential. Unauthorized copying, distribution, or use is prohibited.
 
-"""OpenVPN session diagnostics and best-effort disconnect helpers."""
+"""OpenVPN session diagnostics and best-effort disconnect helpers.
+
+Session matching is dynamic-IP safe: a session marker is considered live
+when its (common_name, pool IP) pair appears in the status file — the pool
+IP is stable for the lifetime of a session, unlike the client's real
+IP:port, which changes on every reconnect for mobile/dynamic-IP users.
+Real-address matching is kept only as a fallback for markers that predate
+pool-IP keying.
+"""
 
 from __future__ import annotations
 
@@ -10,6 +18,7 @@ import os
 import re
 import socket
 import subprocess
+import time
 from collections import Counter
 from typing import Any
 
@@ -22,19 +31,15 @@ ACTIVE_DIR = os.path.join(_OPENVPN_ROOT, "ovnode-active")
 MANAGEMENT_HOST = os.getenv("OVNODE_MANAGEMENT_HOST", "127.0.0.1")
 MANAGEMENT_PORT = int(os.getenv("OVNODE_MANAGEMENT_PORT", "7505"))
 
-
-def _split_real_address(real_address: str) -> tuple[str, str]:
-    if not real_address:
-        return "", ""
-    if ":" in real_address:
-        ip, port = real_address.rsplit(":", 1)
-        return ip.strip("[]"), port
-    return real_address, ""
+# journalctl is a subprocess fork per call; the panel polls /sync/sessions
+# from several jobs, so cache the journal tail briefly to keep CPU flat.
+_JOURNAL_TTL = 5.0
+_journal_cache: dict[int, tuple[float, list[str]]] = {}
 
 
 def _read_status_sessions() -> list[dict[str, Any]]:
     """Read live sessions from the OpenVPN status file."""
-    from core.service.status_parser import parse_sessions
+    from core.openvpn.status import parse_sessions
 
     return parse_sessions()
 
@@ -70,19 +75,46 @@ def _read_active_files() -> list[dict[str, Any]]:
     return rows
 
 
+def _marker_is_live(marker: dict[str, Any], live_sessions: list[dict[str, Any]]) -> bool:
+    """True when a marker corresponds to a session in the status file.
+
+    Primary match: (common_name, pool IP) — IP-change proof.
+    Fallback (legacy markers without a pool IP): (common_name, real ip:port).
+    """
+    cn = marker["common_name"]
+    pool_ip = marker.get("ifconfig_pool_remote_ip", "")
+    if pool_ip:
+        return any(
+            s["common_name"] == cn and s["virtual_address"] == pool_ip for s in live_sessions
+        )
+    return any(
+        s["common_name"] == cn
+        and s["trusted_ip"] == marker.get("trusted_ip", "")
+        and s["trusted_port"] == marker.get("trusted_port", "")
+        for s in live_sessions
+    )
+
+
 def _journal_lines(hours: int) -> list[str]:
-    since = f"{max(1, min(int(hours or 8), 168))} hours ago"
+    bounded = max(1, min(int(hours or 8), 168))
+    now = time.monotonic()
+    cached = _journal_cache.get(bounded)
+    if cached and now - cached[0] < _JOURNAL_TTL:
+        return cached[1]
     try:
         out = subprocess.check_output(
-            ["journalctl", "-t", "ovnode-mlogin", "--since", since, "--no-pager"],
+            ["journalctl", "-t", "ovnode-mlogin", "--since", f"{bounded} hours ago", "--no-pager"],
             text=True,
             errors="ignore",
             timeout=8,
         )
-        return out.splitlines()
+        lines = out.splitlines()
     except Exception as e:
         logger.warning("Failed to read ovnode-mlogin journal: %s", e)
-        return []
+        lines = []
+    _journal_cache.clear()
+    _journal_cache[bounded] = (now, lines)
+    return lines
 
 
 def user_diagnostics(common_name: str | None = None, hours: int = 8) -> dict[str, Any]:
@@ -104,10 +136,7 @@ def user_diagnostics(common_name: str | None = None, hours: int = 8) -> dict[str
     """
     live = _read_status_sessions()
     active = _read_active_files()
-    live_keys = {(s["common_name"], s["trusted_ip"], s["trusted_port"]) for s in live}
-    stale = [
-        a for a in active if (a["common_name"], a["trusted_ip"], a["trusted_port"]) not in live_keys
-    ]
+    stale = [a for a in active if not _marker_is_live(a, live)]
 
     cn_filter = common_name or None
     if cn_filter:
@@ -133,7 +162,7 @@ def user_diagnostics(common_name: str | None = None, hours: int = 8) -> dict[str
         last_errors[cn] = line
 
     # login_health_summary() looks auth counts up by username, so map CNs.
-    from core.service.user_management import display_name_for_cn
+    from core.openvpn.users import display_name_for_cn
 
     auth_errors_by_cn: dict[str, int] = {}
     for cn, count in auth_errors.items():
@@ -170,15 +199,11 @@ def _management_available() -> bool:
         return False
 
 
-def _management_kill(common_name: str) -> dict[str, Any]:
-    # Validate CN against allowed character set before sending to management socket.
-    # Unsanitized CNs could inject shell/protocol commands.
-    if not _CLIENT_NAME_RE.match(common_name):
-        return {"available": True, "ok": False, "error": "invalid cn format"}
+def _management_send(command: str) -> dict[str, Any]:
     try:
         with socket.create_connection((MANAGEMENT_HOST, MANAGEMENT_PORT), timeout=3.0) as s:
             banner = s.recv(1024).decode(errors="ignore")
-            s.sendall(f"kill {common_name}\n".encode())
+            s.sendall(f"{command}\n".encode())
             response = s.recv(4096).decode(errors="ignore")
             s.sendall(b"quit\n")
         ok = "SUCCESS" in response.upper()
@@ -187,26 +212,53 @@ def _management_kill(common_name: str) -> dict[str, Any]:
         return {"available": False, "ok": False, "error": str(e)}
 
 
+def _management_kill(common_name: str, live_sessions: list[dict[str, Any]]) -> dict[str, Any]:
+    """Kill a user's sessions, preferring CID kills (dynamic-IP safe).
+
+    ``client-kill <CID>`` targets the exact session regardless of the
+    client's current real address; ``kill <cn>`` is the fallback when the
+    status file carries no client id (very old OpenVPN).
+    """
+    # Validate CN against allowed character set before sending to management socket.
+    # Unsanitized CNs could inject shell/protocol commands.
+    if not _CLIENT_NAME_RE.match(common_name):
+        return {"available": True, "ok": False, "error": "invalid cn format"}
+
+    cids = [
+        s["client_id"]
+        for s in live_sessions
+        if s["common_name"] == common_name and s.get("client_id", "").isdigit()
+    ]
+    if not cids:
+        return _management_send(f"kill {common_name}")
+
+    results = [_management_send(f"client-kill {cid}") for cid in cids]
+    return {
+        "available": any(r.get("available") for r in results),
+        "ok": all(r.get("ok") for r in results),
+        "killed_cids": cids,
+        "responses": [r.get("response") or r.get("error", "") for r in results],
+    }
+
+
 def disconnect_user(common_name: str) -> dict[str, Any]:
     """Best-effort disconnect.
 
-    If OpenVPN management is enabled, kill the live client(s). Always removes
-    stale local active markers for this CN so max-login does not stay blocked.
+    If OpenVPN management is enabled, kill the live client(s) by CID. Always
+    removes stale local active markers for this CN so max-login does not
+    stay blocked.
     """
     before = user_diagnostics(common_name=common_name, hours=8)
-    mgmt = _management_kill(common_name)
+    live_sessions = _read_status_sessions()
+    mgmt = _management_kill(common_name, live_sessions)
 
     removed_markers = []
-    live_keys = {
-        (s["common_name"], s["trusted_ip"], s["trusted_port"]) for s in _read_status_sessions()
-    }
     for marker in _read_active_files():
         if marker["common_name"] != common_name:
             continue
         # Remove stale markers immediately. If management succeeded, remove all
         # markers for that CN because the live sessions were killed.
-        is_live = (marker["common_name"], marker["trusted_ip"], marker["trusted_port"]) in live_keys
-        if mgmt.get("ok") or not is_live:
+        if mgmt.get("ok") or not _marker_is_live(marker, live_sessions):
             try:
                 os.remove(marker["path"])
                 removed_markers.append(marker["session_key"])

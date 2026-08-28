@@ -5,9 +5,10 @@ import glob
 import os
 import re
 
+from core.api.schemas import SetSettingsModel
+from core.config import parse_extra_ports
 from core.logger import logger
-from core.schema.all_schemas import SetSettingsModel
-from core.service.user_management import CLIENTS_DIR
+from core.openvpn.users import CLIENTS_DIR
 
 
 def change_config(request: SetSettingsModel) -> bool:
@@ -58,26 +59,42 @@ def change_config(request: SetSettingsModel) -> bool:
         # Update the client template
         with open(template_file) as file:
             template = file.read()
+        original_template = template
         tunnel_addr = request.tunnel_address.strip() if request.tunnel_address else ""
         # Validate tunnel_address contains only safe characters (IP or hostname).
         # Reject regex metacharacters that could alter the replacement.
         _TUNNEL_RE = re.compile(r"^[A-Za-z0-9._:-]+$")
         if tunnel_addr and not _TUNNEL_RE.match(tunnel_addr):
             raise ValueError(f"Invalid tunnel_address: {tunnel_addr!r}")
-        if tunnel_addr:
-            template = re.sub(
-                r"^remote\s+\S+\s+\d+",
-                f"remote {tunnel_addr} {ovpn_port}",
-                template,
-                flags=re.MULTILINE,
+
+        # Rebuild the full `remote` block: one line per reachable port
+        # (primary + OVNODE_EXTRA_PORTS), so clients fail over between ports
+        # when an ISP blocks one. Without a new tunnel address, keep the one
+        # from the first existing remote line.
+        extra_ports = parse_extra_ports(os.getenv("OVNODE_EXTRA_PORTS", ""), ovpn_port)
+        remote_re = re.compile(r"^remote\s+(\S+)\s+\d+\s*$")
+        lines = template.splitlines()
+        if not tunnel_addr:
+            tunnel_addr = next(
+                (m.group(1) for ln in lines if (m := remote_re.match(ln))),
+                "UPDATE_VIA_PANEL",
             )
-        else:
-            template = re.sub(
-                r"^remote\s+(\S+)\s+\d+",
-                rf"remote \1 {ovpn_port}",
-                template,
-                flags=re.MULTILINE,
-            )
+        remote_block = [f"remote {tunnel_addr} {p}" for p in (ovpn_port, *extra_ports)]
+
+        rebuilt: list[str] = []
+        inserted = False
+        for ln in lines:
+            if remote_re.match(ln):
+                if not inserted:
+                    rebuilt.extend(remote_block)
+                    inserted = True
+                continue
+            rebuilt.append(ln)
+        if not inserted:
+            # Template had no remote line at all — insert after `client`.
+            idx = next((i for i, ln in enumerate(rebuilt) if ln.strip() == "client"), -1)
+            rebuilt[idx + 1 : idx + 1] = remote_block
+        template = "\n".join(rebuilt) + "\n"
 
         template = re.sub(
             r"^proto\s+\S+",
@@ -88,11 +105,11 @@ def change_config(request: SetSettingsModel) -> bool:
         with open(template_file, "w") as file:
             file.write(template)
 
-        # If the protocol/port actually changed, the already-generated client
-        # *.ovpn files in /root are now stale (they embed the old proto/port).
-        # Remove them so they are regenerated from the updated template on the
+        # If the protocol/port/remotes actually changed, the already-generated
+        # client *.ovpn files are now stale (they embed the old values).
+        # Remove them so they regenerate from the updated template on the
         # next download.
-        if changed:
+        if changed or template != original_template:
             _invalidate_cached_ovpn()
 
         if not restart_openvpn():
@@ -106,7 +123,7 @@ def change_config(request: SetSettingsModel) -> bool:
 
         # CRITICAL for multi-login: re-apply scripts and server.conf directives
         try:
-            from core.service.multilogin import ensure_multilogin_setup
+            from core.openvpn.multilogin import ensure_multilogin_setup
 
             ensure_multilogin_setup()
         except Exception as e:
@@ -139,7 +156,7 @@ def _invalidate_cached_ovpn() -> None:
 
 def restart_openvpn() -> bool:
     """Restart the OpenVPN service (delegates to shared module)."""
-    from core.service.openvpn_control import restart_openvpn as _restart
+    from core.openvpn.control import restart_openvpn as _restart
 
     if not _restart():
         logger.error("Failed to restart OpenVPN from setting/core.py")

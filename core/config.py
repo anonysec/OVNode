@@ -6,6 +6,22 @@ import os
 from pydantic_settings import BaseSettings
 
 
+def parse_extra_ports(raw: str, primary_port: int) -> list[int]:
+    """Parse a comma-separated port list; validated, de-duplicated, primary excluded."""
+    ports: list[int] = []
+    for token in (raw or "").replace(";", ",").split(","):
+        token = token.strip()
+        if not token:
+            continue
+        try:
+            port = int(token)
+        except ValueError:
+            continue
+        if 1 <= port <= 65535 and port != primary_port and port not in ports:
+            ports.append(port)
+    return ports
+
+
 class Settings(BaseSettings):
     service_port: int = 2083
     api_key: str
@@ -31,6 +47,17 @@ class Settings(BaseSettings):
     ovnode_max_clients: int = 100
     ovnode_enable_ipv6: bool = False
     ovnode_ipv6_prefix: str = "fd42:42:42:42::/64"
+    # Extra VPN ports (comma-separated, e.g. "443,8443"). The node stays a
+    # single OpenVPN instance listening on OPENVPN_PORT; the installer adds
+    # iptables REDIRECT rules so the extra ports reach the same daemon, and
+    # generated .ovpn profiles list one `remote` line per port so clients
+    # fail over automatically when an ISP blocks a port.
+    ovnode_extra_ports: str = ""
+
+    @property
+    def extra_vpn_ports(self) -> list[int]:
+        """Parsed, validated, de-duplicated extra ports (primary excluded)."""
+        return parse_extra_ports(self.ovnode_extra_ports, self.openvpn_port)
 
     model_config = {"env_file": os.path.join(os.path.dirname(__file__), "../.env")}
 
