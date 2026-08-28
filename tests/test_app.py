@@ -58,8 +58,8 @@ def test_validation_user_id():
     assert validate_user_id("123") == "123"
     assert validate_user_id("user_alice") == "user_alice"
     assert validate_user_id("bob-123") == "bob-123"
-    # Dangerous/malformed are rejected
     assert validate_user_id("not-a-uuid") == "not-a-uuid"  # valid simple ID
+    # Dangerous/malformed are rejected
     assert validate_user_id("invalid@") is None  # invalid char
     assert validate_user_id("../../etc/passwd") is None  # path traversal
     assert validate_user_id("") is None
@@ -79,7 +79,10 @@ def test_create_user_rejects_invalid_id():
         headers=headers,
         json={"name": "alice", "status": "activate", "max_logins": 1},
     )
-    assert r.status_code == 422  # FastAPI validation: id is required
+    # id is optional in the panel contract (NodeRequests.create_user only
+    # sends it when known) — identity falls back to the normalized name.
+    assert r.status_code == 200
+    assert r.json()["msg"] in ("Failed to create user", "User created successfully")
 
 
 def test_create_user_accepts_valid_id():

@@ -1,30 +1,34 @@
+#!/usr/bin/env bash
 # Copyright (c) 2025 anonysec. All rights reserved.
 # Proprietary and confidential. Unauthorized copying, distribution, or use is prohibited.
-
-#!/usr/bin/env bash
+#
 # OVManager local max-login enforcement for OpenVPN client-connect.
 #
-# Designed for dynamic IP environments (mobile ISPs, Iranian providers, etc.)
-# where the user's IP changes on every reconnect.
+# Designed for dynamic IP environments (mobile ISPs, CGNAT, etc.) where the
+# user's real IP:port changes on every reconnect. Session identity is
+# therefore CN + VPN pool IP (ifconfig_pool_remote_ip) — stable for the
+# session lifetime — and enforcement actions target the management Client ID
+# (CID), never the real address. Real IP/port are recorded as metadata only.
 #
 # Policy:
-# - max_logins=1: local takeover. Kill old session, allow new one.
+# - max_logins=1: local takeover. Kill old session (by CID), allow new one.
 # - max_logins=N>1: allow up to N sessions, reject N+1.
 # - max_logins=0: unlimited.
 #
-# Reconnection handling (dynamic IP aware):
-# - Grace period matches on CN (numeric user ID) alone — NOT on IP.
-#   If the same user reconnects within the grace period, their old marker
-#   is removed and replaced. This works regardless of IP changes.
-# - When multiple markers exist and grace triggers, the OLDEST marker is
-#   removed (most likely the stale/dropped session).
-# - Stale cleanup removes markers that are NOT in OpenVPN's status file.
+# Reconnection handling:
+# - Grace period matches on CN alone — NOT on IP. A same-CN reconnect within
+#   the grace window replaces the OLDEST marker (the dropped session).
+# - Stale cleanup removes markers whose (CN, pool IP) is absent from the
+#   status file (status-version 3, tab-separated).
 
 set -euo pipefail
 
-LIMITS_DIR="/etc/openvpn/limits"
-DISABLED_DIR="/etc/openvpn/disabled"
-ACTIVE_DIR="/etc/openvpn/ovnode-active"
+# Per-user state lives in one folder per user (see core/openvpn/store.py):
+#   users/<cn>/limit     max simultaneous logins (0 = unlimited)
+#   users/<cn>/disabled  marker — exists = reject the connection
+# Session markers live in sessions/ (one file per live session).
+USERS_DIR="/etc/openvpn/ovnode/users"
+ACTIVE_DIR="/etc/openvpn/ovnode/sessions"
 LOCK_FILE="${ACTIVE_DIR}/.lock"
 STATUS_FILE="${OVNODE_STATUS_FILE:-/etc/openvpn/server/status.log}"
 MGMT_HOST="${OVNODE_MGMT_HOST:-127.0.0.1}"
@@ -73,38 +77,38 @@ except Exception:
 PYMGMT
 }
 
+# Kill this CN's other sessions. Targets the management Client ID from the
+# status file (column 11, status-version 3) — dynamic-IP safe. The session
+# being established is excluded by pool IP (it is not in the status file
+# yet, but be defensive against fast status rewrites).
 kill_existing_sessions() {
     local target_cn="$1"
-    local current_real="$2"
+    local current_pool="$2"
 
-    # Kill by Client ID from status-version 2/3.
     if [[ -f "$STATUS_FILE" ]]; then
-        while IFS=$'\t' read -r real cid; do
-            [[ -n "${real:-}" ]] || continue
-            [[ "$real" == "$current_real" ]] && continue
+        while IFS=$'\t' read -r pool cid; do
+            [[ "${pool:-}" == "$current_pool" && -n "$current_pool" ]] && continue
             if [[ "${cid:-}" =~ ^[0-9]+$ ]]; then
                 mgmt_send "client-kill $cid max-login-takeover"
-                log "CN=$target_cn takeover client-kill cid=$cid real=$real"
-            else
-                mgmt_send "kill $real"
-                log "CN=$target_cn takeover kill real=$real"
+                log "CN=$target_cn takeover client-kill cid=$cid pool=${pool:-?}"
             fi
         done < <(awk -v cn="$target_cn" '
             BEGIN { FS="\t" }
-            $1 == "CLIENT_LIST" && $2 == cn { print $3 "\t" $11 }
+            $1 == "CLIENT_LIST" && $2 == cn { print $4 "\t" $11 }
         ' "$STATUS_FILE" 2>/dev/null || true)
     fi
 
-    # Fallback: kill by marker IP:port
+    # Fallback for sessions not yet in the status file: kill by marker pool IP
+    # is impossible via management, so fall back to the recorded real address.
     while IFS= read -r marker; do
         [[ -f "$marker" ]] || continue
+        m_pool="$(awk -F= '$1 == "ifconfig_pool_remote_ip" {print $2}' "$marker" 2>/dev/null || true)"
+        [[ -n "$m_pool" && "$m_pool" == "$current_pool" ]] && continue
         m_ip="$(awk -F= '$1 == "trusted_ip" {print $2}' "$marker" 2>/dev/null || true)"
         m_port="$(awk -F= '$1 == "trusted_port" {print $2}' "$marker" 2>/dev/null || true)"
         [[ -n "$m_ip" && -n "$m_port" ]] || continue
-        marker_real="${m_ip}:${m_port}"
-        [[ "$marker_real" == "$current_real" ]] && continue
-        mgmt_send "kill $marker_real"
-        log "CN=$target_cn takeover kill marker_real=$marker_real"
+        mgmt_send "kill ${m_ip}:${m_port}"
+        log "CN=$target_cn takeover fallback kill real=${m_ip}:${m_port}"
     done < <(find "$ACTIVE_DIR" -type f -name "${safe_cn}.*" 2>/dev/null || true)
 }
 
@@ -114,29 +118,27 @@ if [[ -z "$cn" ]]; then
 fi
 
 safe_cn="$(sanitize "$cn")"
-mkdir -p "$LIMITS_DIR" "$ACTIVE_DIR"
-chmod 755 "$ACTIVE_DIR" 2>/dev/null || true
 
-# DISABLED_DIR must exist and be readable. If it is missing or inaccessible
-# we fail-closed: deny the connection rather than risk allowing a disabled user.
-# The directory is created by ensure_multilogin_setup() at OVNode startup; its
-# absence indicates a filesystem or permissions problem that must be fixed.
-if [[ ! -d "$DISABLED_DIR" ]]; then
-    log "CN=$cn DISABLED_DIR missing or not a directory — fail-closed; REJECT"
+# USERS_DIR must exist and be readable. If it is missing or inaccessible we
+# fail-closed: deny the connection rather than risk allowing a disabled user.
+# The tree is created by the agent at startup; its absence indicates a
+# filesystem or permissions problem that must be fixed.
+if [[ ! -d "$USERS_DIR" ]]; then
+    log "CN=$cn USERS_DIR missing or not a directory — fail-closed; REJECT"
     exit 1
 fi
-chmod 755 "$DISABLED_DIR" 2>/dev/null || true
+mkdir -p "$ACTIVE_DIR"
+chmod 755 "$ACTIVE_DIR" 2>/dev/null || true
 
-# A missing CCD file is not an authentication denial. Keep an explicit
-# disabled marker so an already-issued certificate cannot reconnect after
-# Manager disables the user.
-if [[ -f "${DISABLED_DIR}/${safe_cn}" ]]; then
+# The disabled marker blocks an already-issued certificate from reconnecting
+# after Manager disables the user.
+if [[ -f "${USERS_DIR}/${safe_cn}/disabled" ]]; then
     log "CN=$cn is disabled; REJECT"
     exit 1
 fi
 
 limit="$DEFAULT_LIMIT"
-limit_file="${LIMITS_DIR}/${cn}"
+limit_file="${USERS_DIR}/${safe_cn}/limit"
 if [[ -f "$limit_file" ]]; then
     raw="$(tr -dc '0-9' < "$limit_file" || true)"
     [[ -n "$raw" ]] && limit="$raw"
@@ -147,28 +149,29 @@ if [[ "$limit" -eq 0 ]]; then
     exit 0
 fi
 
+pool_ip="${ifconfig_pool_remote_ip:-}"
+pool_ip_s="$(sanitize "${pool_ip:-noip}")"
 trusted_ip_s="$(sanitize "${trusted_ip:-unknown}")"
 trusted_port_s="$(sanitize "${trusted_port:-unknown}")"
-pool_ip_s="$(sanitize "${ifconfig_pool_remote_ip:-noip}")"
 time_s="$(date +%s)"
-session_key="${safe_cn}.${trusted_ip_s}.${trusted_port_s}.${pool_ip_s}"
+
+# Session identity: CN + pool IP (unique per live session, IP-change proof).
+# Without a pool IP (rare: hook order edge cases) fall back to the real
+# address so two concurrent no-pool sessions cannot share a key.
+if [[ -n "$pool_ip" ]]; then
+    session_key="${safe_cn}.${pool_ip_s}"
+else
+    session_key="${safe_cn}.noip.${trusted_ip_s}.${trusted_port_s}"
+fi
 session_file="${ACTIVE_DIR}/${session_key}"
-current_real="${trusted_ip:-}:${trusted_port:-}"
 
 exec 9>"$LOCK_FILE"
 flock -x 9
 
 # ── Reconnect detection (dynamic IP aware) ───────────────────────
-# If ANY marker for this CN was written within the grace period,
-# the user is reconnecting (their IP may have changed). Remove the
-# OLDEST such marker (most likely the stale/dropped session) and
-# proceed to write a fresh marker.
-#
-# This works for:
-# - Static IPs: same user, same IP, within grace
-# - Dynamic IPs: same user, different IP, within grace
-# - max_logins=1: one old marker → removed → count=0 → allow
-# - max_logins=2: two old markers → oldest removed → count=1 → allow
+# If ANY marker for this CN was written within the grace period, the user is
+# reconnecting (their IP may have changed). Remove the OLDEST such marker
+# (most likely the dropped session) and proceed to write a fresh marker.
 reconnected=0
 oldest_marker=""
 oldest_time=999999999
@@ -193,9 +196,10 @@ if [[ "$reconnected" -eq 1 && -n "$oldest_marker" ]]; then
 fi
 
 # ── Stale marker cleanup ─────────────────────────────────────────
-# Remove markers older than grace that are NOT in the OpenVPN status file.
-# This handles slow reconnects (> grace) where the old session has
-# already been cleared by OpenVPN.
+# Remove markers older than grace whose (CN, pool IP) is NOT in the status
+# file. Matching on the pool IP (status column 4) is immune to the client's
+# real IP changing between sessions. Markers without a pool IP fall back to
+# real-address matching (legacy markers).
 if [[ -f "$STATUS_FILE" ]]; then
     while IFS= read -r marker; do
         [[ -f "$marker" ]] || continue
@@ -206,19 +210,27 @@ if [[ -f "$STATUS_FILE" ]]; then
         if (( age < RECONNECT_GRACE )); then
             continue
         fi
-        # Old marker: check if it's still in the status file
-        m_ip="$(awk -F= '$1 == "trusted_ip" {print $2}' "$marker" 2>/dev/null || true)"
-        m_port="$(awk -F= '$1 == "trusted_port" {print $2}' "$marker" 2>/dev/null || true)"
-        if ! awk -v cn="$cn" -v ip="$m_ip" -v port="$m_port" '
-            BEGIN { FS="\t"; found=0 }
-            $1 == "CLIENT_LIST" && $2 == cn {
-                split($3, a, ":"); p=a[length(a)]; sub(":" p "$", "", $3);
-                if ($3 == ip && p == port) found=1
-            }
-            END { exit(found ? 0 : 1) }
-        ' "$STATUS_FILE" 2>/dev/null; then
-            rm -f "$marker" 2>/dev/null || true
-            log "CN=$cn removed_stale_marker=$(basename "$marker") age=${age}s"
+        m_pool="$(awk -F= '$1 == "ifconfig_pool_remote_ip" {print $2}' "$marker" 2>/dev/null || true)"
+        if [[ -n "$m_pool" ]]; then
+            if ! awk -v cn="$cn" -v pool="$m_pool" '
+                BEGIN { FS="\t"; found=0 }
+                $1 == "CLIENT_LIST" && $2 == cn && $4 == pool { found=1 }
+                END { exit(found ? 0 : 1) }
+            ' "$STATUS_FILE" 2>/dev/null; then
+                rm -f "$marker" 2>/dev/null || true
+                log "CN=$cn removed_stale_marker=$(basename "$marker") age=${age}s (pool=$m_pool gone)"
+            fi
+        else
+            m_ip="$(awk -F= '$1 == "trusted_ip" {print $2}' "$marker" 2>/dev/null || true)"
+            m_port="$(awk -F= '$1 == "trusted_port" {print $2}' "$marker" 2>/dev/null || true)"
+            if ! awk -v cn="$cn" -v real="${m_ip}:${m_port}" '
+                BEGIN { FS="\t"; found=0 }
+                $1 == "CLIENT_LIST" && $2 == cn && $3 == real { found=1 }
+                END { exit(found ? 0 : 1) }
+            ' "$STATUS_FILE" 2>/dev/null; then
+                rm -f "$marker" 2>/dev/null || true
+                log "CN=$cn removed_stale_marker=$(basename "$marker") age=${age}s (legacy real-addr)"
+            fi
         fi
     done < <(find "$ACTIVE_DIR" -type f -name "${safe_cn}.*" 2>/dev/null)
 fi
@@ -247,13 +259,13 @@ if (( cur >= limit )); then
             exit 1
         fi
         log "CN=$cn limit=1 active=$active_files status=$status_count; TAKEOVER"
-        kill_existing_sessions "$cn" "$current_real"
+        kill_existing_sessions "$cn" "$pool_ip"
         sleep 0.3
         remaining=0
         if [[ -f "$STATUS_FILE" ]]; then
-            remaining="$(awk -v cn="$cn" -v current="$current_real" '
+            remaining="$(awk -v cn="$cn" -v pool="$pool_ip" '
                 BEGIN { FS="\t" }
-                $1 == "CLIENT_LIST" && $2 == cn && $3 != current { c++ }
+                $1 == "CLIENT_LIST" && $2 == cn && (pool == "" || $4 != pool) { c++ }
                 END { print c+0 }
             ' "$STATUS_FILE" 2>/dev/null || echo 1)"
         fi
@@ -272,7 +284,7 @@ cat > "$session_file" <<EOF
 common_name=$cn
 trusted_ip=${trusted_ip:-}
 trusted_port=${trusted_port:-}
-ifconfig_pool_remote_ip=${ifconfig_pool_remote_ip:-}
+ifconfig_pool_remote_ip=${pool_ip}
 created=$time_s
 EOF
 chmod 600 "$session_file" 2>/dev/null || true

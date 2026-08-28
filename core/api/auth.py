@@ -30,7 +30,8 @@ def _allowed(api_key: str) -> bool:
     key = hashlib.sha256(str(api_key).encode()).hexdigest()[:32]
     with _ratelimit_lock:
         stale = [
-            k for k, values in _ratelimit_buckets.items()
+            k
+            for k, values in _ratelimit_buckets.items()
             if not values or now - values[-1] >= _WINDOW
         ]
         for stale_key in stale:

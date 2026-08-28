@@ -19,9 +19,11 @@ Responsibilities (all idempotent, safe to call on every startup):
 
 import os
 import subprocess
+from datetime import UTC
 
-from core.easyrsa import run_easyrsa as _easyrsa
 from core.logger import logger
+from core.openvpn.store import SCRIPTS_DIR
+from core.openvpn.store import ensure_layout as _ensure_store_layout
 
 _OPENVPN_ROOT = os.getenv("OVNODE_OPENVPN_ROOT", "/etc/openvpn")
 EASYRSA_DIR = os.path.join(_OPENVPN_ROOT, "server", "easy-rsa")
@@ -33,24 +35,55 @@ CA_CERT = os.path.join(PKI_DIR, "ca.crt")
 SERVER_CERT = os.path.join(PKI_DIR, "issued", "server.crt")
 DH_PEM = os.path.join(PKI_DIR, "dh.pem")
 CRL_FILE = os.path.join(PKI_DIR, "crl.pem")
-SCRIPTS_DIR = os.path.join(_OPENVPN_ROOT, "scripts")
 PID_FILE = os.path.join(_OPENVPN_ROOT, "server", "ovnode.pid")
 
 REQUIRED_DIRS = [
     os.path.join(_OPENVPN_ROOT, "server"),
-    os.path.join(_OPENVPN_ROOT, "clients"),
     os.path.join(_OPENVPN_ROOT, "ccd"),
-    os.path.join(_OPENVPN_ROOT, "limits"),
-    os.path.join(_OPENVPN_ROOT, "disabled"),
-    os.path.join(_OPENVPN_ROOT, "ovnode-active"),
-    os.path.join(_OPENVPN_ROOT, "scripts"),
 ]
+
+
+def run_easyrsa(*args: str, timeout: int = 120, pki_dir: str | None = None) -> bool:
+    """Run easyrsa in batch mode. Returns True on success."""
+    easyrsa_bin = os.path.join(EASYRSA_DIR, "easyrsa")
+    if not os.path.exists(easyrsa_bin):
+        logger.error("easyrsa not found at %s", easyrsa_bin)
+        return False
+    try:
+        cmd = [easyrsa_bin, f"--pki-dir={pki_dir or PKI_DIR}"] + list(args)
+        subprocess.run(
+            cmd,
+            cwd=EASYRSA_DIR,
+            env={**os.environ, "EASYRSA_BATCH": "1"},
+            check=True,
+            capture_output=True,
+            timeout=timeout,
+        )
+        return True
+    except subprocess.CalledProcessError as e:
+        logger.error(
+            "easyrsa %s failed (rc=%d): %s",
+            " ".join(args),
+            e.returncode,
+            e.stderr[-500:].decode() if e.stderr else str(e),
+        )
+        return False
+    except subprocess.TimeoutExpired:
+        logger.error("easyrsa %s timed out after %ds", " ".join(args), timeout)
+        return False
+    except Exception as e:
+        logger.error("easyrsa %s error: %s", " ".join(args), e)
+        return False
+
+
+_easyrsa = run_easyrsa
 
 
 def _env(name: str, default: str) -> str:
     """Read an OVNODE_* env var with a default (config.py is the source)."""
     try:
         from core.config import settings
+
         return str(getattr(settings, f"ovnode_{name}", default) or default)
     except Exception:
         return os.getenv(f"OVNODE_{name.upper()}", default)
@@ -105,6 +138,19 @@ def _openvpn_port() -> int:
         return 1194
 
 
+def _extra_vpn_ports() -> list[int]:
+    """Extra ports the node is reachable on (iptables REDIRECT → primary)."""
+    from core.config import parse_extra_ports
+
+    return parse_extra_ports(os.getenv("OVNODE_EXTRA_PORTS", ""), _openvpn_port())
+
+
+def _remote_lines(tunnel_addr: str, primary_port: int) -> str:
+    """One `remote` line per reachable port — clients fail over in order."""
+    ports = [primary_port, *_extra_vpn_ports()]
+    return "\n".join(f"remote {tunnel_addr} {p}" for p in ports)
+
+
 def _openvpn_bin() -> str:
     """Locate the openvpn binary (PATH or common locations)."""
     import shutil
@@ -119,6 +165,7 @@ def _openvpn_bin() -> str:
 
 
 # ── easy-rsa bootstrap ───────────────────────────────────────────────
+
 
 def _setup_easyrsa() -> None:
     """Copy easy-rsa into place and write a modern vars file (fresh only)."""
@@ -215,13 +262,85 @@ def _gen_tls_key() -> None:
 
 # ── CRL ──────────────────────────────────────────────────────────────
 
+# Regenerate the CRL when it is within this many days of its nextUpdate.
+# EasyRSA CRLs are valid for EASYRSA_CRL_DAYS (365); with `crl-verify`,
+# OpenVPN rejects ALL clients once the CRL expires — so a node that never
+# revokes anyone would lock every user out after a year without this.
+_CRL_RENEW_THRESHOLD_DAYS = 30
+
+
+def _crl_days_remaining() -> int | None:
+    """Days until the CRL's nextUpdate, or None when it cannot be read."""
+    try:
+        out = subprocess.check_output(
+            ["openssl", "crl", "-nextupdate", "-noout", "-in", CRL_FILE],
+            text=True,
+            timeout=10,
+        )
+    except Exception as e:
+        logger.warning("Could not read CRL nextUpdate: %s", e)
+        return None
+    return _days_until_openssl_date(out)
+
+
+_MONTHS = {
+    "Jan": 1, "Feb": 2, "Mar": 3, "Apr": 4, "May": 5, "Jun": 6,
+    "Jul": 7, "Aug": 8, "Sep": 9, "Oct": 10, "Nov": 11, "Dec": 12,
+}  # fmt: skip
+
+
+def _days_until_openssl_date(raw: str) -> int | None:
+    """Parse 'nextUpdate=Aug 28 12:00:00 2027 GMT' → whole days from now.
+
+    Parsed by hand because openssl always prints English month names while
+    strptime('%b') is locale-dependent.
+    """
+    from datetime import datetime
+
+    try:
+        value = raw.split("=", 1)[1].strip()
+        month_s, day_s, time_s, year_s, _tz = value.split()
+        hour_s, minute_s, second_s = time_s.split(":")
+        expiry = datetime(
+            int(year_s),
+            _MONTHS[month_s],
+            int(day_s),
+            int(hour_s),
+            int(minute_s),
+            int(second_s),
+            tzinfo=UTC,
+        )
+        return int((expiry - datetime.now(UTC)).total_seconds() // 86400)
+    except (IndexError, KeyError, ValueError) as e:
+        logger.warning("Unparseable CRL date %r: %s", raw.strip(), e)
+        return None
+
+
 def _ensure_crl() -> bool:
-    """Generate the CRL when missing; keep it world-readable for OpenVPN."""
+    """Generate the CRL when missing or near expiry; keep it OpenVPN-readable."""
     if os.path.exists(CRL_FILE):
+        days = _crl_days_remaining()
+        if days is not None and days > _CRL_RENEW_THRESHOLD_DAYS:
+            try:
+                os.chmod(CRL_FILE, 0o644)
+            except OSError:
+                pass
+            return True
+        # Unreadable or expiring: fall through and regenerate. If that fails
+        # but the current CRL is still valid, keep serving it.
+        logger.warning(
+            "CRL expires in %s days (threshold %d) — regenerating",
+            days,
+            _CRL_RENEW_THRESHOLD_DAYS,
+        )
+        if not _easyrsa("gen-crl"):
+            logger.error("CRL renewal failed — clients will be rejected once it expires!")
+            return days is not None and days > 0
         try:
             os.chmod(CRL_FILE, 0o644)
         except OSError:
             pass
+        logger.info("CRL renewed at %s", CRL_FILE)
         return True
     if not _easyrsa("gen-crl"):
         logger.error("CRL generation failed — revoked certs may remain usable.")
@@ -255,7 +374,7 @@ def _hardening_directives() -> list[str]:
         f"management-client-group {_runtime_group()}",
         f"writepid {PID_FILE}",
         "script-security 2",
-        "status-version 2",
+        "status-version 3",
     ]
 
 
@@ -306,7 +425,7 @@ def _fresh_server_conf() -> str:
         f"client-config-dir {os.path.join(_OPENVPN_ROOT, 'ccd')}",
         f"crl-verify {CRL_FILE}",
         f"status {os.path.join(_OPENVPN_ROOT, 'server', 'status.log')} 5",
-        "status-version 2",
+        "status-version 3",
         f"management 127.0.0.1 {_management_port()}",
         f"management-client-user {user}",
         f"management-client-group {group}",
@@ -349,18 +468,26 @@ def _ensure_server_conf() -> None:
         # If an existing `dh <path>` references a file that no longer exists
         # (e.g. the PKI was re-initialized), replace it with `dh none` so the
         # config keeps loading (ECDHE needs no static DH). Files that exist
-        # are left untouched.
+        # are left untouched. An outdated status-version (1/2) is upgraded in
+        # place: the enforcement hooks parse the tab-separated version 3.
         replaced_dh = False
+        replaced_status = False
         out_lines = []
         for ln in lines:
             parts = ln.split()
+            stripped = ln.strip()
+            if stripped.startswith("status-version") and stripped != "status-version 3":
+                out_lines.append("status-version 3")
+                replaced_status = True
+                to_add = [d for d in to_add if d != "status-version 3"]
+                continue
             if len(parts) >= 2 and parts[0] == "dh" and not os.path.exists(parts[1]):
                 out_lines.append("dh none")
                 replaced_dh = True
                 logger.warning("Replaced missing dh file %s with 'dh none'", parts[1])
             else:
                 out_lines.append(ln)
-        changed = replaced_dh or bool(to_add)
+        changed = replaced_dh or replaced_status or bool(to_add)
         if to_add:
             if out_lines and out_lines[-1].strip() != "":
                 out_lines.append("")
@@ -376,6 +503,7 @@ def _ensure_server_conf() -> None:
 
 # ── client template ──────────────────────────────────────────────────
 
+
 def _ensure_client_template() -> None:
     """Write client-common.txt if missing (tunnel address filled by panel)."""
     if os.path.exists(CLIENT_TEMPLATE):
@@ -385,7 +513,7 @@ def _ensure_client_template() -> None:
     content = f"""client
 dev tun
 proto tcp
-remote {tunnel_addr} {port}
+{_remote_lines(tunnel_addr, port)}
 resolv-retry infinite
 nobind
 persist-key
@@ -404,6 +532,7 @@ verb 3
 
 
 # ── tls-crypt key embedding for .ovpn files ─────────────────────────
+
 
 def read_tls_crypt_key() -> str | None:
     """Return the tls-crypt pre-shared key, or None if unavailable."""
@@ -430,10 +559,14 @@ def tls_crypt_block() -> str:
 
 # ── entrypoint ───────────────────────────────────────────────────────
 
+
 def init_pki() -> None:
     """Initialize PKI + OpenVPN config. Safe to call on every startup."""
     for d in REQUIRED_DIRS:
         os.makedirs(d, exist_ok=True)
+    # Store layout first: it also migrates any legacy on-disk layout, and
+    # everything below (template, hooks config) points into the new tree.
+    _ensure_store_layout()
 
     _setup_easyrsa()
 

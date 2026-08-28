@@ -21,26 +21,22 @@ when it actually changed something.
 
 import os
 import shutil
-from pathlib import Path
 
 from core.logger import logger
+from core.openvpn import store
 
 _OPENVPN_ROOT = os.getenv("OVNODE_OPENVPN_ROOT", "/etc/openvpn")
 SERVER_CONF = os.path.join(_OPENVPN_ROOT, "server", "server.conf")
 CRL_FILE = os.path.join(_OPENVPN_ROOT, "server", "pki", "crl.pem")
-SCRIPTS_DST_DIR = os.path.join(_OPENVPN_ROOT, "scripts")
-LIMITS_DIR = os.path.join(_OPENVPN_ROOT, "limits")
-ACTIVE_DIR = os.path.join(_OPENVPN_ROOT, "ovnode-active")
-DISABLED_DIR = os.path.join(_OPENVPN_ROOT, "disabled")
-LOCK_FILE = os.path.join(ACTIVE_DIR, ".lock")
 SCRIPTS_SRC_DIR = os.path.join(os.path.dirname(__file__), "..", "scripts")
 
-CONNECT_DST = os.path.join(SCRIPTS_DST_DIR, "ovnode-client-connect.sh")
-DISCONNECT_DST = os.path.join(SCRIPTS_DST_DIR, "ovnode-client-disconnect.sh")
+CONNECT_DST = os.path.join(store.SCRIPTS_DIR, "ovnode-client-connect.sh")
+DISCONNECT_DST = os.path.join(store.SCRIPTS_DIR, "ovnode-client-disconnect.sh")
 
 # Path the connect script reads to count live sessions. Must match the
 # `status` directive in server.conf and OVNODE_STATUS_FILE in the script.
 STATUS_FILE = os.getenv("OVNODE_STATUS_FILE", os.path.join(_OPENVPN_ROOT, "server", "status.log"))
+
 
 # Directives we need in server.conf for an exact N-device per-cert limit.
 # The management interface is required by the connect script for takeover
@@ -58,54 +54,31 @@ def _required_directives() -> list[str]:
     ]
 
 
-def _openvpn_runtime_user_group() -> tuple[str, str]:
-    """Return the user/group OpenVPN drops privileges to.
+def _write_mlogin_env() -> None:
+    """Remove the legacy node→panel callback env file if present.
 
-    Hook scripts run as this user, not root. The active-session registry and
-    lock file must therefore be writable by this account; otherwise OpenVPN
-    returns AUTH_FAILED even for the first valid client.
+    Older builds wrote ovnode-mlogin.env (panel URL + API key) so the connect
+    hook could query the panel for a global session count. That coupled every
+    node to the panel's address — moving the panel would have required
+    reconfiguring all nodes. Enforcement is now strictly per-node; cross-node
+    policy belongs to the panel, which already polls /sync/sessions and can
+    disconnect via /sync/user/{uid}/disconnect on any node.
     """
-    user = "nobody"
-    group = "nogroup"
+    legacy = os.path.join(store.SCRIPTS_DIR, "ovnode-mlogin.env")
     try:
-        if os.path.exists(SERVER_CONF):
-            for line in Path(SERVER_CONF).read_text(encoding="utf-8").splitlines():
-                parts = line.strip().split()
-                if len(parts) >= 2 and parts[0] == "user":
-                    user = parts[1]
-                elif len(parts) >= 2 and parts[0] == "group":
-                    group = parts[1]
-    except Exception as e:
-        logger.warning("multilogin: failed to read OpenVPN runtime user/group: %s", e)
-    return user, group
-
-
-def _fix_runtime_permissions() -> None:
-    """Make the registry writable by the OpenVPN hook runtime user."""
-    os.makedirs(LIMITS_DIR, exist_ok=True)
-    os.makedirs(ACTIVE_DIR, exist_ok=True)
-    os.makedirs(DISABLED_DIR, exist_ok=True)
-    Path(LOCK_FILE).touch(exist_ok=True)
-
-    user, group = _openvpn_runtime_user_group()
-    try:
-        shutil.chown(ACTIVE_DIR, user=user, group=group)
-        shutil.chown(LOCK_FILE, user=user, group=group)
-    except Exception as e:
-        logger.warning("multilogin: failed to chown registry to %s:%s: %s", user, group, e)
-    try:
-        os.chmod(ACTIVE_DIR, 0o755)
-        os.chmod(DISABLED_DIR, 0o755)
-        os.chmod(LOCK_FILE, 0o664)
-    except Exception as e:
-        logger.warning("multilogin: failed to chmod registry/lock: %s", e)
+        os.remove(legacy)
+        logger.info("multilogin: removed legacy panel-callback env %s", legacy)
+    except FileNotFoundError:
+        pass
+    except OSError as e:
+        logger.warning("multilogin: could not remove %s: %s", legacy, e)
 
 
 def _install_scripts() -> bool:
     """Copy the enforcement scripts into place. Returns True if anything changed."""
     changed = False
-    os.makedirs(SCRIPTS_DST_DIR, exist_ok=True)
-    _fix_runtime_permissions()
+    os.makedirs(store.SCRIPTS_DIR, exist_ok=True)
+    store.fix_runtime_permissions()
 
     for fname, dst in (
         ("ovnode-client-connect.sh", CONNECT_DST),
@@ -134,6 +107,23 @@ def _patch_server_conf() -> bool:
         content = f.read()
 
     lines = content.splitlines()
+
+    # Repoint hook directives that reference an old scripts location (the
+    # hooks moved into the ovnode/ tree). Rewriting in place preserves the
+    # admin's line ordering.
+    repointed = False
+    _hook_targets = {"client-connect": CONNECT_DST, "client-disconnect": DISCONNECT_DST}
+    for i, ln in enumerate(lines):
+        parts = ln.strip().split()
+        if (
+            len(parts) == 2
+            and parts[0] in _hook_targets
+            and "ovnode-client-" in parts[1]
+            and parts[1] != _hook_targets[parts[0]]
+        ):
+            lines[i] = f"{parts[0]} {_hook_targets[parts[0]]}"
+            repointed = True
+
     existing = {ln.strip() for ln in lines}
     to_add = [d for d in _required_directives() if d not in existing]
 
@@ -144,21 +134,30 @@ def _patch_server_conf() -> bool:
     if not has_status:
         to_add.append(f"status {STATUS_FILE} 5")
 
-    # The parser expects the machine-readable `CLIENT_LIST,...` layout, which is
-    # produced by status-version 2/3. The default (version 1) uses a different
-    # format with no CLIENT_LIST prefix, which would silently break both the
-    # connection limit and traffic accounting. Ensure version 3 is set.
+    # The connect script counts sessions and resolves Client IDs from the
+    # status log with tab-separated awk, which requires the machine-readable
+    # status-version 3 layout. Version 1 has no CLIENT_LIST rows at all and
+    # version 2 is comma-separated — either would silently break both the
+    # connection limit and takeover kills. Ensure version 3, upgrading an
+    # existing version 1/2 directive in place.
+    replaced_status_version = False
+    for i, ln in enumerate(lines):
+        stripped = ln.strip()
+        if stripped.startswith("status-version") and stripped != "status-version 3":
+            lines[i] = "status-version 3"
+            replaced_status_version = True
     has_status_version = any(ln.strip().startswith("status-version") for ln in lines)
     if not has_status_version:
-        to_add.append("status-version 2")
+        to_add.append("status-version 3")
 
-    if not to_add:
+    if not to_add and not replaced_status_version and not repointed:
         return False
 
-    if lines and lines[-1].strip() != "":
-        lines.append("")
-    lines.append("# ovmanager multi-login (per-config connection limit) enforcement")
-    lines.extend(to_add)
+    if to_add:
+        if lines and lines[-1].strip() != "":
+            lines.append("")
+        lines.append("# ovmanager multi-login (per-config connection limit) enforcement")
+        lines.extend(to_add)
 
     with open(SERVER_CONF, "w") as f:
         f.write("\n".join(lines) + "\n")
@@ -168,7 +167,7 @@ def _patch_server_conf() -> bool:
 
 
 def _restart_openvpn() -> None:
-    from core.service.openvpn_control import restart_openvpn
+    from core.openvpn.control import restart_openvpn
 
     if not restart_openvpn():
         logger.error("multilogin: failed to restart OpenVPN")
@@ -179,8 +178,9 @@ def ensure_multilogin_setup() -> None:
     try:
         scripts_changed = _install_scripts()
         conf_changed = _patch_server_conf()
+        _write_mlogin_env()
         # server.conf may have been created/edited after _install_scripts() read it.
-        _fix_runtime_permissions()
+        store.fix_runtime_permissions()
         if conf_changed:
             # OpenVPN must reload only when server.conf changed. Hook script
             # contents are executed from disk for each new connection, so script
