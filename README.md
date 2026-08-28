@@ -50,7 +50,15 @@ bash <(curl -sSL URL) \
   --ipv6 --tls none
 ```
 
-See `install.sh --help` for TLS modes, Docker, and non-interactive (`-y`) installs. Use the same `--name` and `--api-key` when adding the node in the panel (Nodes → Add Node).
+For automation and AI agents, `--json` gives a machine interface: exactly one JSON object on stdout (all logs on stderr), never prompts, documented exit codes (`0` ok, `1` error, `2` usage, `3` already installed, `4` not installed), and every flag has an `OVN_*` env equivalent:
+
+```bash
+RESULT=$(bash <(curl -sSL URL) install --json --tls selfsigned --docker) || exit
+API_KEY=$(echo "$RESULT" | jq -r .api_key)
+bash <(curl -sSL URL) status --json    # {"installed":true,"health":"ok",...}
+```
+
+See `install.sh help` for all commands (`install`, `update`, `uninstall`, `status`) and TLS modes. Use the same `--name` and `--api-key` when adding the node in the panel (Nodes → Add Node).
 
 ## Update / Uninstall
 
