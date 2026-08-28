@@ -42,6 +42,7 @@ DISCONNECT_DST = os.path.join(SCRIPTS_DST_DIR, "ovnode-client-disconnect.sh")
 # `status` directive in server.conf and OVNODE_STATUS_FILE in the script.
 STATUS_FILE = os.getenv("OVNODE_STATUS_FILE", os.path.join(_OPENVPN_ROOT, "server", "status.log"))
 
+
 # Directives we need in server.conf for an exact N-device per-cert limit.
 # The management interface is required by the connect script for takeover
 # (limit=1) and by the agent for disconnects.
@@ -147,7 +148,7 @@ def _patch_server_conf() -> bool:
     # The parser expects the machine-readable `CLIENT_LIST,...` layout, which is
     # produced by status-version 2/3. The default (version 1) uses a different
     # format with no CLIENT_LIST prefix, which would silently break both the
-    # connection limit and traffic accounting. Ensure version 3 is set.
+    # connection limit and traffic accounting. Ensure version 2 is set.
     has_status_version = any(ln.strip().startswith("status-version") for ln in lines)
     if not has_status_version:
         to_add.append("status-version 2")

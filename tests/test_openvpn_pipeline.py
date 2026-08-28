@@ -8,12 +8,13 @@ OVNODE_OPENVPN_ROOT, so module-level path constants in core.pki_setup freeze
 with the correct env and no state leaks into (or from) other test modules
 which share this pytest process.
 """
+
 import os
 import subprocess
 import sys
 import tempfile
 
-CHECK_SCRIPT = r'''
+CHECK_SCRIPT = r"""
 import os, sys
 
 os.environ["OPENVPN_PORT"] = "1194"
@@ -105,7 +106,7 @@ ok(not change_config(bad), "bad port rejected")
 
 print(f"RESULT: {PASS} passed, {FAIL} failed")
 sys.exit(1 if FAIL else 0)
-'''
+"""
 
 
 def test_openvpn_pipeline():

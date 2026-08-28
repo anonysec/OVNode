@@ -57,6 +57,10 @@ def _cn_from_uid(uid: str) -> str:
     return str(uid).strip()
 
 
+# Public alias for callers outside this module (e.g. the router).
+cn_from_uid = _cn_from_uid
+
+
 def _get_name(uid: str) -> str | None:
     mapping = _load_uid_map()
     return mapping.get(str(uid))
@@ -276,6 +280,7 @@ def change_user_status(uid: str, status: str) -> bool:
             # even when the management socket is unavailable.
             try:
                 from core.service.sessions import disconnect_user
+
                 disconnect_user(paths["name"])
             except Exception as e:
                 logger.warning("Could not disconnect disabled uid='%s': %s", uid, e)
