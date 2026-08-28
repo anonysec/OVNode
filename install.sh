@@ -117,7 +117,7 @@ pkg_install() {
 has_systemd() { command -v systemctl >/dev/null 2>&1 && [[ -d /run/systemd/system ]]; }
 
 # ── Args ───────────────────────────────────────────────────────────────
-PORT="" API_KEY="" VPN_PORT="" NODE_NAME="" PANEL_URL=""
+PORT="" API_KEY="" VPN_PORT="" NODE_NAME=""
 TLS_METHOD="none" TLS_DOMAIN="" TLS_KEY="" TLS_CERT=""
 DOCKER=0 ACTION="install" YES=0 PURGE=0 NO_NAT=0 IPV6=0
 
@@ -138,8 +138,6 @@ show_help() {
     --api-key KEY       API key (min 16 chars; auto-generated if empty)
     --vpn-port PORT     OpenVPN port (default: 1194)
     --name NAME         Node name (default: node-1)
-    --panel-url URL     OVManager panel URL — enables the GLOBAL cross-node
-                        max-login check in the connect hook (optional)
     --tls METHOD        letsencrypt | letsencrypt-ip | selfsigned | custom | none
     --tls-domain DOM    Domain or IP for Let's Encrypt
     --tls-key K         Key file (with --tls custom)
@@ -161,7 +159,6 @@ parse_args() {
             --api-key)    [[ $# -ge 2 ]] || die "--api-key needs a value"; API_KEY="$2"; shift 2 ;;
             --vpn-port)   [[ $# -ge 2 ]] || die "--vpn-port needs a value"; VPN_PORT="$2"; shift 2 ;;
             --name)       [[ $# -ge 2 ]] || die "--name needs a value"; NODE_NAME="$2"; shift 2 ;;
-            --panel-url)  [[ $# -ge 2 ]] || die "--panel-url needs a value"; PANEL_URL="$2"; shift 2 ;;
             --tls)        [[ $# -ge 2 ]] || die "--tls needs a value"; TLS_METHOD="$2"; shift 2 ;;
             --tls-domain) [[ $# -ge 2 ]] || die "--tls-domain needs a value"; TLS_DOMAIN="$2"; shift 2 ;;
             --tls-key)    [[ $# -ge 2 ]] || die "--tls-key needs a value"; TLS_KEY="$2"; shift 2 ;;
@@ -469,7 +466,6 @@ SERVICE_PORT=${PORT}
 API_KEY=${API_KEY}
 OPENVPN_PORT=${VPN_PORT}
 TLS_METHOD=${TLS_METHOD}
-$( if [[ -n "$PANEL_URL" ]]; then echo "PANEL_URL=${PANEL_URL}"; fi )
 $( if [[ "$IPV6" -eq 1 ]]; then echo "OVNODE_ENABLE_IPV6=1"; fi )
 $( if [[ -n "$TLS_KEY" ]]; then echo "SSL_KEYFILE=${TLS_KEY}"; fi )
 $( if [[ -n "$TLS_CERT" ]]; then echo "SSL_CERTFILE=${TLS_CERT}"; fi )

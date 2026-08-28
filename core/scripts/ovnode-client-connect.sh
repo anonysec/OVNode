@@ -25,7 +25,6 @@ set -euo pipefail
 LIMITS_DIR="/etc/openvpn/limits"
 DISABLED_DIR="/etc/openvpn/disabled"
 ACTIVE_DIR="/etc/openvpn/ovnode-active"
-NAMES_DIR="/etc/openvpn/names"
 LOCK_FILE="${ACTIVE_DIR}/.lock"
 STATUS_FILE="${OVNODE_STATUS_FILE:-/etc/openvpn/server/status.log}"
 MGMT_HOST="${OVNODE_MGMT_HOST:-127.0.0.1}"
@@ -35,10 +34,6 @@ LOG_TAG="ovnode-mlogin"
 # Grace period (seconds): same-CN reconnects within this window are
 # treated as the same user reconnecting (IP may have changed).
 RECONNECT_GRACE="${OVNODE_RECONNECT_GRACE:-15}"
-# Written by OVNode at startup (ensure_multilogin_setup). Provides
-# PANEL_URL / NODE_NAME / NODE_API_KEY / GLOBAL_FAIL_OPEN for the global
-# cross-node max-login check against OVManager's /mlogin/status endpoint.
-MLOGIN_ENV="/etc/openvpn/scripts/ovnode-mlogin.env"
 
 cn="${common_name:-${1:-}}"
 
@@ -52,30 +47,6 @@ host, port = sys.argv[1], int(sys.argv[2])
 with socket.create_connection((host, port), timeout=2):
     pass
 PYPROBE
-}
-
-# Query OVManager for this user's sessions on OTHER nodes.
-# Prints the remote session count, or -1 when the panel is unreachable or
-# returns an unexpected payload. Authenticates as this node via the
-# X-Node-Name + key headers (see backend/routers/mlogin.py in OVManager).
-global_remote_count() {
-    local username="$1"
-    python3 - "$PANEL_URL" "$NODE_NAME" "$NODE_API_KEY" "$username" <<'PYGLOBAL' 2>/dev/null
-import json, sys, urllib.parse, urllib.request
-
-panel, node, key, username = sys.argv[1:5]
-url = f"{panel}/mlogin/status/{urllib.parse.quote(username, safe='')}"
-req = urllib.request.Request(url, headers={"key": key, "X-Node-Name": node})
-try:
-    with urllib.request.urlopen(req, timeout=3) as r:
-        payload = json.load(r)
-    data = payload.get("data") or {}
-    sessions = data.get("sessions") or []
-    remote = sum(1 for s in sessions if isinstance(s, (list, tuple)) and s and s[0] != node)
-    print(remote)
-except Exception:
-    print(-1)
-PYGLOBAL
 }
 
 mgmt_send() {
@@ -265,41 +236,6 @@ fi
 active_files="$(find "$ACTIVE_DIR" -type f -name "${safe_cn}.*" 2>/dev/null | wc -l | tr -d ' ')"
 cur="$active_files"
 if [[ "$status_count" -gt "$cur" ]]; then cur="$status_count"; fi
-
-# ── Global (cross-node) session check ────────────────────────────
-# When PANEL_URL is configured, ask OVManager how many sessions this user
-# has on OTHER nodes. Remote sessions cannot be taken over from here, so
-# they always count against the limit. Panel unreachable → fail-open by
-# default (GLOBAL_FAIL_OPEN=0 to fail-closed instead).
-PANEL_URL="" NODE_NAME="" NODE_API_KEY="" GLOBAL_FAIL_OPEN="1"
-if [[ -f "$MLOGIN_ENV" ]]; then
-    # shellcheck disable=SC1090
-    source "$MLOGIN_ENV" 2>/dev/null || true
-fi
-
-remote_active=0
-if [[ -n "$PANEL_URL" ]]; then
-    username="$cn"
-    if [[ -f "${NAMES_DIR}/${safe_cn}" ]]; then
-        username="$(head -c 128 "${NAMES_DIR}/${safe_cn}" 2>/dev/null | tr -d '\r\n' || true)"
-        [[ -n "$username" ]] || username="$cn"
-    fi
-    remote_active="$(global_remote_count "$username")"
-    if [[ "$remote_active" == "-1" || -z "$remote_active" ]]; then
-        if [[ "$GLOBAL_FAIL_OPEN" == "1" ]]; then
-            log "CN=$cn GLOBAL_CHECK_FAILED panel=$PANEL_URL; fail-open, continuing with local check"
-            remote_active=0
-        else
-            log "CN=$cn GLOBAL_CHECK_FAILED panel=$PANEL_URL; fail-closed; REJECT"
-            exit 1
-        fi
-    fi
-fi
-
-if (( remote_active > 0 )) && (( cur + remote_active >= limit )); then
-    log "CN=$cn limit=$limit local=$cur remote=$remote_active; GLOBAL_REJECT"
-    exit 1
-fi
 
 if (( cur >= limit )); then
     if [[ "$limit" -eq 1 ]]; then
