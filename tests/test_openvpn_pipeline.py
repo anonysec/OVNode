@@ -4,7 +4,7 @@
 """Functional test of the overhauled OpenVPN PKI/config pipeline.
 
 Runs the whole pipeline in an isolated subprocess with a dedicated
-OVNODE_OPENVPN_ROOT, so module-level path constants in core.pki_setup freeze
+OVNODE_OPENVPN_ROOT, so module-level path constants in core.openvpn.pki freeze
 with the correct env and no state leaks into (or from) other test modules
 which share this pytest process.
 """
@@ -20,7 +20,7 @@ import os, sys
 os.environ["OPENVPN_PORT"] = "1194"
 os.environ["API_KEY"] = "test-api-key-1234567890"
 
-from core.pki_setup import init_pki, SERVER_CONF, CLIENT_TEMPLATE, TLS_KEY, PKI_DIR
+from core.openvpn.pki import init_pki, SERVER_CONF, CLIENT_TEMPLATE, TLS_KEY, PKI_DIR
 
 PASS = FAIL = 0
 def ok(cond, name):
@@ -48,7 +48,7 @@ ok("tls-crypt" in conf, "tls-crypt")
 ok("dh none" in conf, "dh none")
 ok("tls-version-min 1.2" in conf, "tls min")
 ok("remote-cert-tls client" in conf, "remote-cert-tls")
-ok("status-version 2" in conf, "status-version")
+ok("status-version 3" in conf, "status-version")
 ok("writepid" in conf, "writepid")
 ok("client-connect" in conf and "client-disconnect" in conf, "hooks")
 ok("crl-verify" in conf, "crl")
@@ -61,7 +61,7 @@ ok("remote-cert-tls server" in tpl, "tpl remote-cert-tls")
 ok("remote UPDATE_VIA_PANEL 1194" in tpl, "tpl remote")
 
 # client .ovpn embeds tls-crypt
-from core.service.user_management import create_user_on_server, _client_paths
+from core.openvpn.users import create_user_on_server, _client_paths
 uid = "testuser42"
 ok(create_user_on_server(uid, "Test User", max_logins=2), "create user")
 ovpn = read(_client_paths(uid)["ovpn"])
@@ -90,8 +90,8 @@ ok("dh none" in dh_fixed, "missing dh replaced with dh none")
 ok("dh /etc/openvpn/server/pki/dh.pem" not in dh_fixed, "broken dh reference removed")
 
 # /sync/config
-from core.schema.all_schemas import SetSettingsModel
-from core.setting.core import change_config
+from core.api.schemas import SetSettingsModel
+from core.openvpn.settings_apply import change_config
 req = SetSettingsModel(
     tunnel_address="vpn.example.com", protocol="udp", ovpn_port=1195, set_new_setting=True
 )

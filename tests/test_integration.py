@@ -344,16 +344,20 @@ def test_usage_maps_cn_to_username():
     """
     import os
 
-    from core.service import user_management as um
+    from core.openvpn import users as um
 
     status_file = os.environ["OVNODE_STATUS_FILE"]
     os.makedirs(os.path.dirname(status_file), exist_ok=True)
     um._set_name("42", "alice")
     try:
         with open(status_file, "w") as f:
-            f.write("HEADER,CLIENT_LIST,Common Name,Real Address,...\n")
-            f.write("CLIENT_LIST,42,1.2.3.4:5555,10.8.0.2,1000,2000,now\n")
-            f.write("CLIENT_LIST,7,5.6.7.8:6666,10.8.0.3,10,20,now\n")
+            f.write(
+                "HEADER,CLIENT_LIST,Common Name,Real Address,Virtual Address,"
+                "Virtual IPv6 Address,Bytes Received,Bytes Sent,Connected Since,"
+                "Connected Since (time_t),Username,Client ID,Peer ID,Data Channel Cipher\n"
+            )
+            f.write("CLIENT_LIST,42,1.2.3.4:5555,10.8.0.2,,1000,2000,now,0,42,0,0,AES\n")
+            f.write("CLIENT_LIST,7,5.6.7.8:6666,10.8.0.3,,10,20,now,0,7,1,1,AES\n")
 
         usage = um.get_users_usage()
         # CN 42 has a known username → keyed by username for the collector.

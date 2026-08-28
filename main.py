@@ -40,6 +40,10 @@ def main():
         port=settings.service_port,
         reload=False,
         workers=1,
+        # Per-request access logging is pure overhead for a machine-to-machine
+        # API polled every few seconds by the panel; keep it for DEBUG only.
+        access_log=settings.debug.upper() == "DEBUG",
+        server_header=False,
         **ssl_kwargs,
     )
     server = Server(config=config)

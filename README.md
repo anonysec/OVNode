@@ -30,7 +30,9 @@ Identity: the OpenVPN CN is the panel's numeric user id (`str(user.id)`); the di
 - **Management interface** — wired up and restricted to the runtime user so session takeover (`max_logins=1`) and disconnects work reliably.
 - **Working client configs** — generated `.ovpn` files embed the `tls-crypt` key inline.
 - **Idempotent upgrades** — existing installs get new hardening directives appended on boot without clobbering admin edits; missing `dh` files are auto-replaced with `dh none`.
-- **Local multi-login enforcement** — per-user device limits enforced at connect time (takeover for 1, reject N+1, unlimited for 0), dynamic-IP aware. Cross-node policy stays panel-side: OVManager aggregates `/sync/sessions` from every node and can disconnect anywhere via `/sync/user/{uid}/disconnect`.
+- **Local multi-login enforcement** — per-user device limits enforced at connect time (takeover for 1, reject N+1, unlimited for 0). Cross-node policy stays panel-side: OVManager aggregates `/sync/sessions` from every node and can disconnect anywhere via `/sync/user/{uid}/disconnect`.
+- **Dynamic-IP safe sessions** — session identity is CN + VPN pool IP and enforcement kills target the management client id, so users whose real IP changes on every reconnect (mobile/CGNAT) are tracked and limited correctly.
+- **Multi-port** — one OpenVPN instance reachable on several ports (`--vpn-ports 1194,443,8443`): extra ports are redirected to the listener via iptables, and every `.ovpn` lists all ports as `remote` lines for automatic failover when an ISP blocks one.
 - **Optional IPv6** — ULA pool + route push when enabled (`OVNODE_ENABLE_IPV6=1`).
 
 ## Install
@@ -43,9 +45,9 @@ Common flags:
 
 ```bash
 bash <(curl -sSL URL) \
-  --name eu-1 --port 2083 --vpn-port 1194 \
+  --name eu-1 --port 2083 --vpn-ports 1194,443,8443 \
   --api-key "$(openssl rand -hex 32)" \
-  --ipv6 --tls-none
+  --ipv6 --tls none
 ```
 
 See `install.sh --help` for TLS modes, Docker, and non-interactive (`-y`) installs. Use the same `--name` and `--api-key` when adding the node in the panel (Nodes → Add Node).
@@ -80,6 +82,7 @@ All optional except `API_KEY` — see `.env.example`:
 | `OVNODE_MANAGEMENT_PORT` | `7505` | Local management interface |
 | `OVNODE_VPN_NETWORK` / `OVNODE_VPN_NETMASK` | `10.8.0.0` / `255.255.255.0` | Client pool |
 | `OVNODE_VPN_DNS1` / `OVNODE_VPN_DNS2` | `1.1.1.1` / `8.8.8.8` | DNS pushed to clients |
+| `OVNODE_EXTRA_PORTS` | — | Extra VPN ports listed in every `.ovpn` (redirected to `OPENVPN_PORT` by the installer's NAT unit) |
 | `OVNODE_MAX_CLIENTS` | `100` | Connection cap |
 | `OVNODE_ENABLE_IPV6` / `OVNODE_IPV6_PREFIX` | `0` / `fd42:42:42:42::/64` | IPv6 support |
 

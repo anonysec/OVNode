@@ -165,21 +165,30 @@ def _patch_server_conf() -> bool:
     if not has_status:
         to_add.append(f"status {STATUS_FILE} 5")
 
-    # The parser expects the machine-readable `CLIENT_LIST,...` layout, which is
-    # produced by status-version 2/3. The default (version 1) uses a different
-    # format with no CLIENT_LIST prefix, which would silently break both the
-    # connection limit and traffic accounting. Ensure version 2 is set.
+    # The connect script counts sessions and resolves Client IDs from the
+    # status log with tab-separated awk, which requires the machine-readable
+    # status-version 3 layout. Version 1 has no CLIENT_LIST rows at all and
+    # version 2 is comma-separated — either would silently break both the
+    # connection limit and takeover kills. Ensure version 3, upgrading an
+    # existing version 1/2 directive in place.
+    replaced_status_version = False
+    for i, ln in enumerate(lines):
+        stripped = ln.strip()
+        if stripped.startswith("status-version") and stripped != "status-version 3":
+            lines[i] = "status-version 3"
+            replaced_status_version = True
     has_status_version = any(ln.strip().startswith("status-version") for ln in lines)
     if not has_status_version:
-        to_add.append("status-version 2")
+        to_add.append("status-version 3")
 
-    if not to_add:
+    if not to_add and not replaced_status_version:
         return False
 
-    if lines and lines[-1].strip() != "":
-        lines.append("")
-    lines.append("# ovmanager multi-login (per-config connection limit) enforcement")
-    lines.extend(to_add)
+    if to_add:
+        if lines and lines[-1].strip() != "":
+            lines.append("")
+        lines.append("# ovmanager multi-login (per-config connection limit) enforcement")
+        lines.extend(to_add)
 
     with open(SERVER_CONF, "w") as f:
         f.write("\n".join(lines) + "\n")
@@ -189,7 +198,7 @@ def _patch_server_conf() -> bool:
 
 
 def _restart_openvpn() -> None:
-    from core.service.openvpn_control import restart_openvpn
+    from core.openvpn.control import restart_openvpn
 
     if not restart_openvpn():
         logger.error("multilogin: failed to restart OpenVPN")

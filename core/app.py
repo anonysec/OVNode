@@ -8,10 +8,10 @@ from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from starlette.middleware.base import BaseHTTPMiddleware
 
+from core.api.routes import router as core_router
 from core.config import settings
 from core.logger import logger
-from core.pki_setup import init_pki
-from core.routers import core_router
+from core.openvpn.pki import init_pki
 
 
 class SecurityHeadersMiddleware(BaseHTTPMiddleware):
@@ -33,11 +33,11 @@ async def lifespan(app: FastAPI):
     """Initialize PKI + OpenVPN config (idempotent)."""
     logger.info("Starting OV-Node — initializing PKI...")
     init_pki()
-    from core.service.multilogin import ensure_multilogin_setup
+    from core.openvpn.multilogin import ensure_multilogin_setup
 
     ensure_multilogin_setup()
 
-    from core.service.openvpn_control import openvpn_is_running
+    from core.openvpn.control import openvpn_is_running
 
     if openvpn_is_running():
         logger.info("OpenVPN server is running.")
