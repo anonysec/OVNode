@@ -2,10 +2,14 @@
 # Proprietary and confidential. Unauthorized copying, distribution, or use is prohibited.
 
 import os
+import uuid
 from contextlib import asynccontextmanager
 
-from fastapi import FastAPI
+from fastapi import FastAPI, Request
+from fastapi.exceptions import RequestValidationError
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import JSONResponse
+from starlette.exceptions import HTTPException as StarletteHTTPException
 from starlette.middleware.base import BaseHTTPMiddleware
 
 from core.api.routes import router as core_router
@@ -70,3 +74,59 @@ api.add_middleware(
 api.add_middleware(SecurityHeadersMiddleware)
 
 api.include_router(core_router)
+
+
+# ── error handling ───────────────────────────────────────────────────
+# The panel accepts a call only when it gets HTTP 200 + {"success": true},
+# so every failure — expected or not — must come back in the same envelope.
+# Unhandled exceptions additionally get a short reference id that links the
+# response to the full traceback in the logs (and GET /sync/logs).
+
+
+@api.exception_handler(StarletteHTTPException)
+async def http_exception_handler(request: Request, exc: StarletteHTTPException):
+    """Contract-shaped body for expected HTTP errors (401/404/422/429...)."""
+    return JSONResponse(
+        status_code=exc.status_code,
+        content={"success": False, "msg": str(exc.detail), "data": None},
+        headers=getattr(exc, "headers", None),
+    )
+
+
+@api.exception_handler(RequestValidationError)
+async def validation_exception_handler(request: Request, exc: RequestValidationError):
+    """Malformed panel payloads: log the offender, answer in contract shape."""
+    problems = "; ".join(
+        f"{'.'.join(str(p) for p in e.get('loc', []))}: {e.get('msg', '')}" for e in exc.errors()
+    )
+    logger.warning("Invalid request %s %s — %s", request.method, request.url.path, problems)
+    return JSONResponse(
+        status_code=422,
+        content={"success": False, "msg": f"Invalid request: {problems}", "data": None},
+    )
+
+
+@api.exception_handler(Exception)
+async def unhandled_exception_handler(request: Request, exc: Exception):
+    """Last-resort handler: never leak a traceback, always leave a trail.
+
+    The short ``ref`` ties this response to the full stack trace in the
+    node log — searchable via ``GET /sync/logs`` or ``grep ref data/app.log``.
+    """
+    ref = uuid.uuid4().hex[:8]
+    logger.error(
+        "Unhandled error ref=%s on %s %s: %s",
+        ref,
+        request.method,
+        request.url.path,
+        exc,
+        exc_info=exc,
+    )
+    return JSONResponse(
+        status_code=500,
+        content={
+            "success": False,
+            "msg": f"Internal node error (ref={ref}, see node logs)",
+            "data": None,
+        },
+    )

@@ -224,6 +224,10 @@ def get_users_usage() -> dict:
 
     So ``users`` is keyed by username (fallback CN) and ``sessions`` carries
     both the CN key and the username alias.
+
+    ``totals`` is additive (ignored by current panels): lifetime bytes per
+    user = completed sessions (accumulated by the disconnect hook) + live
+    sessions — the number an operator actually means by "user usage".
     """
     from core.openvpn.status import parse_usage
 
@@ -242,7 +246,14 @@ def get_users_usage() -> dict:
         if name and name != cn:
             sessions[name] = per_session
 
-    return {"users": users, "sessions": sessions}
+    totals: dict[str, float] = {}
+    for cn, banked in store.all_accumulated_usage().items():
+        key = names.get(cn) or cn
+        totals[key] = totals.get(key, 0) + banked
+    for key, live in users.items():
+        totals[key] = totals.get(key, 0) + live
+
+    return {"users": users, "sessions": sessions, "totals": totals}
 
 
 def display_name_for_cn(cn: str) -> str:
