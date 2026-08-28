@@ -26,12 +26,15 @@ HTTP status (ovpn download must be a raw 200 body starting with "client").
 Authentication: the panel sends the node API key in the ``key`` header.
 """
 
+import time
+
 import psutil
 from fastapi import APIRouter, Depends, HTTPException
 from fastapi.responses import FileResponse
 
 from core.api.auth import check_api_key
 from core.api.schemas import ResponseModel, SetSettingsModel, User, UserLimit
+from core.logger import log_stats, recent_logs
 from core.openvpn.control import change_config
 from core.openvpn.sessions import disconnect_user, user_diagnostics
 from core.openvpn.users import (
@@ -49,6 +52,8 @@ from core.validation import DeleteResult, validate_user_id
 from core.version import __version__
 
 router = APIRouter(prefix="/sync", tags=["node_sync"])
+
+_STARTED_AT = time.monotonic()
 
 
 def _resolve_identity(uid: str | None, name: str | None) -> str | None:
@@ -80,7 +85,12 @@ async def get_status(
 
     The panel frontend (NodeDrawer/NodeTable) and metrics snapshots read
     ``cpu_usage``, ``memory_usage`` and ``cert_expiry`` from ``data``.
+    The remaining keys are additive diagnostics (current panels ignore
+    unknown keys): OpenVPN liveness, agent uptime and log-error counters,
+    so node health is visible from the panel side without SSH.
     """
+    from core.openvpn.control import openvpn_is_running
+
     status = {"status": "running", "version": __version__}
     cpu_usage = psutil.cpu_percent(interval=None)
     memory_info = psutil.virtual_memory()
@@ -88,12 +98,36 @@ async def get_status(
         {
             "cpu_usage": cpu_usage,
             "memory_usage": memory_info.percent,
+            "openvpn_running": openvpn_is_running(),
+            "uptime_seconds": int(time.monotonic() - _STARTED_AT),
         }
     )
+    status.update(log_stats())
     # TLS certificate expiry (ISO date) when the node serves HTTPS — lets the
     # panel warn before the certificate lapses and breaks node connectivity.
     status["cert_expiry"] = _cert_expiry()
     return ResponseModel(success=True, msg="Node status retrieved successfully", data=status)
+
+
+@router.get("/logs", response_model=ResponseModel)
+async def get_logs(
+    level: str = "WARNING",
+    limit: int = 200,
+    api_key: str = Depends(check_api_key),
+):
+    """Recent node log records (in-memory ring buffer) — remote diagnostics.
+
+    Not consumed by the current panel; exists so an operator (or a future
+    panel version) can inspect a node's errors without SSH:
+
+        curl -H "key: $API_KEY" https://node:2083/sync/logs?level=ERROR
+    """
+    records = recent_logs(min_level=level, limit=limit)
+    return ResponseModel(
+        success=True,
+        msg=f"{len(records)} log record(s)",
+        data={"records": records, **log_stats()},
+    )
 
 
 def _cert_expiry() -> str | None:

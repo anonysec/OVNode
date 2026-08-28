@@ -40,6 +40,9 @@ def main():
         port=settings.service_port,
         reload=False,
         workers=1,
+        # Unified logging: uvicorn's loggers propagate to the root config in
+        # core/logger.py (rotating file + journald + /sync/logs ring buffer).
+        log_config=None,
         # Per-request access logging is pure overhead for a machine-to-machine
         # API polled every few seconds by the panel; keep it for DEBUG only.
         access_log=settings.debug.upper() == "DEBUG",

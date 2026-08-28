@@ -105,6 +105,13 @@ All node state lives in two places — backup/export is just these two paths:
 
 Pre-existing installs with the old scattered layout (`clients/`, `limits/`, `disabled/`, `ovnode-active/`, `uid_map.json`) are migrated automatically on the next agent start — restoring an old backup onto a current build also just works.
 
+## Diagnostics
+
+- **`GET /sync/logs?level=WARNING&limit=200`** — recent node log records (in-memory ring buffer), so a node can be debugged without SSH: `curl -H "key: $API_KEY" https://node:2083/sync/logs?level=ERROR`
+- **`GET /sync/status`** also reports `openvpn_running`, `uptime_seconds`, `errors_1h`, `warnings_1h` and `last_error`.
+- **`GET /sync/usage`** additionally returns `totals` — lifetime bytes per user (completed sessions banked by the disconnect hook + live traffic). The panel-contract keys (`users`, `sessions`) are unchanged.
+- All errors come back in the `{success, msg, data}` envelope; unhandled ones carry a `ref=<id>` that links to the full traceback in `data/app.log` / `journalctl -u ovnode`.
+
 ## Manual Install
 
 ```bash

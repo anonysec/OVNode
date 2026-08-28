@@ -44,6 +44,11 @@ OVNODE_DIR = os.path.join(_OPENVPN_ROOT, "ovnode")
 USERS_DIR = os.path.join(OVNODE_DIR, "users")
 SESSIONS_DIR = os.path.join(OVNODE_DIR, "sessions")
 SCRIPTS_DIR = os.path.join(OVNODE_DIR, "scripts")
+# Cumulative per-user byte counters, written by the disconnect hook when a
+# session ends (its final bytes_received/bytes_sent). Lives outside users/
+# because the hook runs as the OpenVPN runtime user, which must be able to
+# write here but must NOT be able to touch limits/disabled markers.
+USAGE_DIR = os.path.join(OVNODE_DIR, "usage")
 LOCK_FILE = os.path.join(SESSIONS_DIR, ".lock")
 
 # cn → username map cache for the usage/sessions hot path (the panel polls
@@ -100,6 +105,7 @@ def delete_user(cn: str) -> None:
     """Remove the whole user folder — name, limit, markers, cached profile."""
     _invalidate_name_cache()
     shutil.rmtree(user_dir(cn), ignore_errors=True)
+    reset_usage(cn)
 
 
 def _read(cn: str, attr: str) -> str | None:
@@ -186,12 +192,47 @@ def cn_for_name(name: str) -> str | None:
     return None
 
 
+# ── usage accounting ─────────────────────────────────────────────────
+
+
+def accumulated_usage(cn: str) -> int:
+    """Total bytes from this user's COMPLETED sessions (0 when none)."""
+    try:
+        with open(os.path.join(USAGE_DIR, _safe_cn(cn)), encoding="utf-8") as f:
+            raw = f.read().strip()
+        return int(raw) if raw.isdigit() else 0
+    except OSError:
+        return 0
+
+
+def all_accumulated_usage() -> dict[str, int]:
+    """cn → completed-session bytes for every user with recorded usage."""
+    usage: dict[str, int] = {}
+    try:
+        entries = os.listdir(USAGE_DIR)
+    except OSError:
+        return usage
+    for entry in entries:
+        if _STORE_KEY_RE.match(entry):
+            value = accumulated_usage(entry)
+            if value:
+                usage[entry] = value
+    return usage
+
+
+def reset_usage(cn: str) -> None:
+    try:
+        os.remove(os.path.join(USAGE_DIR, _safe_cn(cn)))
+    except FileNotFoundError:
+        pass
+
+
 # ── layout / migration ───────────────────────────────────────────────
 
 
 def ensure_layout() -> None:
     """Create the ovnode tree and absorb any legacy layout. Idempotent."""
-    for d in (OVNODE_DIR, USERS_DIR, SESSIONS_DIR, SCRIPTS_DIR):
+    for d in (OVNODE_DIR, USERS_DIR, SESSIONS_DIR, SCRIPTS_DIR, USAGE_DIR):
         os.makedirs(d, exist_ok=True)
     _migrate_legacy()
 
@@ -328,11 +369,13 @@ def fix_runtime_permissions() -> None:
     user, group = runtime_user_group()
     try:
         shutil.chown(SESSIONS_DIR, user=user, group=group)
+        shutil.chown(USAGE_DIR, user=user, group=group)
         shutil.chown(LOCK_FILE, user=user, group=group)
     except Exception as e:
         logger.warning("store: failed to chown session registry to %s:%s: %s", user, group, e)
     try:
         os.chmod(SESSIONS_DIR, 0o755)
+        os.chmod(USAGE_DIR, 0o755)
         os.chmod(USERS_DIR, 0o755)
         os.chmod(LOCK_FILE, 0o664)
     except Exception as e:
