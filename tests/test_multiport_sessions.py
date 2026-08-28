@@ -209,3 +209,47 @@ def test_connect_script_uses_pool_ip_session_key():
     assert 'session_key="${safe_cn}.${pool_ip_s}"' in content
     # takeover kills must target the management client id, not "kill ip:port"
     assert "client-kill $cid" in content
+
+
+# ── CRL auto-renewal ─────────────────────────────────────────────────
+
+
+def test_crl_date_parsing():
+    """openssl `nextUpdate=` output must parse into days-remaining."""
+    from core.openvpn.pki import _days_until_openssl_date
+
+    assert _days_until_openssl_date("nextUpdate=Jan  1 00:00:00 2020 GMT") < 0
+    assert _days_until_openssl_date("nextUpdate=Dec 31 23:59:59 2099 GMT") > 300
+    assert _days_until_openssl_date("garbage") is None
+    assert _days_until_openssl_date("nextUpdate=not a date") is None
+
+
+def test_crl_renewed_when_near_expiry(tmp_path, monkeypatch):
+    """An existing CRL close to (or past) nextUpdate must be regenerated —
+    with crl-verify, an expired CRL locks every client out."""
+    from core.openvpn import pki
+
+    crl = tmp_path / "crl.pem"
+    crl.write_text("dummy")
+    monkeypatch.setattr(pki, "CRL_FILE", str(crl))
+
+    calls = []
+    monkeypatch.setattr(pki, "_easyrsa", lambda *a, **k: calls.append(a) or True)
+
+    # Fresh CRL → no regeneration.
+    monkeypatch.setattr(pki, "_crl_days_remaining", lambda: 200)
+    assert pki._ensure_crl() is True
+    assert calls == []
+
+    # Near expiry → gen-crl.
+    monkeypatch.setattr(pki, "_crl_days_remaining", lambda: 10)
+    assert pki._ensure_crl() is True
+    assert calls == [("gen-crl",)]
+
+    # Renewal fails but CRL still currently valid → keep serving it.
+    monkeypatch.setattr(pki, "_easyrsa", lambda *a, **k: False)
+    assert pki._ensure_crl() is True
+
+    # Renewal fails and CRL already expired → report failure.
+    monkeypatch.setattr(pki, "_crl_days_remaining", lambda: -1)
+    assert pki._ensure_crl() is False

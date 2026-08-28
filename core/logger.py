@@ -4,10 +4,12 @@
 """OVNode logging setup.
 
 One file. One logger. stdlib logging. No abstractions.
+Rotates at 5 MB (3 backups) so small VPS disks never fill up.
 """
 
 import logging
 import os
+from logging.handlers import RotatingFileHandler
 
 from core.config import settings
 
@@ -22,10 +24,15 @@ _LEVELS = {
     "ERROR": logging.ERROR,
 }
 
-logging.basicConfig(
-    filename=LOG_FILE,
+_handler = RotatingFileHandler(
+    LOG_FILE,
+    maxBytes=5 * 1024 * 1024,
+    backupCount=3,
     encoding="utf-8",
-    filemode="a",
+)
+
+logging.basicConfig(
+    handlers=[_handler],
     format="{asctime} - {levelname} - {message}",
     style="{",
     datefmt="%Y-%m-%d %H:%M",
