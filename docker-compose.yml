@@ -1,0 +1,46 @@
+# Copyright (c) 2025 anonysec. All rights reserved.
+# Proprietary and confidential. Unauthorized copying, distribution, or use is prohibited.
+#
+# OVNode — reference Docker Compose deployment.
+#
+#   1. cp .env.example .env   (set API_KEY at minimum)
+#   2. docker compose up -d
+#
+# Host networking is used on purpose: a VPN node terminates real client
+# traffic, and host mode avoids double NAT, keeps client source addresses
+# honest, and lets multi-port (OVNODE_EXTRA_PORTS) work without editing
+# port mappings. The API (SERVICE_PORT, default 2083) and the VPN port
+# (OPENVPN_PORT, default 1194) bind directly on the host.
+#
+# The host must have the tun module available (`modprobe tun` — true on
+# every stock kernel) and allow IPv4 forwarding; the entrypoint enables
+# forwarding and NAT itself via CAP_NET_ADMIN.
+
+services:
+  ovnode:
+    build: .
+    image: ovnode:latest
+    container_name: ovnode
+    restart: unless-stopped
+    network_mode: host
+    env_file: .env
+    environment:
+      OVNODE_OPENVPN_ROOT: /etc/openvpn
+    volumes:
+      # Everything worth backing up: PKI, server.conf and the ovnode store
+      # (users/sessions/usage). Survives container replacement/updates.
+      - openvpn:/etc/openvpn
+      # Agent log (data/app.log, rotated by the agent itself).
+      - ./data:/app/data
+      # Host tun device — preferred over CAP_MKNOD'ing one inside.
+      - /dev/net/tun:/dev/net/tun
+    cap_add:
+      - NET_ADMIN # tun interface, ip_forward, MASQUERADE / multi-port NAT
+    logging:
+      driver: json-file
+      options:
+        max-size: "5m"
+        max-file: "3"
+
+volumes:
+  openvpn:
