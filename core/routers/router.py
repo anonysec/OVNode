@@ -79,7 +79,7 @@ def _cert_expiry() -> str | None:
         # OpenSSL emits RFC2822 (e.g. "Aug 12 12:00:00 2027 GMT").
         import datetime as _dt
 
-        parsed = _dt.datetime.strptime(line[len("notAfter="):].strip(), "%b %d %H:%M:%S %Y %Z")
+        parsed = _dt.datetime.strptime(line[len("notAfter=") :].strip(), "%b %d %H:%M:%S %Y %Z")
         return parsed.date().isoformat()
     except Exception:
         return None
@@ -127,12 +127,12 @@ async def get_session_diagnostics(
 @router.post("/user/{uid}/disconnect", response_model=ResponseModel)
 async def disconnect_user_sessions(uid: str, api_key: str = Depends(check_api_key)):
     """Best-effort disconnect for a user; also clears stale active markers."""
-    from core.service.user_management import _cn_from_uid
+    from core.service.user_management import cn_from_uid
 
     safe_id = validate_user_id(uid)
     if safe_id is None:
         raise HTTPException(status_code=400, detail="Invalid user id")
-    cn = _cn_from_uid(safe_id)
+    cn = cn_from_uid(safe_id)
     return ResponseModel(
         success=True,
         msg="Disconnect command processed",

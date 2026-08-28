@@ -80,7 +80,7 @@ def openvpn_is_running() -> bool:
 def _openvpn_pids() -> list[int]:
     """Collect candidate PIDs: pidfile first, then /run + pgrep."""
     pids: list[int] = []
-    pid_paths = ([PID_FILE] if os.path.exists(PID_FILE) else [])
+    pid_paths = [PID_FILE] if os.path.exists(PID_FILE) else []
     pid_paths += glob.glob("/run/openvpn-server/*.pid")
     for path in pid_paths:
         try:

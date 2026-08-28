@@ -48,6 +48,7 @@ def test_status_with_auth():
     assert body["success"] is True
     data = body["data"]
     from core.version import __version__
+
     assert data["version"] == __version__
     assert "cpu_usage" in data
     assert "memory_usage" in data

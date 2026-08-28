@@ -58,8 +58,8 @@ def test_validation_user_id():
     assert validate_user_id("123") == "123"
     assert validate_user_id("user_alice") == "user_alice"
     assert validate_user_id("bob-123") == "bob-123"
-    # Dangerous/malformed are rejected
     assert validate_user_id("not-a-uuid") == "not-a-uuid"  # valid simple ID
+    # Dangerous/malformed are rejected
     assert validate_user_id("invalid@") is None  # invalid char
     assert validate_user_id("../../etc/passwd") is None  # path traversal
     assert validate_user_id("") is None

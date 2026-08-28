@@ -51,6 +51,7 @@ def _env(name: str, default: str) -> str:
     """Read an OVNODE_* env var with a default (config.py is the source)."""
     try:
         from core.config import settings
+
         return str(getattr(settings, f"ovnode_{name}", default) or default)
     except Exception:
         return os.getenv(f"OVNODE_{name.upper()}", default)
@@ -119,6 +120,7 @@ def _openvpn_bin() -> str:
 
 
 # ── easy-rsa bootstrap ───────────────────────────────────────────────
+
 
 def _setup_easyrsa() -> None:
     """Copy easy-rsa into place and write a modern vars file (fresh only)."""
@@ -214,6 +216,7 @@ def _gen_tls_key() -> None:
 
 
 # ── CRL ──────────────────────────────────────────────────────────────
+
 
 def _ensure_crl() -> bool:
     """Generate the CRL when missing; keep it world-readable for OpenVPN."""
@@ -376,6 +379,7 @@ def _ensure_server_conf() -> None:
 
 # ── client template ──────────────────────────────────────────────────
 
+
 def _ensure_client_template() -> None:
     """Write client-common.txt if missing (tunnel address filled by panel)."""
     if os.path.exists(CLIENT_TEMPLATE):
@@ -405,6 +409,7 @@ verb 3
 
 # ── tls-crypt key embedding for .ovpn files ─────────────────────────
 
+
 def read_tls_crypt_key() -> str | None:
     """Return the tls-crypt pre-shared key, or None if unavailable."""
     try:
@@ -429,6 +434,7 @@ def tls_crypt_block() -> str:
 
 
 # ── entrypoint ───────────────────────────────────────────────────────
+
 
 def init_pki() -> None:
     """Initialize PKI + OpenVPN config. Safe to call on every startup."""
