@@ -23,6 +23,11 @@ CLIENTS_DIR = os.path.join(_OPENVPN_ROOT, "clients")
 # Mapping file: uid (numeric id as string) -> display name (for panel use)
 UID_MAP_FILE = os.path.join(CLIENTS_DIR, "uid_map.json")
 
+# Per-CN username files readable by the OpenVPN hook runtime user. The
+# client-connect script needs the panel username (not the CN) to query
+# OVManager's /mlogin/status/{username} global max-login endpoint.
+NAMES_DIR = os.path.join(_OPENVPN_ROOT, "names")
+
 
 def _load_uid_map() -> dict:
     if not os.path.exists(UID_MAP_FILE):
@@ -70,6 +75,23 @@ def _set_name(uid: str, name: str) -> None:
     mapping = _load_uid_map()
     mapping[str(uid)] = name
     _save_uid_map(mapping)
+    _write_name_file(str(uid), name)
+
+
+def _write_name_file(cn: str, name: str) -> None:
+    """Expose cn→username for the client-connect hook (global mlogin check).
+
+    The hook runs as the OpenVPN runtime user (nobody), which cannot read the
+    0600 uid_map.json — so each CN gets a small world-readable name file.
+    """
+    try:
+        os.makedirs(NAMES_DIR, exist_ok=True)
+        path = os.path.join(NAMES_DIR, cn)
+        with open(path, "w", encoding="utf-8") as f:
+            f.write(name.strip() + "\n")
+        os.chmod(path, 0o644)
+    except Exception as e:
+        logger.warning("Could not write name file for cn='%s': %s", cn, e)
 
 
 def _remove_name(uid: str) -> None:
@@ -78,6 +100,12 @@ def _remove_name(uid: str) -> None:
     if uid_str in mapping:
         del mapping[uid_str]
         _save_uid_map(mapping)
+    try:
+        os.remove(os.path.join(NAMES_DIR, uid_str))
+    except FileNotFoundError:
+        pass
+    except OSError as e:
+        logger.warning("Could not remove name file for cn='%s': %s", uid, e)
 
 
 def _client_paths(uid: str) -> dict:
@@ -328,8 +356,44 @@ async def download_ovpn_file(uid: str) -> str | None:
     return None
 
 
-def get_users_usage() -> dict | None:
-    """Get per-user traffic usage from the OpenVPN status file."""
+def get_users_usage() -> dict:
+    """Per-user traffic usage in the exact shape OVManager consumes.
+
+    The panel has two independent consumers of GET /sync/usage:
+
+    1. Traffic collector (backend/operations/daily_checks.py):
+       iterates ``users`` and resolves each key to a panel user by USERNAME
+       (``all_users = {u.name: u}``), then diffs ``sessions[<same key>]``
+       per-session. → ``users`` must be keyed by username where known.
+
+    2. Global mlogin (backend/routers/mlogin.py ``_live_sessions``):
+       iterates ``sessions`` and resolves each key via ``{str(u.id): u.name}``
+       — i.e. it expects numeric-id CN keys. → ``sessions`` must ALSO carry
+       the CN key. Unknown keys are skipped harmlessly on both sides.
+
+    So: ``users`` is keyed by username (fallback CN), ``sessions`` carries
+    both the CN key and the username alias.
+    """
     from core.service.status_parser import parse_usage
 
-    return parse_usage()
+    raw = parse_usage() or {"users": {}, "sessions": {}}
+    mapping = _load_uid_map()
+
+    users: dict[str, float] = {}
+    for cn, total in raw.get("users", {}).items():
+        key = mapping.get(cn) or cn
+        users[key] = users.get(key, 0) + total
+
+    sessions: dict[str, dict[str, float]] = {}
+    for cn, per_session in raw.get("sessions", {}).items():
+        sessions[cn] = per_session
+        name = mapping.get(cn)
+        if name and name != cn:
+            sessions[name] = per_session
+
+    return {"users": users, "sessions": sessions}
+
+
+def display_name_for_cn(cn: str) -> str:
+    """Panel username for a CN, falling back to the CN itself."""
+    return _load_uid_map().get(str(cn)) or str(cn)
