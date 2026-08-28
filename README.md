@@ -86,6 +86,25 @@ All optional except `API_KEY` — see `.env.example`:
 | `OVNODE_MAX_CLIENTS` | `100` | Connection cap |
 | `OVNODE_ENABLE_IPV6` / `OVNODE_IPV6_PREFIX` | `0` / `fd42:42:42:42::/64` | IPv6 support |
 
+## On-disk layout
+
+All node state lives in two places — backup/export is just these two paths:
+
+```
+/etc/openvpn/
+├── server/              # OpenVPN native: server.conf, PKI (CA/certs/CRL), logs
+└── ovnode/              # everything OVNode manages
+    ├── users/<cn>/      # ONE folder per user
+    │   ├── name         #   panel username
+    │   ├── limit        #   max simultaneous logins (0 = unlimited)
+    │   ├── disabled     #   marker — exists = connections rejected
+    │   └── client.ovpn  #   cached profile (regenerated on demand)
+    ├── sessions/        # live-session markers (runtime state)
+    └── scripts/         # installed connect/disconnect hooks
+```
+
+Pre-existing installs with the old scattered layout (`clients/`, `limits/`, `disabled/`, `ovnode-active/`, `uid_map.json`) are migrated automatically on the next agent start — restoring an old backup onto a current build also just works.
+
 ## Manual Install
 
 ```bash

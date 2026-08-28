@@ -23,9 +23,12 @@
 
 set -euo pipefail
 
-LIMITS_DIR="/etc/openvpn/limits"
-DISABLED_DIR="/etc/openvpn/disabled"
-ACTIVE_DIR="/etc/openvpn/ovnode-active"
+# Per-user state lives in one folder per user (see core/openvpn/store.py):
+#   users/<cn>/limit     max simultaneous logins (0 = unlimited)
+#   users/<cn>/disabled  marker — exists = reject the connection
+# Session markers live in sessions/ (one file per live session).
+USERS_DIR="/etc/openvpn/ovnode/users"
+ACTIVE_DIR="/etc/openvpn/ovnode/sessions"
 LOCK_FILE="${ACTIVE_DIR}/.lock"
 STATUS_FILE="${OVNODE_STATUS_FILE:-/etc/openvpn/server/status.log}"
 MGMT_HOST="${OVNODE_MGMT_HOST:-127.0.0.1}"
@@ -115,29 +118,27 @@ if [[ -z "$cn" ]]; then
 fi
 
 safe_cn="$(sanitize "$cn")"
-mkdir -p "$LIMITS_DIR" "$ACTIVE_DIR"
-chmod 755 "$ACTIVE_DIR" 2>/dev/null || true
 
-# DISABLED_DIR must exist and be readable. If it is missing or inaccessible
-# we fail-closed: deny the connection rather than risk allowing a disabled user.
-# The directory is created by ensure_multilogin_setup() at OVNode startup; its
-# absence indicates a filesystem or permissions problem that must be fixed.
-if [[ ! -d "$DISABLED_DIR" ]]; then
-    log "CN=$cn DISABLED_DIR missing or not a directory — fail-closed; REJECT"
+# USERS_DIR must exist and be readable. If it is missing or inaccessible we
+# fail-closed: deny the connection rather than risk allowing a disabled user.
+# The tree is created by the agent at startup; its absence indicates a
+# filesystem or permissions problem that must be fixed.
+if [[ ! -d "$USERS_DIR" ]]; then
+    log "CN=$cn USERS_DIR missing or not a directory — fail-closed; REJECT"
     exit 1
 fi
-chmod 755 "$DISABLED_DIR" 2>/dev/null || true
+mkdir -p "$ACTIVE_DIR"
+chmod 755 "$ACTIVE_DIR" 2>/dev/null || true
 
-# A missing CCD file is not an authentication denial. Keep an explicit
-# disabled marker so an already-issued certificate cannot reconnect after
-# Manager disables the user.
-if [[ -f "${DISABLED_DIR}/${safe_cn}" ]]; then
+# The disabled marker blocks an already-issued certificate from reconnecting
+# after Manager disables the user.
+if [[ -f "${USERS_DIR}/${safe_cn}/disabled" ]]; then
     log "CN=$cn is disabled; REJECT"
     exit 1
 fi
 
 limit="$DEFAULT_LIMIT"
-limit_file="${LIMITS_DIR}/${cn}"
+limit_file="${USERS_DIR}/${safe_cn}/limit"
 if [[ -f "$limit_file" ]]; then
     raw="$(tr -dc '0-9' < "$limit_file" || true)"
     [[ -n "$raw" ]] && limit="$raw"

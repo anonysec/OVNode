@@ -32,8 +32,8 @@ from fastapi.responses import FileResponse
 
 from core.api.auth import check_api_key
 from core.api.schemas import ResponseModel, SetSettingsModel, User, UserLimit
+from core.openvpn.control import change_config
 from core.openvpn.sessions import disconnect_user, user_diagnostics
-from core.openvpn.settings_apply import change_config
 from core.openvpn.users import (
     change_user_status as change_user_status_on_server,
 )

@@ -8,7 +8,7 @@
 
 set -euo pipefail
 
-ACTIVE_DIR="/etc/openvpn/ovnode-active"
+ACTIVE_DIR="/etc/openvpn/ovnode/sessions"
 LOCK_FILE="${ACTIVE_DIR}/.lock"
 LOG_TAG="ovnode-mlogin"
 

@@ -42,7 +42,7 @@ def test_client_template_lists_all_ports(tmp_path, monkeypatch):
 def test_change_config_rebuilds_remote_block(tmp_path, monkeypatch):
     """POST /sync/config must rewrite ALL remote lines (primary + extras)."""
     from core.api.schemas import SetSettingsModel
-    from core.openvpn import settings_apply
+    from core.openvpn import control
 
     server_dir = tmp_path / "server"
     server_dir.mkdir()
@@ -56,8 +56,8 @@ def test_change_config_rebuilds_remote_block(tmp_path, monkeypatch):
     )
     monkeypatch.setenv("OVNODE_OPENVPN_ROOT", str(tmp_path))
     monkeypatch.setenv("OVNODE_EXTRA_PORTS", "443,8443")
-    monkeypatch.setattr(settings_apply, "restart_openvpn", lambda: True)
-    monkeypatch.setattr(settings_apply, "_invalidate_cached_ovpn", lambda: None)
+    monkeypatch.setattr(control, "restart_openvpn", lambda: True)
+    monkeypatch.setattr(control, "_invalidate_cached_ovpn", lambda: None)
     import core.openvpn.multilogin as ml
 
     monkeypatch.setattr(ml, "ensure_multilogin_setup", lambda: None)
@@ -65,7 +65,7 @@ def test_change_config_rebuilds_remote_block(tmp_path, monkeypatch):
     req = SetSettingsModel(
         tunnel_address="new.example.com", protocol="udp", ovpn_port=1194, set_new_setting=True
     )
-    assert settings_apply.change_config(req) is True
+    assert control.change_config(req) is True
 
     template = (server_dir / "client-common.txt").read_text()
     remotes = [ln for ln in template.splitlines() if ln.startswith("remote ")]
@@ -83,7 +83,7 @@ def test_change_config_rebuilds_remote_block(tmp_path, monkeypatch):
 def test_change_config_keeps_address_without_tunnel(tmp_path, monkeypatch):
     """Without tunnel_address, the existing remote address must be kept."""
     from core.api.schemas import SetSettingsModel
-    from core.openvpn import settings_apply
+    from core.openvpn import control
 
     server_dir = tmp_path / "server"
     server_dir.mkdir()
@@ -93,14 +93,14 @@ def test_change_config_keeps_address_without_tunnel(tmp_path, monkeypatch):
     )
     monkeypatch.setenv("OVNODE_OPENVPN_ROOT", str(tmp_path))
     monkeypatch.delenv("OVNODE_EXTRA_PORTS", raising=False)
-    monkeypatch.setattr(settings_apply, "restart_openvpn", lambda: True)
-    monkeypatch.setattr(settings_apply, "_invalidate_cached_ovpn", lambda: None)
+    monkeypatch.setattr(control, "restart_openvpn", lambda: True)
+    monkeypatch.setattr(control, "_invalidate_cached_ovpn", lambda: None)
     import core.openvpn.multilogin as ml
 
     monkeypatch.setattr(ml, "ensure_multilogin_setup", lambda: None)
 
     req = SetSettingsModel(tunnel_address="", protocol="tcp", ovpn_port=8443, set_new_setting=True)
-    assert settings_apply.change_config(req) is True
+    assert control.change_config(req) is True
     template = (server_dir / "client-common.txt").read_text()
     assert "remote keep.example.com 8443" in template
 
