@@ -370,8 +370,6 @@ def _hardening_directives() -> list[str]:
         "tls-version-min 1.2",
         "remote-cert-tls client",
         f"management 127.0.0.1 {_management_port()}",
-        f"management-client-user {_runtime_user()}",
-        f"management-client-group {_runtime_group()}",
         f"writepid {PID_FILE}",
         "script-security 2",
         "status-version 3",
@@ -427,8 +425,6 @@ def _fresh_server_conf() -> str:
         f"status {os.path.join(_OPENVPN_ROOT, 'server', 'status.log')} 5",
         "status-version 3",
         f"management 127.0.0.1 {_management_port()}",
-        f"management-client-user {user}",
-        f"management-client-group {group}",
         f"writepid {PID_FILE}",
         f"log-append {os.path.join(_OPENVPN_ROOT, 'server', 'openvpn.log')}",
         "verb 3",
@@ -472,22 +468,29 @@ def _ensure_server_conf() -> None:
         # place: the enforcement hooks parse the tab-separated version 3.
         replaced_dh = False
         replaced_status = False
+        removed_mgmt_client = False
         out_lines = []
         for ln in lines:
             parts = ln.split()
             stripped = ln.strip()
+            # Drop legacy management-client-* lines: valid only for unix sockets,
+            # fatal for TCP (the current management) — see OpenVPN error
+            # "management-client-(user|group) can only be used on unix domain sockets".
+            if stripped.startswith("management-client-"):
+                removed_mgmt_client = True
+                continue
             if stripped.startswith("status-version") and stripped != "status-version 3":
                 out_lines.append("status-version 3")
                 replaced_status = True
                 to_add = [d for d in to_add if d != "status-version 3"]
                 continue
-            if len(parts) >= 2 and parts[0] == "dh" and not os.path.exists(parts[1]):
+            if len(parts) >= 2 and parts[0] == "dh" and parts[1] != "none" and not os.path.exists(parts[1]):
                 out_lines.append("dh none")
                 replaced_dh = True
                 logger.warning("Replaced missing dh file %s with 'dh none'", parts[1])
             else:
                 out_lines.append(ln)
-        changed = replaced_dh or replaced_status or bool(to_add)
+        changed = replaced_dh or replaced_status or removed_mgmt_client or bool(to_add)
         if to_add:
             if out_lines and out_lines[-1].strip() != "":
                 out_lines.append("")
