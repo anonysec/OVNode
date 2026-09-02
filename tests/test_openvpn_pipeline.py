@@ -43,7 +43,8 @@ ok(os.path.exists(TLS_KEY), "tls key")
 
 conf = read(SERVER_CONF)
 ok("management 127.0.0.1 7505" in conf, "management")
-ok("management-client-user nobody" in conf, "mgmt user")
+ok("management-client-user nobody" not in conf, "mgmt user dropped")
+ok("management-client-group nogroup" not in conf, "mgmt group dropped")
 ok("tls-crypt" in conf, "tls-crypt")
 ok("dh none" in conf, "dh none")
 ok("tls-version-min 1.2" in conf, "tls min")
@@ -61,14 +62,15 @@ ok("remote-cert-tls server" in tpl, "tpl remote-cert-tls")
 ok("remote UPDATE_VIA_PANEL 1194" in tpl, "tpl remote")
 
 # client .ovpn embeds tls-crypt
-from core.openvpn.users import create_user_on_server, _client_paths
+from core.openvpn.users import create_user_on_server
+from core.openvpn.store import ovpn_path, get_limit, _attr_path
 uid = "testuser42"
 ok(create_user_on_server(uid, "Test User", max_logins=2), "create user")
-ovpn = read(_client_paths(uid)["ovpn"])
+ovpn = read(ovpn_path(uid))
 ok("<tls-crypt>" in ovpn and "</tls-crypt>" in ovpn, "ovpn tls-crypt")
 ok("BEGIN OpenVPN Static key" in ovpn, "ovpn key content")
 ok("BEGIN CERTIFICATE" in ovpn and "BEGIN PRIVATE KEY" in ovpn, "ovpn cert+key")
-ok(read(_client_paths(uid)["limit"]) == "2", "limit file")
+ok(read(_attr_path(uid, "limit")).strip() == "2", "limit file")
 
 # existing conf hardening preserves admin edits
 with open(SERVER_CONF, "w") as f:

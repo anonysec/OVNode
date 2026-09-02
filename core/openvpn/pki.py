@@ -192,6 +192,12 @@ def _write_easyrsa_vars() -> None:
     Fresh PKI uses ECDSA (secp384r1): faster handshakes, smaller certs, and
     no static DH file needed. Existing installs keep their own vars file, so
     an existing RSA PKI is never disrupted.
+
+    Note: EASYRSA_REQ_CN is intentionally omitted. When set, easy-rsa
+    refuses `build-server-full <name>` and `build-client-full <name>` calls
+    with "Option conflict: ... does not support setting an external
+    commonName" — it is only valid for `build-ca`. Per-cert CN is supplied
+    positionally instead.
     """
     vars_path = os.path.join(EASYRSA_DIR, "vars")
     if os.path.exists(vars_path):
@@ -207,7 +213,8 @@ def _write_easyrsa_vars() -> None:
                 'set_var EASYRSA_CA_EXPIRE "3650"\n'
                 'set_var EASYRSA_CERT_EXPIRE "1825"\n'
                 'set_var EASYRSA_CRL_DAYS "365"\n'
-                'set_var EASYRSA_REQ_CN "OVNode CA"\n'
+                # EASYRSA_REQ_CN is intentionally unset: easy-rsa only allows it
+                # for `build-ca`. Each server/client cert sets its CN positionally.
             )
         logger.info("Wrote easy-rsa vars file (%s)", vars_path)
     except OSError as e:

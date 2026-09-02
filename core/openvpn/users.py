@@ -56,6 +56,12 @@ def _build_ovpn(cn: str) -> bool:
     if not os.path.exists(CLIENT_TEMPLATE):
         logger.warning("client-common.txt missing; cannot build .ovpn for cn='%s'", cn)
         return False
+    # The inline bundle is the cert + CA chain; the private key lives next
+    # to it and MUST be embedded in the .ovpn or the handshake fails.
+    key_path = os.path.join(PKI_DIR, "private", f"{cn}.key")
+    if not os.path.exists(key_path):
+        logger.warning("No private key for cn='%s'; cannot build .ovpn", cn)
+        return False
     try:
         store.create_user(cn)
         out_path = store.ovpn_path(cn)
@@ -66,6 +72,11 @@ def _build_ovpn(cn: str) -> bool:
                 check=True,
                 timeout=30,
             )
+            # Embed the private key in the standard <key>…</key> block.
+            with open(key_path, "r", encoding="utf-8") as kf:
+                out.write("<key>\n")
+                out.write(kf.read())
+                out.write("</key>\n")
             # server.conf uses tls-crypt; the profile must embed the same
             # pre-shared key inline or the handshake fails.
             tls_block = tls_crypt_block()
