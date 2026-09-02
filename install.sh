@@ -1163,6 +1163,19 @@ main() {
         update)    confirm "Update OVNode now?" || exit "$EX_OK"; do_update; exit "$EX_OK" ;;
     esac
 
+    # Validation must precede the already-installed guard, otherwise a caller
+    # invoking `install --port abc --json` gets exit 3 (Already installed)
+    # instead of exit 2 + JSON usage error. When CLI flags are present the
+    # inputs are checkable right away, even on an already-provisioned host.
+    if [[ -n "${API_KEY:-}" || -n "${PORT:-}" || -n "${TLS_METHOD:-}" || -n "${VPN_PORTS:-}" ]]; then
+        [[ -n "$PORT" ]]      || PORT="$DEFAULT_PORT"
+        [[ -n "$API_KEY" ]]   || true  # validate_input will require it when needed
+        [[ -n "$TLS_METHOD" ]]|| TLS_METHOD="none"
+        [[ -n "$VPN_PORTS" ]] || VPN_PORTS="$DEFAULT_VPN"
+        [[ -n "$NODE_NAME" ]] || NODE_NAME="node-1"
+        validate_input
+    fi
+
     # install
     if [[ -d "$APP_DIR" ]]; then
         if [[ "$YES" -eq 1 ]]; then
