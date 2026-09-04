@@ -70,6 +70,7 @@ def mgmt_line() -> str:
         port = 7505
     return f"management 127.0.0.1 {port} {MGMT_PASS_FILE}"
 
+
 REQUIRED_DIRS = [
     os.path.join(_OPENVPN_ROOT, "server"),
     os.path.join(_OPENVPN_ROOT, "ccd"),
