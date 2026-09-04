@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
-# Copyright (c) 2025 anonysec. All rights reserved.
-# Proprietary and confidential. Unauthorized copying, distribution, or use is prohibited.
+# Copyright (c) 2026 anonysec
+# SPDX-License-Identifier: MIT
 #
 # OVNode container entrypoint — supervises the two processes a node needs:
 #
@@ -125,18 +125,43 @@ supervise_openvpn() {
     setup_nat
 
     # Restart-with-backoff loop: a crashing OpenVPN must not take the sync
-    # API down with it. Config reloads use SIGHUP (control.py) and don't
-    # pass through here.
+    # API down with it. The loop also watches server.conf's mtime: the panel
+    # rewrites it atomically on POST /sync/config, and port/proto changes
+    # need a FULL restart (SIGHUP cannot rebind them), so a changed conf
+    # kills the child and the loop re-execs it fresh.
     local backoff=2
+    local conf_mtime=""
+    conf_mtime="$(stat -c %Y "$SERVER_CONF" 2>/dev/null || echo "")"
     while :; do
         log "starting OpenVPN (conf: ${SERVER_CONF})"
         set +e
-        openvpn --cd "$SERVER_DIR" --config "$SERVER_CONF" --writepid "$PID_FILE"
-        rc=$?
+        openvpn --cd "$SERVER_DIR" --config "$SERVER_CONF" --writepid "$PID_FILE" &
+        local vpn_pid=$!
+        local changed=0
+        while kill -0 "$vpn_pid" 2>/dev/null; do
+            sleep 2
+            local now_mtime=""
+            now_mtime="$(stat -c %Y "$SERVER_CONF" 2>/dev/null || echo "")"
+            if [[ -n "$now_mtime" && -n "$conf_mtime" && "$now_mtime" != "$conf_mtime" ]]; then
+                log "server.conf changed — restarting OpenVPN (full rebind)"
+                conf_mtime="$now_mtime"
+                kill "$vpn_pid" 2>/dev/null || true
+                wait "$vpn_pid" 2>/dev/null || true
+                setup_nat
+                backoff=2
+                changed=1
+                break
+            fi
+            conf_mtime="$now_mtime"
+        done
+        if [[ "$changed" == "0" ]]; then
+            wait "$vpn_pid" 2>/dev/null
+            rc=$?
+            log "OpenVPN exited rc=${rc}; restarting in ${backoff}s"
+            sleep "$backoff"
+            (( backoff < 30 )) && backoff=$((backoff * 2))
+        fi
         set -e
-        log "OpenVPN exited rc=${rc}; restarting in ${backoff}s"
-        sleep "$backoff"
-        (( backoff < 30 )) && backoff=$((backoff * 2))
     done
 }
 

@@ -1,5 +1,5 @@
-# Copyright (c) 2025 anonysec. All rights reserved.
-# Proprietary and confidential. Unauthorized copying, distribution, or use is prohibited.
+# Copyright (c) 2026 anonysec
+# SPDX-License-Identifier: MIT
 
 """OVNode sync API — the node side of the OVManager ⇄ OVNode contract.
 
@@ -10,6 +10,7 @@ client (backend/node/requests.py):
     GET    /sync/status                      check_node / get_node_info
     GET    /sync/usage                       get_usage
     GET    /sync/sessions                    get_sessions
+    GET    /sync/config                      read_config (drift detect)
     POST   /sync/config                      update_config
     POST   /sync/user                        create_user
     PUT    /sync/user                        change_user_status
@@ -160,12 +161,29 @@ async def get_logs(
     )
 
 
+# openssl fork per call is too heavy for a /sync/status poll cadence, but a
+# cert lasts months — cache briefly (same idea as the CRL daily check).
+_CERT_EXPIRY_TTL = 300.0
+_cert_expiry_cached: str | None = None
+_cert_expiry_checked_at = 0.0
+
+
 def _cert_expiry() -> str | None:
     """Return the server certificate expiry as an ISO date, or None.
 
     Reads the configured SSL cert file and parses its notAfter value.
     Returns None when TLS is not configured or the cert is unreadable.
     """
+    global _cert_expiry_cached, _cert_expiry_checked_at
+    now = time.monotonic()
+    if now - _cert_expiry_checked_at < _CERT_EXPIRY_TTL:
+        return _cert_expiry_cached
+    _cert_expiry_cached = _read_cert_expiry()
+    _cert_expiry_checked_at = now
+    return _cert_expiry_cached
+
+
+def _read_cert_expiry() -> str | None:
     try:
         from core.config import settings
 
@@ -192,6 +210,19 @@ def _cert_expiry() -> str | None:
         return parsed.date().isoformat()
     except Exception:
         return None
+
+
+@router.get("/config", response_model=ResponseModel)
+async def get_config(api_key: str = Depends(check_api_key)):
+    """Live VPN endpoint settings — lets the panel detect drift.
+
+    Additive (no panel method reads it yet): compares port/proto/tunnel
+    against what the panel last pushed via POST /sync/config.
+    """
+    from core.openvpn.control import read_config
+
+    data = read_config()
+    return ResponseModel(success=True, msg="Configuration retrieved successfully", data=data)
 
 
 @router.post("/config", response_model=ResponseModel)
