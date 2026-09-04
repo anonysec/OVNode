@@ -16,9 +16,9 @@ Every response is wrapped in ``ResponseModel`` — the panel's ``_request()``
 helper requires HTTP 200 **and** ``success: true`` to treat a call as OK.
 """
 
-from typing import Any
+from typing import Any, Literal
 
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 
 
 class User(BaseModel):
@@ -32,10 +32,11 @@ class User(BaseModel):
     # traffic collector (_extract_username → all_users[u.name]).
     name: str | None = None
     # "activate" | "deactivate" — matches NodeRequests.change_user_status().
-    status: str = "activate"
+    status: Literal["activate", "deactivate"] = "activate"
     # Max simultaneous logins/devices: 1 = single login (takeover),
     # 0 = unlimited, N>1 = strict cap. Mirrors the panel's user.max_logins.
-    max_logins: int | None = 1
+    # Ranged: a negative value previously coerced to 0 (unlimited) silently.
+    max_logins: int | None = Field(default=1, ge=0, le=1000)
 
 
 class UserLimit(BaseModel):
@@ -43,7 +44,7 @@ class UserLimit(BaseModel):
     # set_user_limit_on_all_nodes() sends the name when no user_id is known.
     id: str
     name: str | None = None
-    max_logins: int = 1
+    max_logins: int = Field(default=1, ge=0, le=1000)
 
 
 class ResponseModel(BaseModel):
@@ -54,8 +55,10 @@ class ResponseModel(BaseModel):
 
 class SetSettingsModel(BaseModel):
     tunnel_address: str
-    protocol: str
-    ovpn_port: int
+    # Unknown values previously fell through to udp silently in
+    # change_config — reject them so panel misconfigurations surface.
+    protocol: Literal["tcp", "udp"]
+    ovpn_port: int = Field(ge=1, le=65535)
     set_new_setting: bool
 
 

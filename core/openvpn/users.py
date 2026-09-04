@@ -73,7 +73,7 @@ def _build_ovpn(cn: str) -> bool:
                 timeout=30,
             )
             # Embed the private key in the standard <key>…</key> block.
-            with open(key_path, "r", encoding="utf-8") as kf:
+            with open(key_path, encoding="utf-8") as kf:
                 out.write("<key>\n")
                 out.write(kf.read())
                 out.write("</key>\n")

@@ -109,7 +109,7 @@ def test_create_user_rejects_invalid_id():
     assert r.status_code == 200
     body = r.json()
     assert body["success"] is False
-    assert body["msg"] == "Invalid user id (must be UUID)"
+    assert body["msg"] == "Invalid user id (must be UUID or simple id)"
 
 
 def test_create_user_missing_id():
@@ -208,7 +208,7 @@ def test_delete_user_invalid_id():
     assert r.status_code == 200
     body = r.json()
     assert body["success"] is False
-    assert body["msg"] == "Invalid user id (must be UUID)"
+    assert body["msg"] == "Invalid user id (must be UUID or simple id)"
 
 
 def test_delete_user_not_found():
@@ -223,10 +223,11 @@ def test_delete_user_not_found():
 
 
 def test_download_ovpn_missing():
-    """Download fails gracefully for non-existent user."""
+    """Download fails gracefully for non-existent user (envelope, not 404)."""
     c, headers = _client()
     r = c.get("/sync/download/ovpn/6ca1dd29-b6a4-41c8-adc9-e154cf3f8557", headers=headers)
-    assert r.status_code == 404
+    assert r.status_code == 200
+    assert r.json()["success"] is False
 
 
 def test_sessions_no_auth():
@@ -384,4 +385,4 @@ def test_ovpn_identity_resolution():
     )
     assert r.status_code == 200
     assert r.json()["success"] is False
-    assert r.json()["msg"] == "Invalid user id (must be UUID)"
+    assert r.json()["msg"] == "Invalid user id (must be UUID or simple id)"

@@ -96,7 +96,9 @@ def test_json_implies_noninteractive():
     if os.path.isdir("/opt/ovnode"):
         import pytest
 
-        pytest.skip("/opt/ovnode is already installed on this host; already-installed exit (3) is also correct")
+        pytest.skip(
+            "/opt/ovnode is already installed here; already-installed exit (3) is also correct"
+        )
     r = sh("install", "--json", "--api-key", "0123456789abcdef")  # stdin closed
     assert r.returncode in (1, 2)  # fails fast, never blocks
 

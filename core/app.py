@@ -34,12 +34,26 @@ class SecurityHeadersMiddleware(BaseHTTPMiddleware):
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
-    """Initialize PKI + OpenVPN config (idempotent)."""
-    logger.info("Starting OV-Node — initializing PKI...")
-    init_pki()
-    from core.openvpn.multilogin import ensure_multilogin_setup
+    """Initialize PKI + OpenVPN config (idempotent).
 
-    ensure_multilogin_setup()
+    Degraded start: PKI failures must not kill the API — the panel needs
+    /sync/status diagnostics precisely when the node is broken.
+    """
+    logger.info("Starting OV-Node — initializing PKI...")
+    app.state.degraded = None
+    try:
+        init_pki()
+    except Exception as e:
+        app.state.degraded = str(e)
+        logger.error("PKI init failed — starting degraded API: %s", e, exc_info=e)
+    try:
+        from core.openvpn.multilogin import ensure_multilogin_setup
+
+        ensure_multilogin_setup()
+    except Exception as e:
+        logger.error("multilogin setup failed: %s", e, exc_info=e)
+        if app.state.degraded is None:
+            app.state.degraded = str(e)
 
     from core.openvpn.control import openvpn_is_running
 

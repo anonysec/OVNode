@@ -29,7 +29,7 @@ Authentication: the panel sends the node API key in the ``key`` header.
 import time
 
 import psutil
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, Depends, Request
 from fastapi.responses import FileResponse
 
 from core.api.auth import check_api_key
@@ -55,6 +55,28 @@ router = APIRouter(prefix="/sync", tags=["node_sync"])
 
 _STARTED_AT = time.monotonic()
 
+# CRL freshness is re-checked at most once a day: _ensure_crl() forks
+# openssl, which is too heavy for every /sync/status poll, but checking
+# only at boot risks a total client lockout after >1yr of uptime when the
+# CRL lapses and crl-verify starts rejecting everyone.
+_CRL_CHECK_INTERVAL = 86400.0
+_crl_last_check = 0.0
+
+
+def _ensure_crl_fresh() -> None:
+    global _crl_last_check
+    now = time.monotonic()
+    if now - _crl_last_check < _CRL_CHECK_INTERVAL:
+        return
+    _crl_last_check = now
+    try:
+        from core.openvpn.pki import _ensure_crl
+
+        _ensure_crl()
+    except Exception:
+        # Best-effort: renewal failures are already logged inside pki.
+        pass
+
 
 def _resolve_identity(uid: str | None, name: str | None) -> str | None:
     """Resolve the OpenVPN client identity from a panel payload.
@@ -79,6 +101,7 @@ async def health_check():
 
 @router.get("/status", response_model=ResponseModel)
 async def get_status(
+    request: Request,
     api_key: str = Depends(check_api_key),
 ):
     """Node status — consumed by check_node()/get_node_info().
@@ -92,6 +115,12 @@ async def get_status(
     from core.openvpn.control import openvpn_is_running
 
     status = {"status": "running", "version": __version__}
+    degraded = getattr(getattr(request, "app", None), "state", None)
+    degraded = getattr(degraded, "degraded", None) if degraded else None
+    status["pki_healthy"] = degraded is None
+    if degraded:
+        status["degraded"] = str(degraded)
+        status["status"] = "degraded"
     cpu_usage = psutil.cpu_percent(interval=None)
     memory_info = psutil.virtual_memory()
     status.update(
@@ -106,6 +135,7 @@ async def get_status(
     # TLS certificate expiry (ISO date) when the node serves HTTPS — lets the
     # panel warn before the certificate lapses and breaks node connectivity.
     status["cert_expiry"] = _cert_expiry()
+    _ensure_crl_fresh()
     return ResponseModel(success=True, msg="Node status retrieved successfully", data=status)
 
 
@@ -219,7 +249,9 @@ async def disconnect_user_sessions(uid: str, api_key: str = Depends(check_api_ke
     """
     safe_id = validate_user_id(uid)
     if safe_id is None:
-        raise HTTPException(status_code=400, detail="Invalid user id")
+        # Business failure inside the envelope (not 400): the panel treats
+        # any non-200 as a transport error and retries/logs loudly.
+        return ResponseModel(success=False, msg="Invalid user id (must be UUID or simple id)")
     cn = cn_from_uid(safe_id)
     return ResponseModel(
         success=True,
@@ -237,7 +269,7 @@ async def create_user(user: User, api_key: str = Depends(check_api_key)):
     """
     uid = _resolve_identity(user.id, user.name)
     if uid is None:
-        return ResponseModel(success=False, msg="Invalid user id (must be UUID)")
+        return ResponseModel(success=False, msg="Invalid user id (must be UUID or simple id)")
     max_logins = user.max_logins if user.max_logins is not None else 1
     success = create_user_on_server(uid, user.name or "", max_logins)
     if success:
@@ -253,7 +285,7 @@ async def create_user(user: User, api_key: str = Depends(check_api_key)):
 async def delete_user(uid: str, api_key: str = Depends(check_api_key)):
     safe_id = validate_user_id(uid)
     if safe_id is None:
-        return ResponseModel(success=False, msg="Invalid user id (must be UUID)")
+        return ResponseModel(success=False, msg="Invalid user id (must be UUID or simple id)")
     result = delete_user_on_server(safe_id)
     if result == DeleteResult.OK:
         return ResponseModel(
@@ -275,7 +307,7 @@ async def change_user_status(user: User, api_key: str = Depends(check_api_key)):
     """Activate/deactivate a client (change_user_status())."""
     uid = _resolve_identity(user.id, user.name)
     if uid is None:
-        return ResponseModel(success=False, msg="Invalid user id (must be UUID)")
+        return ResponseModel(success=False, msg="Invalid user id (must be UUID or simple id)")
     # Update the stored login limit if the panel sent one.
     if user.max_logins is not None:
         set_user_limit(uid, user.max_logins)
@@ -299,7 +331,7 @@ async def set_user_login_limit(payload: UserLimit, api_key: str = Depends(check_
     """
     uid = validate_user_id(payload.id)
     if uid is None:
-        return ResponseModel(success=False, msg="Invalid user id (must be UUID)")
+        return ResponseModel(success=False, msg="Invalid user id (must be UUID or simple id)")
     result = set_user_limit(uid, payload.max_logins)
     if result:
         return ResponseModel(
@@ -321,7 +353,7 @@ async def download_ovpn(uid: str, api_key: str = Depends(check_api_key)):
     """
     safe_id = validate_user_id(uid)
     if safe_id is None:
-        raise HTTPException(status_code=400, detail="Invalid user id")
+        return ResponseModel(success=False, msg="Invalid user id (must be UUID or simple id)")
     response = await download_ovpn_file(safe_id)
     if response:
         return FileResponse(
@@ -329,4 +361,7 @@ async def download_ovpn(uid: str, api_key: str = Depends(check_api_key)):
             filename=f"{uid}.ovpn",
             media_type="application/x-openvpn-profile",
         )
-    raise HTTPException(status_code=404, detail="OVPN file not found")
+    # Envelope failure (not 404): the panel validates the raw body
+    # (must start with "client" or contain "<ca>"), so a JSON envelope
+    # safely resolves to "not found" without a transport-error log.
+    return ResponseModel(success=False, msg="OVPN file not found")

@@ -18,8 +18,10 @@ import glob
 import logging
 import os
 import re
+import shutil
 import signal
 import subprocess
+import tempfile
 
 from core.openvpn import store
 
@@ -66,7 +68,11 @@ def _openvpn_pids() -> list[int]:
 
 
 def _sighup_fallback() -> bool:
-    """Reload via SIGHUP to the OpenVPN master process (Docker-friendly)."""
+    """Reload via SIGHUP to the OpenVPN master process (Docker-friendly).
+
+    Returns False when no process was found so callers can distinguish
+    "nothing running" from a successful reload.
+    """
     pids = _openvpn_pids()
     signaled = 0
     for pid in pids:
@@ -80,7 +86,7 @@ def _sighup_fallback() -> bool:
             logger.warning("Could not signal PID %s: %s", pid, e)
     if signaled == 0:
         logger.warning("No OpenVPN process found — config will apply on next start.")
-        return True  # nothing to restart yet is not a hard failure
+        return False
     return True
 
 
@@ -89,21 +95,23 @@ def restart_openvpn() -> bool:
     store.fix_runtime_permissions()
     logger.info("Restarting OpenVPN service...")
 
-    # 1) systemd
-    try:
-        subprocess.run(
-            ["/usr/bin/systemctl", "restart", "openvpn-server@server"],
-            check=True,
-            timeout=30,
-        )
-        logger.info("OpenVPN restarted via systemctl.")
-        return True
-    except FileNotFoundError:
+    # 1) systemd (resolve binary instead of hardcoding /usr/bin path)
+    systemctl = shutil.which("systemctl")
+    if systemctl:
+        try:
+            subprocess.run(
+                [systemctl, "restart", "openvpn-server@server"],
+                check=True,
+                timeout=30,
+            )
+            logger.info("OpenVPN restarted via systemctl.")
+            return True
+        except subprocess.TimeoutExpired:
+            logger.error("Timeout restarting OpenVPN via systemctl")
+        except Exception as e:
+            logger.warning("systemctl restart failed (%s); trying next method.", e)
+    else:
         logger.info("systemctl not found (Docker?); trying next method.")
-    except subprocess.TimeoutExpired:
-        logger.error("Timeout restarting OpenVPN via systemctl")
-    except Exception as e:
-        logger.warning("systemctl restart failed (%s); trying next method.", e)
 
     # 2) OpenRC
     if os.path.exists("/sbin/rc-service"):
@@ -123,6 +131,29 @@ def restart_openvpn() -> bool:
 
 
 # ── panel-driven settings (POST /sync/config) ────────────────────────
+
+
+def _atomic_write(path: str, content: str) -> None:
+    """Write file atomically via temp+rename, keeping a .bak of the previous."""
+    directory = os.path.dirname(path) or "."
+    fd, tmp = tempfile.mkstemp(dir=directory, prefix=".tmp-")
+    try:
+        with os.fdopen(fd, "w") as f:
+            f.write(content)
+            f.flush()
+            os.fsync(f.fileno())
+        try:
+            if os.path.exists(path):
+                shutil.copy2(path, path + ".bak")
+        except OSError as e:
+            logger.warning("Could not backup %s: %s", path, e)
+        os.replace(tmp, path)
+    finally:
+        try:
+            if os.path.exists(tmp):
+                os.remove(tmp)
+        except OSError:
+            pass
 
 
 def change_config(request) -> bool:
@@ -172,8 +203,7 @@ def change_config(request) -> bool:
             flags=re.MULTILINE,
         )
 
-        with open(setting_file, "w") as file:
-            file.write(config)
+        _atomic_write(setting_file, config)
 
         # Update the client template
         with open(template_file) as file:
@@ -214,8 +244,7 @@ def change_config(request) -> bool:
         template = "\n".join(rebuilt) + "\n"
 
         template = re.sub(r"^proto\s+\S+", f"proto {proto}", template, flags=re.MULTILINE)
-        with open(template_file, "w") as file:
-            file.write(template)
+        _atomic_write(template_file, template)
 
         # If the protocol/port/remotes actually changed, the already-generated
         # client profiles are stale (they embed the old values) — remove them
