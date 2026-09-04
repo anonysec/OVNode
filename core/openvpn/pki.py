@@ -36,6 +36,39 @@ SERVER_CERT = os.path.join(PKI_DIR, "issued", "server.crt")
 DH_PEM = os.path.join(PKI_DIR, "dh.pem")
 CRL_FILE = os.path.join(PKI_DIR, "crl.pem")
 PID_FILE = os.path.join(_OPENVPN_ROOT, "server", "ovnode.pid")
+# Management-interface password file (0600). Localhost is shared in
+# host-network mode, so the mgmt socket must require auth, not just bind.
+MGMT_PASS_FILE = os.path.join(_OPENVPN_ROOT, "server", "mgmt-pass")
+
+
+def ensure_mgmt_password() -> str:
+    """Create the mgmt password file (0600) if missing; return its path."""
+    import secrets
+
+    try:
+        if os.path.exists(MGMT_PASS_FILE):
+            os.chmod(MGMT_PASS_FILE, 0o600)
+            with open(MGMT_PASS_FILE, encoding="utf-8") as f:
+                if f.read().strip():
+                    return MGMT_PASS_FILE
+        os.makedirs(os.path.dirname(MGMT_PASS_FILE), exist_ok=True)
+        pw = secrets.token_hex(32)
+        with open(MGMT_PASS_FILE, "w", encoding="utf-8") as f:
+            f.write(pw + "\n")
+        os.chmod(MGMT_PASS_FILE, 0o600)
+        logger.info("Management password created at %s", MGMT_PASS_FILE)
+    except Exception as e:
+        logger.error("Could not ensure mgmt password file: %s", e)
+    return MGMT_PASS_FILE
+
+
+def mgmt_line() -> str:
+    """Canonical management directive with password file."""
+    try:
+        port = _management_port()
+    except Exception:
+        port = 7505
+    return f"management 127.0.0.1 {port} {MGMT_PASS_FILE}"
 
 REQUIRED_DIRS = [
     os.path.join(_OPENVPN_ROOT, "server"),
@@ -51,10 +84,16 @@ def run_easyrsa(*args: str, timeout: int = 120, pki_dir: str | None = None) -> b
         return False
     try:
         cmd = [easyrsa_bin, f"--pki-dir={pki_dir or PKI_DIR}"] + list(args)
+        # Minimal env: don't leak API_KEY / panel secrets to the child.
+        minimal_env = {
+            "PATH": os.environ.get("PATH", "/usr/sbin:/usr/bin:/sbin:/bin"),
+            "EASYRSA_BATCH": "1",
+            "HOME": os.environ.get("HOME", "/root"),
+        }
         subprocess.run(
             cmd,
             cwd=EASYRSA_DIR,
-            env={**os.environ, "EASYRSA_BATCH": "1"},
+            env=minimal_env,
             check=True,
             capture_output=True,
             timeout=timeout,
@@ -257,12 +296,15 @@ def _gen_tls_key() -> None:
     if os.path.exists(TLS_KEY):
         os.chmod(TLS_KEY, 0o600)
         return
-    subprocess.run(
-        [_openvpn_bin(), "--genkey", "secret", TLS_KEY],
-        check=True,
-        capture_output=True,
-        timeout=60,
-    )
+    try:
+        subprocess.run(
+            [_openvpn_bin(), "--genkey", "secret", TLS_KEY],
+            check=True,
+            capture_output=True,
+            timeout=60,
+        )
+    except FileNotFoundError:
+        raise RuntimeError("openvpn binary missing — cannot generate tls-crypt key") from None
     os.chmod(TLS_KEY, 0o600)
     logger.info("TLS-crypt key generated: %s", TLS_KEY)
 
@@ -373,10 +415,11 @@ def _hardening_directives() -> list[str]:
 
     Never removes or overwrites admin choices — only adds what is missing.
     """
+    ensure_mgmt_password()
     return [
         "tls-version-min 1.2",
         "remote-cert-tls client",
-        f"management 127.0.0.1 {_management_port()}",
+        mgmt_line(),
         f"writepid {PID_FILE}",
         "script-security 2",
         "status-version 3",
@@ -385,6 +428,7 @@ def _hardening_directives() -> list[str]:
 
 def _fresh_server_conf() -> str:
     """Modern hardened server.conf template for new installs."""
+    ensure_mgmt_password()
     port = _openvpn_port()
     dns1, dns2 = _vpn_dns()
     user, group = _runtime_user(), _runtime_group()
@@ -431,7 +475,7 @@ def _fresh_server_conf() -> str:
         f"crl-verify {CRL_FILE}",
         f"status {os.path.join(_OPENVPN_ROOT, 'server', 'status.log')} 5",
         "status-version 3",
-        f"management 127.0.0.1 {_management_port()}",
+        mgmt_line(),
         f"writepid {PID_FILE}",
         f"log-append {os.path.join(_OPENVPN_ROOT, 'server', 'openvpn.log')}",
         "verb 3",
@@ -476,6 +520,8 @@ def _ensure_server_conf() -> None:
         replaced_dh = False
         replaced_status = False
         removed_mgmt_client = False
+        upgraded_mgmt = False
+        canonical_mgmt = mgmt_line()
         out_lines = []
         for ln in lines:
             parts = ln.split()
@@ -486,18 +532,32 @@ def _ensure_server_conf() -> None:
             if stripped.startswith("management-client-"):
                 removed_mgmt_client = True
                 continue
+            # Upgrade legacy passwordless `management 127.0.0.1 <port>` to the
+            # password-protected form. Exact canonical line is kept as-is.
+            if stripped.startswith("management ") and stripped != canonical_mgmt:
+                out_lines.append(canonical_mgmt)
+                upgraded_mgmt = True
+                to_add = [d for d in to_add if d != canonical_mgmt]
+                continue
             if stripped.startswith("status-version") and stripped != "status-version 3":
                 out_lines.append("status-version 3")
                 replaced_status = True
                 to_add = [d for d in to_add if d != "status-version 3"]
                 continue
-            if len(parts) >= 2 and parts[0] == "dh" and parts[1] != "none" and not os.path.exists(parts[1]):
+            if (
+                len(parts) >= 2
+                and parts[0] == "dh"
+                and parts[1] != "none"
+                and not os.path.exists(parts[1])
+            ):
                 out_lines.append("dh none")
                 replaced_dh = True
                 logger.warning("Replaced missing dh file %s with 'dh none'", parts[1])
             else:
                 out_lines.append(ln)
-        changed = replaced_dh or replaced_status or removed_mgmt_client or bool(to_add)
+        changed = (
+            replaced_dh or replaced_status or removed_mgmt_client or upgraded_mgmt or bool(to_add)
+        )
         if to_add:
             if out_lines and out_lines[-1].strip() != "":
                 out_lines.append("")

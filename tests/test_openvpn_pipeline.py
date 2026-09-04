@@ -103,8 +103,12 @@ ok("proto udp" in after, "proto udp")
 ok("port 1195" in after, "port 1195")
 ok("explicit-exit-notify 1" in after, "exit notify 1")
 ok("remote vpn.example.com 1195" in read(CLIENT_TEMPLATE), "template remote")
-bad = SetSettingsModel(tunnel_address="x", protocol="tcp", ovpn_port=99999, set_new_setting=True)
-ok(not change_config(bad), "bad port rejected")
+try:
+    bad = SetSettingsModel(tunnel_address="x", protocol="tcp",
+                           ovpn_port=99999, set_new_setting=True)
+except Exception:
+    bad = None
+ok(bad is None or not change_config(bad), "bad port rejected")
 
 print(f"RESULT: {PASS} passed, {FAIL} failed")
 sys.exit(1 if FAIL else 0)

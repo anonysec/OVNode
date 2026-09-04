@@ -9,7 +9,7 @@
 # OpenVPN daemon it configures.
 
 # ── build: locked dependency venv ──────────────────────────────────────
-FROM python:3.13-slim AS builder
+FROM python:3.12-slim AS builder
 
 ENV UV_COMPILE_BYTECODE=1 \
     UV_LINK_MODE=copy \
@@ -19,13 +19,11 @@ RUN pip install --no-cache-dir uv
 
 WORKDIR /app
 COPY pyproject.toml uv.lock ./
-# --frozen enforces the lockfile; the fallback keeps image builds working
-# from source trees whose lock is mid-update.
-RUN uv sync --frozen --no-dev --no-install-project \
-    || uv sync --no-dev --no-install-project
+# --frozen enforces the lockfile and fails closed if out of sync.
+RUN uv sync --frozen --no-dev --no-install-project
 
 # ── runtime ────────────────────────────────────────────────────────────
-FROM python:3.13-slim
+FROM python:3.12-slim
 
 LABEL org.opencontainers.image.title="OVNode" \
       org.opencontainers.image.description="OVManager OpenVPN node agent" \

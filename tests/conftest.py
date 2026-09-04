@@ -3,6 +3,17 @@
 
 """Portable test defaults; production paths remain unchanged."""
 
+# anyio 4.15 moved BlockingPortal to anyio.from_thread and emits a
+# DeprecationWarning on the old anyio.abc alias — which starlette's
+# TestClient still reads at import (annotations evaluated eagerly). Both
+# packages are at latest; pre-binding the new location keeps the suite
+# warning-free until starlette catches up.
+import anyio.abc
+import anyio.from_thread
+
+if "BlockingPortal" not in anyio.abc.__dict__:
+    anyio.abc.BlockingPortal = anyio.from_thread.BlockingPortal  # type: ignore[attr-defined]
+
 import os
 from pathlib import Path
 

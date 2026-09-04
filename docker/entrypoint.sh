@@ -38,7 +38,7 @@ setup_tun() {
             log "WARNING: /dev/net/tun unavailable — bind-mount it or add CAP_MKNOD; OpenVPN cannot start without it"
         fi
     fi
-    chmod 666 /dev/net/tun 2>/dev/null || true
+    chmod 660 /dev/net/tun 2>/dev/null || true
 }
 
 setup_forwarding() {
@@ -68,6 +68,14 @@ setup_nat() {
             && log "NAT: MASQUERADE ${VPN_SUBNET} via ${uplink}" \
             || log "WARNING: could not add MASQUERADE rule (need CAP_NET_ADMIN) — clients will not reach the internet"
     fi
+    if [[ "${OVNODE_ENABLE_IPV6:-0}" == "1" ]] && command -v ip6tables >/dev/null 2>&1; then
+        v6subnet="${OVNODE_IPV6_PREFIX:-fd42:42:42:42::/64}"
+        if ! ip6tables -t nat -C POSTROUTING -s "$v6subnet" -o "$uplink" -j MASQUERADE 2>/dev/null; then
+            ip6tables -t nat -A POSTROUTING -s "$v6subnet" -o "$uplink" -j MASQUERADE 2>/dev/null \
+                && log "NAT: MASQUERADE ${v6subnet} via ${uplink} (v6)" \
+                || log "WARNING: could not add IPv6 MASQUERADE rule — v6 clients may not reach the internet"
+        fi
+    fi
 
     local main_port="${OPENVPN_PORT:-1194}" proto p
     proto="$(awk '$1 == "proto" {print $2; exit}' "$SERVER_CONF" 2>/dev/null || true)"
@@ -91,13 +99,14 @@ AGENT_PID=""
 OPENVPN_SUPERVISOR_PID=""
 
 shutdown() {
+    local code="${1:-0}"
     trap - TERM INT
     log "shutting down..."
     [[ -n "$OPENVPN_SUPERVISOR_PID" ]] && kill "$OPENVPN_SUPERVISOR_PID" 2>/dev/null || true
     [[ -f "$PID_FILE" ]] && kill "$(cat "$PID_FILE" 2>/dev/null)" 2>/dev/null || true
     [[ -n "$AGENT_PID" ]] && kill "$AGENT_PID" 2>/dev/null || true
     wait 2>/dev/null || true
-    exit 0
+    exit "$code"
 }
 trap shutdown TERM INT
 
@@ -147,13 +156,14 @@ main() {
     fi
 
     # Container lives and dies with the agent; Docker's restart policy
-    # handles resurrection.
+    # handles resurrection. Propagate the agent's exit code so failures
+    # are visible to Docker / the installer status check.
     set +e
     wait "$AGENT_PID"
     rc=$?
     set -e
     log "agent exited rc=${rc}"
-    shutdown
+    shutdown "$rc"
 }
 
 main "$@"

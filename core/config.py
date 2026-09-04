@@ -1,9 +1,13 @@
 # Copyright (c) 2025 anonysec. All rights reserved.
 # Proprietary and confidential. Unauthorized copying, distribution, or use is prohibited.
 
+import logging
 import os
 
+from pydantic import Field
 from pydantic_settings import BaseSettings
+
+logger = logging.getLogger(__name__)
 
 
 def parse_extra_ports(raw: str, primary_port: int) -> list[int]:
@@ -16,14 +20,19 @@ def parse_extra_ports(raw: str, primary_port: int) -> list[int]:
         try:
             port = int(token)
         except ValueError:
+            logger.warning("Ignoring invalid extra VPN port %r (not a number)", token)
             continue
-        if 1 <= port <= 65535 and port != primary_port and port not in ports:
+        if port == primary_port or port in ports:
+            continue
+        if 1 <= port <= 65535:
             ports.append(port)
+        else:
+            logger.warning("Ignoring extra VPN port %r (out of range 1-65535)", token)
     return ports
 
 
 class Settings(BaseSettings):
-    service_port: int = 2083
+    service_port: int = Field(default=2083, ge=1, le=65535)
     api_key: str
     debug: str = "WARNING"
     doc: bool = False
@@ -34,12 +43,12 @@ class Settings(BaseSettings):
     # Installer metadata (ignored by the app, used by install.sh for state)
     node_name: str = "node-1"
     data_dir: str = ""
-    openvpn_port: int = 1194
+    openvpn_port: int = Field(default=1194, ge=1, le=65535)
     tls_method: str = "none"
     # OpenVPN server tuning (OVNODE_* env vars; see .env.example)
     ovnode_runtime_user: str = "nobody"
     ovnode_runtime_group: str = "nogroup"
-    ovnode_management_port: int = 7505
+    ovnode_management_port: int = Field(default=7505, ge=1, le=65535)
     ovnode_vpn_network: str = "10.8.0.0"
     ovnode_vpn_netmask: str = "255.255.255.0"
     ovnode_vpn_dns1: str = "1.1.1.1"

@@ -36,6 +36,8 @@ services:
       - /dev/net/tun:/dev/net/tun
     cap_add:
       - NET_ADMIN # tun interface, ip_forward, MASQUERADE / multi-port NAT
+    cap_drop:
+      - ALL
     logging:
       driver: json-file
       options:
