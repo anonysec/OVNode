@@ -1,6 +1,6 @@
 #!/bin/bash
-# Copyright (c) 2025 anonysec. All rights reserved.
-# Proprietary and confidential. Unauthorized copying, distribution, or use is prohibited.
+# Copyright (c) 2026 anonysec
+# SPDX-License-Identifier: MIT
 #
 # ══════════════════════════════════════════════════════════════════════
 #  OVNode — OpenVPN Node Agent Installer v4
@@ -243,6 +243,7 @@ show_help() {
   Automation example (safe to parse):
     RESULT=$(bash install.sh install --json --tls selfsigned) || exit
     KEY=$(echo "$RESULT" | jq -r .api_key)
+    BUNDLE=$(echo "$RESULT" | jq -r .bundle)  # paste into panel: Nodes → Add Node
 EOF
     exit "$EX_OK"
 }
@@ -895,8 +896,12 @@ do_install() {
     field "Data"        "$DATA_BASE/$NODE_NAME"
     field "OpenVPN cfg" "$OPENVPN_ROOT/server"
     line ""
-    info "Add this node in the panel: Nodes → Add Node → address ${host},"
-    info "port ${PORT}, API key above → save."
+    local tls_flag=0; [[ "$TLS_METHOD" != "none" ]] && tls_flag=1
+    local bundle="ovnode://${NODE_NAME}@${host}:${PORT}?key=${API_KEY}&tls=${tls_flag}"
+    field "Bundle"      "${CY}${bundle}${NC}"
+    line ""
+    info "Add this node in the panel: Nodes → Add Node → paste the Bundle above"
+    info "(or type address ${host}, port ${PORT}, API key above → save)."
     if [[ -n "$EXTRA_PORTS" ]]; then
         info "Clients get all VPN ports (${VPN_PORT},${EXTRA_PORTS}) in their .ovpn"
         info "and fail over automatically if one is blocked."
@@ -910,6 +915,7 @@ do_install() {
         scheme "$scheme" \
         service_port "$PORT" \
         api_key "$API_KEY" \
+        bundle "$bundle" \
         vpn_ports "$(vpn_ports_json)" \
         tls "$TLS_METHOD" \
         health "$health" \
@@ -1113,13 +1119,15 @@ interactive_setup() {
         [[ "$dep" == "2" ]] && DOCKER=1
     fi
 
-    sep; line "  TLS:"
-    line "  ${WH}1${NC})  Let's Encrypt (domain)      ${WH}2${NC})  Let's Encrypt (IP)"
-    line "  ${WH}3${NC})  Self-signed                 ${WH}4${NC})  Custom cert path"
-    line "  ${WH}5${NC})  None (HTTP)"
+    sep; line "  TLS (encrypts the panel ↔ node API):"
+    line "  ${WH}1${NC})  Let's Encrypt (domain)      needs a domain pointed here + free port 80"
+    line "  ${WH}2${NC})  Let's Encrypt (IP)          short-lived cert, no domain needed"
+    line "  ${WH}3${NC})  Self-signed                 encrypted; turn TLS *on* in the panel"
+    line "  ${WH}4${NC})  Custom cert path            you already have key + cert files"
+    line "  ${WH}5${NC})  None (HTTP)                 unsafe on the internet — key travels in cleartext"
     local tls_choice
-    tls_choice="$(ask "TLS mode" "5")"
-    case "${tls_choice:-5}" in
+    tls_choice="$(ask "TLS mode" "3")"
+    case "${tls_choice:-3}" in
         1) TLS_METHOD="letsencrypt"; TLS_DOMAIN="$(ask "Domain" "")"; [[ -n "$TLS_DOMAIN" ]] || die "Domain required for Let's Encrypt" ;;
         2) TLS_METHOD="letsencrypt-ip"; TLS_DOMAIN="$(primary_ip)" ;;
         3) TLS_METHOD="selfsigned" ;;
@@ -1187,8 +1195,8 @@ main() {
         line "  ${YL}2${NC})  Uninstall"
         line "  ${GY}3${NC})  Quit"
         line ""
-        local choice; choice="$(ask "Select" "1")"
-        case "${choice:-1}" in
+        local choice; choice="$(ask "Select" "3")"
+        case "${choice:-3}" in
             1) do_update ;;
             2) do_uninstall ;;
             *) exit "$EX_OK" ;;

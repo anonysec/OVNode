@@ -1,5 +1,5 @@
-# Copyright (c) 2025 anonysec. All rights reserved.
-# Proprietary and confidential. Unauthorized copying, distribution, or use is prohibited.
+# Copyright (c) 2026 anonysec
+# SPDX-License-Identifier: MIT
 
 """Integration tests for the OVNode sync API (simulating panel requests).
 
@@ -52,6 +52,34 @@ def test_status_with_auth():
     assert data["version"] == __version__
     assert "cpu_usage" in data
     assert "memory_usage" in data
+
+
+def test_config_roundtrip_and_drift_detect():
+    """GET /sync/config reports live port/proto/tunnel (drift detect)."""
+    import os
+
+    server_dir = os.path.join(os.getenv("OVNODE_OPENVPN_ROOT", ""), "server")
+    os.makedirs(server_dir, exist_ok=True)
+    with open(os.path.join(server_dir, "server.conf"), "w", encoding="utf-8") as f:
+        f.write("port 443\nproto tcp\n")
+    with open(os.path.join(server_dir, "client-common.txt"), "w", encoding="utf-8") as f:
+        f.write("client\nremote vpn.example.com 443\n")
+    try:
+        c, headers = _client()
+        r = c.get("/sync/config", headers=headers)
+        assert r.status_code == 200
+        body = r.json()
+        assert body["success"] is True
+        assert body["data"] == {"port": 443, "proto": "tcp", "tunnel_address": "vpn.example.com"}
+        # Auth still enforced.
+        from fastapi.testclient import TestClient
+
+        from core.app import api
+
+        assert TestClient(api).get("/sync/config").status_code == 422
+    finally:
+        os.remove(os.path.join(server_dir, "server.conf"))
+        os.remove(os.path.join(server_dir, "client-common.txt"))
 
 
 def test_create_user_with_uuid_id():

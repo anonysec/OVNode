@@ -35,11 +35,20 @@ Identity: the OpenVPN CN is the panel's numeric user id (`str(user.id)`); the di
 - **Multi-port** — one OpenVPN instance reachable on several ports (`--vpn-ports 1194,443,8443`): extra ports are redirected to the listener via iptables, and every `.ovpn` lists all ports as `remote` lines for automatic failover when an ISP blocks one.
 - **Optional IPv6** — ULA pool + route push when enabled (`OVNODE_ENABLE_IPV6=1`).
 
-## Install
+## Install (beginners start here)
 
 ```bash
 bash <(curl -sSL https://anonysec.github.io/OVNode/install.sh)
 ```
+
+Wizard defaults are fine (`node-1`, `2083`, `1194`, blank API key =
+generated, self-signed TLS). Save the green summary (node name + API key),
+then register it in the panel: **Nodes → Add Node**.
+
+Full walkthrough: [docs/quickstart.md](docs/quickstart.md) ·
+stuck: [docs/troubleshooting.md](docs/troubleshooting.md).
+
+Advanced / unattended:
 
 Common flags:
 
@@ -133,16 +142,21 @@ Pre-existing installs with the old scattered layout (`clients/`, `limits/`, `dis
 - **`GET /sync/usage`** additionally returns `totals` — lifetime bytes per user (completed sessions banked by the disconnect hook + live traffic). The panel-contract keys (`users`, `sessions`) are unchanged.
 - All errors come back in the `{success, msg, data}` envelope; unhandled ones carry a `ref=<id>` that links to the full traceback in `data/app.log` / `journalctl -u ovnode`.
 
-## Manual Install
+## Manual Install (developers only — beginners: use the installer above)
 
 ```bash
 git clone https://github.com/anonysec/OVNode.git /opt/ovnode
 cd /opt/ovnode
-cp .env.example .env  # edit with your settings
+cp .env.example .env  # REQUIRED: set API_KEY (min 16 chars, see top of file)
 pip install uv && uv sync
 uv run main.py
 ```
 
+Manual mode runs the API only: you must handle TLS (`ssl_certfile/keyfile`
+in `.env`), IP forwarding + NAT, firewall, and systemd yourself — the
+installer does all of that. The OpenVPN daemon is also on you
+(`OVNODE_SKIP_OPENVPN` is for debugging).
+
 ## License
 
-Copyright (c) 2025 anonysec. All rights reserved. See [LICENSE](LICENSE).
+MIT. See [LICENSE](LICENSE).

@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
-# Copyright (c) 2025 anonysec. All rights reserved.
-# Proprietary and confidential. Unauthorized copying, distribution, or use is prohibited.
+# Copyright (c) 2026 anonysec
+# SPDX-License-Identifier: MIT
 #
 # OVManager local disconnect hook. Removes the local active-session marker
 # and banks the session's final byte counters into the per-user usage

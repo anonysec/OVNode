@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
-# Copyright (c) 2025 anonysec. All rights reserved.
-# Proprietary and confidential. Unauthorized copying, distribution, or use is prohibited.
+# Copyright (c) 2026 anonysec
+# SPDX-License-Identifier: MIT
 #
 # OVManager local max-login enforcement for OpenVPN client-connect.
 #
@@ -33,6 +33,10 @@ LOCK_FILE="${ACTIVE_DIR}/.lock"
 STATUS_FILE="${OVNODE_STATUS_FILE:-/etc/openvpn/server/status.log}"
 MGMT_HOST="${OVNODE_MANAGEMENT_HOST:-${OVNODE_MGMT_HOST:-127.0.0.1}}"
 MGMT_PORT="${OVNODE_MANAGEMENT_PORT:-7505}"
+# Management password file: must match core/openvpn/sessions.py::_mgmt_password()
+# (canonical path first, $OVNODE_MGMT_PASS_FILE override second).
+OPENVPN_ROOT="${OVNODE_OPENVPN_ROOT:-/etc/openvpn}"
+MGMT_PASS_FILE="${OVNODE_MGMT_PASS_FILE:-$OPENVPN_ROOT/server/mgmt-pass}"
 DEFAULT_LIMIT=1
 LOG_TAG="ovnode-mlogin"
 # Grace period (seconds): same-CN reconnects within this window are
@@ -55,16 +59,33 @@ PYPROBE
 
 mgmt_send() {
     local cmd="$1"
-    python3 - "$MGMT_HOST" "$MGMT_PORT" "$cmd" <<'PYMGMT' >/dev/null 2>&1 || true
+    python3 - "$MGMT_HOST" "$MGMT_PORT" "$cmd" "$MGMT_PASS_FILE" <<'PYMGMT' >/dev/null 2>&1 || true
 import socket, sys
-host, port, cmd = sys.argv[1], int(sys.argv[2]), sys.argv[3]
+host, port, cmd, pass_file = sys.argv[1], int(sys.argv[2]), sys.argv[3], sys.argv[4]
 try:
     s = socket.create_connection((host, port), timeout=2)
     s.settimeout(2)
     try:
-        s.recv(2048)
+        banner = s.recv(2048).decode(errors="ignore")
     except Exception:
-        pass
+        banner = ""
+    # Authenticate when the daemon challenges (pki.py writes
+    # "management 127.0.0.1 <port> <mgmt-pass>"); legacy passwordless
+    # daemons skip this entirely.
+    upper = banner.upper()
+    if "ENTER PASSWORD" in upper or "PASSWORD:" in upper:
+        pw = ""
+        try:
+            with open(pass_file, encoding="utf-8") as f:
+                pw = f.read().strip().splitlines()[0].strip() if f else ""
+        except OSError:
+            pw = ""
+        if pw:
+            try:
+                s.sendall((pw + "\n").encode())
+                s.recv(4096)
+            except Exception:
+                pass
     s.sendall((cmd.rstrip() + "\n").encode())
     try:
         s.recv(4096)

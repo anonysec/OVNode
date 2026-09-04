@@ -1,0 +1,28 @@
+name: Bug report
+description: Something broken with reproduction steps
+labels: [bug]
+body:
+  - type: input
+    id: version
+    attributes:
+      label: Version (node + panel)
+      placeholder: node 2.0.0 / panel 2.0.0
+    validations:
+      required: true
+  - type: textarea
+    id: repro
+    attributes:
+      label: Steps to reproduce
+    validations:
+      required: true
+  - type: textarea
+    id: actual
+    attributes:
+      label: Expected vs actual
+    validations:
+      required: true
+  - type: textarea
+    id: logs
+    attributes:
+      label: Logs (`journalctl -u ovnode`, `/sync/logs`; redact keys)
+      render: text

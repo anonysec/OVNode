@@ -1,5 +1,5 @@
-# Copyright (c) 2025 anonysec. All rights reserved.
-# Proprietary and confidential. Unauthorized copying, distribution, or use is prohibited.
+# Copyright (c) 2026 anonysec
+# SPDX-License-Identifier: MIT
 
 """OpenVPN service management for OVNode.
 
@@ -131,6 +131,49 @@ def restart_openvpn() -> bool:
 
 
 # ── panel-driven settings (POST /sync/config) ────────────────────────
+
+
+def read_config() -> dict:
+    """Return the live VPN endpoint settings (GET /sync/config).
+
+    Lets the panel detect drift after a manual server.conf edit: port/proto
+    from server.conf, tunnel address from the first `remote` line of the
+    client template, extra ports from the environment (same source
+    change_config() uses to build the template).
+    """
+    import os as _os
+
+    openvpn_root = _os.getenv("OVNODE_OPENVPN_ROOT", "/etc/openvpn")
+    setting_file = _os.path.join(openvpn_root, "server", "server.conf")
+    template_file = _os.path.join(openvpn_root, "server", "client-common.txt")
+    port: int | None = None
+    proto: str | None = None
+    tunnel_address: str | None = None
+    try:
+        with open(setting_file, encoding="utf-8") as f:
+            for line in f:
+                stripped = line.strip()
+                if stripped.startswith("port ") and port is None:
+                    try:
+                        port = int(stripped.split()[1])
+                    except (IndexError, ValueError):
+                        pass
+                elif stripped.startswith("proto ") and proto is None:
+                    proto = stripped.split()[1] if len(stripped.split()) > 1 else None
+                if port is not None and proto is not None:
+                    break
+    except OSError:
+        pass
+    try:
+        with open(template_file, encoding="utf-8") as f:
+            for line in f:
+                parts = line.strip().split()
+                if len(parts) >= 3 and parts[0] == "remote":
+                    tunnel_address = parts[1]
+                    break
+    except OSError:
+        pass
+    return {"port": port, "proto": proto, "tunnel_address": tunnel_address}
 
 
 def _atomic_write(path: str, content: str) -> None:

@@ -1,5 +1,5 @@
-# Copyright (c) 2025 anonysec. All rights reserved.
-# Proprietary and confidential. Unauthorized copying, distribution, or use is prohibited.
+# Copyright (c) 2026 anonysec
+# SPDX-License-Identifier: MIT
 
 """Behavioral tests for install.sh's machine interface (no root needed).
 
@@ -112,3 +112,25 @@ def test_nat_script_is_idempotent_and_docker_skips_host_nat():
     assert "NAT/redirect rules are applied inside the container" in content
     # Docker hosts don't need python/openvpn installed.
     assert 'if [[ "$DOCKER" -eq 0 ]] && ! command -v openvpn' in content
+
+
+def test_success_output_includes_panel_bundle():
+    """Beginners paste one string into the panel instead of retyping 5 fields."""
+    with open(INSTALLER, encoding="utf-8") as f:
+        content = f.read()
+    assert "ovnode://" in content
+    assert 'bundle "$bundle"' in content or "bundle " in content
+
+
+def test_tls_wizard_defaults_to_selfsigned():
+    """First-timers get encryption by default; None stays opt-in for LAN use."""
+    with open(INSTALLER, encoding="utf-8") as f:
+        content = f.read()
+    assert 'tls_choice="$(ask "TLS mode" "3")"' in content
+
+
+def test_already_installed_menu_defaults_to_quit():
+    """On EOF/Enter the menu must quit, never auto-start update/uninstall."""
+    with open(INSTALLER, encoding="utf-8") as f:
+        content = f.read()
+    assert 'choice="$(ask "Select" "3")"' in content
