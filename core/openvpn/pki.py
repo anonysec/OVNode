@@ -475,7 +475,10 @@ def _fresh_server_conf() -> str:
             'push "route-ipv6 2000::/3"',
         ]
     lines += [
-        "keepalive 10 120",
+        # 10s ping, 60s dead-time: dynamic-IP corpses are reaped fast enough
+        # for the connect-hook takeover to matter. Existing installs keep
+        # their value — the tune-up pass never rewrites keepalive.
+        "keepalive 10 60",
         f"ca {CA_CERT}",
         f"cert {SERVER_CERT}",
         f"key {os.path.join(PKI_DIR, 'private', 'server.key')}",

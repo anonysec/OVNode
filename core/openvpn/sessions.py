@@ -362,16 +362,24 @@ def _management_kill(common_name: str, live_sessions: list[dict[str, Any]]) -> d
     }
 
 
-def disconnect_user(common_name: str) -> dict[str, Any]:
+def disconnect_user(common_name: str, only_stale: bool = False) -> dict[str, Any]:
     """Best-effort disconnect.
 
     If OpenVPN management is enabled, kill the live client(s) by CID. Always
     removes stale local active markers for this CN so max-login does not
     stay blocked.
+
+    With ``only_stale=True`` no kill is attempted and only markers with no
+    live counterpart are removed: safe for CNs that also hold a healthy
+    session, where a dead marker previously meant "full" forever (neither
+    the hook sweep nor the panel sweeper would clear it).
     """
     before = user_diagnostics(common_name=common_name, hours=8)
     live_sessions = _read_status_sessions()
-    mgmt = _management_kill(common_name, live_sessions)
+    if only_stale:
+        mgmt = {"available": None, "ok": None, "skipped": "only_stale"}
+    else:
+        mgmt = _management_kill(common_name, live_sessions)
 
     removed_markers = []
     for marker in _read_active_files():

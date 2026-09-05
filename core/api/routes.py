@@ -306,11 +306,16 @@ async def get_session_diagnostics(
 
 
 @router.post("/user/{uid}/disconnect", response_model=ResponseModel)
-async def disconnect_user_sessions(uid: str, api_key: str = Depends(check_api_key)):
+async def disconnect_user_sessions(
+    uid: str, only_stale: bool = False, api_key: str = Depends(check_api_key)
+):
     """Best-effort disconnect for a user; also clears stale active markers.
 
     The panel passes either the numeric user id or a raw CN here
     (clean_stale_sessions_all_nodes() forwards marker CNs verbatim).
+
+    ``only_stale=True`` never kills live sessions — it only removes dead
+    markers, so it is safe for users that also hold a healthy session.
     """
     safe_id = validate_user_id(uid)
     if safe_id is None:
@@ -321,7 +326,7 @@ async def disconnect_user_sessions(uid: str, api_key: str = Depends(check_api_ke
     return ResponseModel(
         success=True,
         msg="Disconnect command processed",
-        data=disconnect_user(cn),
+        data=disconnect_user(cn, only_stale=only_stale),
     )
 
 

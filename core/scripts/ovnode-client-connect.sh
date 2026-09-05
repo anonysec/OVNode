@@ -12,12 +12,20 @@
 #
 # Policy:
 # - max_logins=1: local takeover. Kill old session (by CID), allow new one.
+#   Verification reads the LIVE management status (not the 5s-cadence status
+#   file): a kill that succeeded is visible immediately, so a legitimate
+#   reconnect is never rejected because of a stale file row.
 # - max_logins=N>1: allow up to N sessions, reject N+1.
 # - max_logins=0: unlimited.
+# - limit=1 with the management socket down: degrade (replace markers, let
+#   ping-restart reap the corpse) instead of rejecting a legit reconnect.
+#   Strict cases (limit>1, disabled, unknown) still fail closed.
 #
 # Reconnection handling:
-# - Grace period matches on CN alone — NOT on IP. A same-CN reconnect within
-#   the grace window replaces the OLDEST marker (the dropped session).
+# - Grace period absorbs a fresh marker ONLY when its (CN, pool IP) is absent
+#   from the live status: a dropped session already reaped, or a concurrent
+#   hook. A fresh marker that is still live in status counts toward the
+#   limit and goes through takeover (newest wins).
 # - Stale cleanup removes markers whose (CN, pool IP) is absent from the
 #   status file (status-version 3, tab-separated).
 
@@ -27,8 +35,10 @@ set -euo pipefail
 #   users/<cn>/limit     max simultaneous logins (0 = unlimited)
 #   users/<cn>/disabled  marker — exists = reject the connection
 # Session markers live in sessions/ (one file per live session).
-USERS_DIR="/etc/openvpn/ovnode/users"
-ACTIVE_DIR="/etc/openvpn/ovnode/sessions"
+# USERS_DIR/ACTIVE_DIR honor env overrides for hermetic tests; production
+# always uses the compiled-in defaults (identical values).
+USERS_DIR="${OVNODE_USERS_DIR:-/etc/openvpn/ovnode/users}"
+ACTIVE_DIR="${OVNODE_SESSIONS_DIR:-/etc/openvpn/ovnode/sessions}"
 LOCK_FILE="${ACTIVE_DIR}/.lock"
 STATUS_FILE="${OVNODE_STATUS_FILE:-/etc/openvpn/server/status.log}"
 MGMT_HOST="${OVNODE_MANAGEMENT_HOST:-${OVNODE_MGMT_HOST:-127.0.0.1}}"
@@ -98,20 +108,84 @@ except Exception:
 PYMGMT
 }
 
+# mgmt_query sends one management command and PRINTS the raw reply.
+# Exit 0 = transport ok (reply received), non-zero = socket/auth failure.
+# Reads until an END/SUCCESS/ERROR terminator or a 5s deadline so a
+# multi-hundred-line `status` dump is never truncated mid-row.
+mgmt_query() {
+    local cmd="$1"
+    python3 - "$MGMT_HOST" "$MGMT_PORT" "$cmd" "$MGMT_PASS_FILE" <<'PYQUERY'
+import socket, sys, time
+host, port, cmd, pass_file = sys.argv[1], int(sys.argv[2]), sys.argv[3], sys.argv[4]
+out = []
+try:
+    s = socket.create_connection((host, port), timeout=2)
+    s.settimeout(2)
+    try:
+        banner = s.recv(2048).decode(errors="ignore")
+    except Exception:
+        banner = ""
+    upper = banner.upper()
+    if "ENTER PASSWORD" in upper or "PASSWORD:" in upper:
+        pw = ""
+        try:
+            with open(pass_file, encoding="utf-8") as f:
+                pw = f.read().strip().splitlines()[0].strip() if f else ""
+        except OSError:
+            pw = ""
+        if pw:
+            try:
+                s.sendall((pw + "\n").encode())
+                s.recv(4096)
+            except Exception:
+                pass
+    s.sendall((cmd.rstrip() + "\n").encode())
+    deadline = time.monotonic() + 5.0
+    chunks = []
+    while time.monotonic() < deadline:
+        try:
+            chunk = s.recv(65536)
+        except Exception:
+            break
+        if not chunk:
+            break
+        chunks.append(chunk.decode(errors="ignore"))
+        text = "".join(chunks)
+        lines = text.splitlines()
+        if any(ln.strip() in ("END", "SUCCESS") or ln.startswith("SUCCESS") or ln.startswith("ERROR") for ln in lines):
+            break
+    try:
+        s.sendall(b"quit\n")
+    except Exception:
+        pass
+    s.close()
+    sys.stdout.write("".join(chunks))
+except Exception as e:
+    sys.stderr.write("mgmt_query failed: %s\n" % e)
+    sys.exit(1)
+PYQUERY
+}
+
 # Kill this CN's other sessions. Targets the management Client ID from the
-# status file (column 11, status-version 3) — dynamic-IP safe. The session
-# being established is excluded by pool IP (it is not in the status file
-# yet, but be defensive against fast status rewrites).
+# status file (column 11, status-version 3) — dynamic-IP safe.
+#
+# ALL CIDs for the CN are killed, including same-pool-IP rows: during this
+# hook the new session cannot be in CLIENT_LIST yet (OpenVPN adds it only
+# after client-connect succeeds), so every listed row is a corpse — even
+# when the pool IP was recycled from ipp.txt. Skipping same-pool rows used
+# to leave exactly that corpse alive and fail the verify below.
 kill_existing_sessions() {
     local target_cn="$1"
-    local current_pool="$2"
+    local current_file="$2"
 
     if [[ -f "$STATUS_FILE" ]]; then
         while IFS=$'\t' read -r pool cid; do
-            [[ "${pool:-}" == "$current_pool" && -n "$current_pool" ]] && continue
             if [[ "${cid:-}" =~ ^[0-9]+$ ]]; then
-                mgmt_send "client-kill $cid max-login-takeover"
-                log "CN=$target_cn takeover client-kill cid=$cid pool=${pool:-?}"
+                if mgmt_query "client-kill $cid max-login-takeover" 2>/dev/null | grep -qi "^SUCCESS"; then
+                    log "CN=$target_cn takeover client-kill cid=$cid pool=${pool:-?} OK"
+                else
+                    log "CN=$target_cn takeover client-kill cid=$cid pool=${pool:-?} no-success (already gone?)"
+                fi
             fi
         done < <(awk -v cn="$target_cn" '
             BEGIN { FS="\t" }
@@ -121,10 +195,13 @@ kill_existing_sessions() {
 
     # Fallback for sessions not yet in the status file: kill by marker pool IP
     # is impossible via management, so fall back to the recorded real address.
+    # The marker being written for THIS connection is skipped; every other
+    # marker for the CN is a corpse (including same-pool rows from pool-IP
+    # recycling — the new session is never in CLIENT_LIST during its own
+    # connect hook, so CID kills above already covered the listed ones).
     while IFS= read -r marker; do
         [[ -f "$marker" ]] || continue
-        m_pool="$(awk -F= '$1 == "ifconfig_pool_remote_ip" {print $2}' "$marker" 2>/dev/null || true)"
-        [[ -n "$m_pool" && "$m_pool" == "$current_pool" ]] && continue
+        [[ "$marker" == "$current_file" ]] && continue
         m_ip="$(awk -F= '$1 == "trusted_ip" {print $2}' "$marker" 2>/dev/null || true)"
         m_port="$(awk -F= '$1 == "trusted_port" {print $2}' "$marker" 2>/dev/null || true)"
         [[ -n "$m_ip" && -n "$m_port" ]] || continue
@@ -190,9 +267,11 @@ exec 9>"$LOCK_FILE"
 flock -x 9
 
 # ── Reconnect detection (dynamic IP aware) ───────────────────────
-# If ANY marker for this CN was written within the grace period, the user is
-# reconnecting (their IP may have changed). Remove the OLDEST such marker
-# (most likely the dropped session) and proceed to write a fresh marker.
+# A fresh marker (< grace) is absorbed as "the dropped session" ONLY when
+# its (CN, pool IP) is absent from the live status: the corpse was already
+# reaped, or a concurrent hook is in flight. A fresh marker that is still
+# live in status is a real session — it counts toward the limit below and
+# loses via takeover (newest wins), never via silent absorb.
 reconnected=0
 oldest_marker=""
 oldest_time=999999999
@@ -203,6 +282,15 @@ for old_marker in "$ACTIVE_DIR"/${safe_cn}.*; do
     [[ "$created_s" =~ ^[0-9]+$ ]] || created_s=0
     age=$(( time_s - created_s ))
     if (( age < RECONNECT_GRACE )); then
+        m_pool="$(awk -F= '$1 == "ifconfig_pool_remote_ip" {print $2}' "$old_marker" 2>/dev/null || true)"
+        if [[ -n "$m_pool" ]] && [[ -f "$STATUS_FILE" ]] && awk -v cn="$cn" -v pool="$m_pool" '
+            BEGIN { FS="\t"; found=0 }
+            $1 == "CLIENT_LIST" && $2 == cn && $4 == pool { found=1 }
+            END { exit(found ? 0 : 1) }
+        ' "$STATUS_FILE" 2>/dev/null; then
+            # Still live — not a dropped session; leave it for counting.
+            continue
+        fi
         reconnected=1
         if (( created_s < oldest_time )); then
             oldest_time=$created_s
@@ -272,29 +360,36 @@ if [[ "$status_count" -gt "$cur" ]]; then cur="$status_count"; fi
 
 if (( cur >= limit )); then
     if [[ "$limit" -eq 1 ]]; then
-        # Takeover must fail closed if the management socket is unavailable;
-        # otherwise the old session can remain connected while the new one is
-        # accepted, violating the single-login policy.
         if ! mgmt_available; then
-            log "CN=$cn limit=1 active=$active_files status=$status_count; management unavailable; REJECT"
-            exit 1
+            # Degraded takeover: the corpse cannot be killed right now, but
+            # rejecting a legitimate reconnect is worse than a transient
+            # double session — ping-restart reaps the dead one, and the
+            # marker swap below keeps max-login accounting exact.
+            # Strict cases (limit>1, disabled, unknown) still fail closed.
+            log "CN=$cn limit=1 active=$active_files status=$status_count; management unavailable; DEGRADE (markers replaced, corpse reaped by ping-restart)"
+            rm -f "${ACTIVE_DIR}/${safe_cn}."* 2>/dev/null || true
+        else
+            log "CN=$cn limit=1 active=$active_files status=$status_count; TAKEOVER"
+            kill_existing_sessions "$cn" "$session_file"
+            # Verify against the LIVE management status, not the status
+            # file: a successful kill disappears immediately, while the
+            # file lags up to 5s. The old 0.3s-sleep + file re-read
+            # rejected legitimate reconnects on every dynamic-IP roam.
+            verified=0
+            for _ in $(seq 1 14); do
+                mgmt_out="$(mgmt_query "status 2" 2>/dev/null || true)"
+                if [[ -n "$mgmt_out" ]] && ! grep -qF "CLIENT_LIST,${cn}," <<<"$mgmt_out"; then
+                    verified=1
+                    break
+                fi
+                sleep 0.5
+            done
+            if [[ "$verified" -ne 1 ]]; then
+                log "CN=$cn takeover could not verify old session termination; REJECT"
+                exit 1
+            fi
+            rm -f "${ACTIVE_DIR}/${safe_cn}."* 2>/dev/null || true
         fi
-        log "CN=$cn limit=1 active=$active_files status=$status_count; TAKEOVER"
-        kill_existing_sessions "$cn" "$pool_ip"
-        sleep 0.3
-        remaining=0
-        if [[ -f "$STATUS_FILE" ]]; then
-            remaining="$(awk -v cn="$cn" -v pool="$pool_ip" '
-                BEGIN { FS="\t" }
-                $1 == "CLIENT_LIST" && $2 == cn && (pool == "" || $4 != pool) { c++ }
-                END { print c+0 }
-            ' "$STATUS_FILE" 2>/dev/null || echo 1)"
-        fi
-        if [[ "$remaining" -gt 0 ]]; then
-            log "CN=$cn takeover could not verify old session termination; REJECT"
-            exit 1
-        fi
-        rm -f "${ACTIVE_DIR}/${safe_cn}."* 2>/dev/null || true
     else
         log "CN=$cn limit=$limit active=$active_files status=$status_count; REJECT"
         exit 1

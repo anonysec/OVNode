@@ -306,6 +306,19 @@ def test_disconnect_user():
     assert body["success"] is True
 
 
+def test_disconnect_user_only_stale():
+    """Selective cleanup never kills: unknown CN, no live sessions."""
+    c, headers = _client()
+    r = c.post(
+        "/sync/user/6ca1dd29-b6a4-41c8-adc9-e154cf3f8557/disconnect?only_stale=true",
+        headers=headers,
+    )
+    assert r.status_code == 200
+    body = r.json()
+    assert body["success"] is True
+    assert body["data"]["management"].get("skipped") == "only_stale"
+
+
 # ── OVManager contract regression tests ─────────────────────────────
 # These pin the exact payload shapes consumed by the panel's backend
 # (node/requests.py, node/diagnostics.py, operations/daily_checks.py,
