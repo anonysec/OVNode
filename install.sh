@@ -660,7 +660,7 @@ open_firewall_ports() {
 # install would have opened, using the INSTALLED .env values (flags may
 # differ from install time). Best-effort — never fail the uninstall.
 close_firewall_ports() {
-    local env_get; env_get() { grep -E "^$1=" "$APP_DIR/.env" 2>/dev/null | head -1 | cut -d= -f2- | tr -d '"'; }
+    local env_get; env_get() { grep -E "^$1=" "$APP_DIR/.env" 2>/dev/null | head -1 | cut -d= -f2- | tr -d '"' || true; }
     local svc vpn extras p vpn_all
     svc="$(env_get SERVICE_PORT)"; : "${svc:=$DEFAULT_PORT}"
     vpn="$(env_get OPENVPN_PORT)"; : "${vpn:=$DEFAULT_VPN}"
@@ -962,7 +962,7 @@ do_update() {
     check_root
     # Recover install parameters from the installed .env when not passed on
     # the CLI, so `update` never silently changes the configuration.
-    local env_get; env_get() { grep -E "^$1=" "$APP_DIR/.env" 2>/dev/null | head -1 | cut -d= -f2- | tr -d '"'; }
+    local env_get; env_get() { grep -E "^$1=" "$APP_DIR/.env" 2>/dev/null | head -1 | cut -d= -f2- | tr -d '"' || true; }
     [[ -n "$NODE_NAME" ]] || NODE_NAME="$(env_get NODE_NAME)"
     : "${NODE_NAME:=node-1}"
     [[ -n "$PORT" ]] || PORT="$(env_get SERVICE_PORT)"
@@ -1076,14 +1076,14 @@ do_status() {
 
     if [[ -f "$APP_DIR/.env" ]]; then
         installed=true
-        local env_get; env_get() { grep -E "^$1=" "$APP_DIR/.env" 2>/dev/null | head -1 | cut -d= -f2- | tr -d '"'; }
+        local env_get; env_get() { grep -E "^$1=" "$APP_DIR/.env" 2>/dev/null | head -1 | cut -d= -f2- | tr -d '"' || true; }
         node="$(env_get NODE_NAME)"; : "${node:=node-1}"
         port="$(env_get SERVICE_PORT)"; : "${port:=$DEFAULT_PORT}"
         tls="$(env_get TLS_METHOD)"; : "${tls:=none}"
         mode="native"
         [[ -f "$DATA_BASE/$node/docker-compose.yml" ]] && mode="docker"
 
-        agent_version="$(grep -Eo '"[0-9]+\.[0-9]+\.[0-9]+"' "$APP_DIR/core/version.py" 2>/dev/null | head -1 | tr -d '"')"
+        agent_version="$(grep -Eo '"[0-9]+\.[0-9]+\.[0-9]+"' "$APP_DIR/core/version.py" 2>/dev/null | head -1 | tr -d '"' || true)"
 
         if [[ "$mode" == "docker" ]]; then
             if command -v docker >/dev/null 2>&1 \

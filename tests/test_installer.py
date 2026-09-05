@@ -138,6 +138,36 @@ def test_already_installed_menu_defaults_to_quit():
     assert 'choice="$(ask "Select" "3")"' in content
 
 
+def test_env_recovery_survives_missing_keys(tmp_path):
+    """do_update reads optional keys from .env; a missing key (grep finds
+    nothing → SIGPIPE) must not abort the script under set -Eeuo pipefail.
+    Regression: update died silently on installs without OVNODE_EXTRA_PORTS.
+    """
+    import subprocess
+
+    fake_env = tmp_path / ".env"
+    fake_env.write_text("NODE_NAME=node-1\nSERVICE_PORT=2083\n", encoding="utf-8")
+    probe = (
+        "set -Eeuo pipefail\n"
+        'env_get() { grep -E "^$1=" "$ENV_FILE" 2>/dev/null'
+        " | head -1 | cut -d= -f2- | tr -d '\"' || true; }\n"
+        'EXTRA_PORTS="$(env_get OVNODE_EXTRA_PORTS)"\n'
+        'test -z "$EXTRA_PORTS"\n'
+    )
+    with open(INSTALLER, encoding="utf-8") as f:
+        content = f.read()
+    # The probe mirrors the installer's env_get; keep them in sync.
+    assert "|| true; }" in content
+    r = subprocess.run(
+        ["bash", "-c", probe],
+        capture_output=True,
+        text=True,
+        timeout=15,
+        env={**os.environ, "ENV_FILE": str(fake_env)},
+    )
+    assert r.returncode == 0, r.stderr
+
+
 def test_uninstall_removes_firewall_allows():
     """Uninstall must mirror open_firewall_ports (ufw delete / firewall-cmd
     --remove-port) using installed .env values, never failing the run."""
