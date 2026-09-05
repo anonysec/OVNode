@@ -1,5 +1,12 @@
 # Changelog
 
+## 2.0.1 — 2026-09-05
+
+- P1 batch: single `server.conf` writer, easyrsa lock, usage-reset
+  endpoint, `ca_expiry`/`server_expiry` in status, firewall cleanup.
+- Installer test hermetic on installed machines (`OVN_APP_DIR`).
+- Docs: badges, compat matrix, `OVN_REPO` fork override.
+
 ## 2.0.0 — 2026-09-05
 
 Pairs with OVManager panel `2.x`.
