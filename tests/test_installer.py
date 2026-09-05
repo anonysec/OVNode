@@ -147,3 +147,10 @@ def test_uninstall_removes_firewall_allows():
     assert 'ufw delete allow "$svc/tcp"' in content
     assert 'firewall-cmd --permanent --remove-port="$svc/tcp"' in content
     assert "close_firewall_ports" in content.split("do_uninstall()")[1].split("emit_result")[0]
+
+
+def test_repo_override_for_forks():
+    """OVN_REPO redirects source downloads/update pulls to a fork."""
+    with open(INSTALLER, encoding="utf-8") as f:
+        content = f.read()
+    assert 'REPO="${OVN_REPO:-anonysec/OVNode}"' in content

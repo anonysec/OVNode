@@ -35,7 +35,8 @@ set -Eeuo pipefail
 
 # ── Constants ──────────────────────────────────────────────────────────
 VERSION="4.0"
-REPO="anonysec/OVNode"
+# Forks: point source downloads (and update pulls) at your own repo.
+REPO="${OVN_REPO:-anonysec/OVNode}"
 # OVN_APP_DIR override exists for hermetic tests: status/uninstall probes
 # below must be runnable on machines that already host a node (like CI
 # sandboxes and dev boxes) without seeing the real install.
