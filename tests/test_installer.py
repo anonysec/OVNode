@@ -38,8 +38,10 @@ def test_help_documents_the_machine_interface():
         assert token in r.stderr, f"help missing {token}"
 
 
-def test_status_not_installed_json():
-    r = sh("status", "--json")
+def test_status_not_installed_json(tmp_path):
+    # OVN_APP_DIR points at an empty dir so this holds on machines that
+    # already host a node (dev boxes, this repo's own CI sandbox, prod).
+    r = sh("status", "--json", env={"OVN_APP_DIR": str(tmp_path / "empty")})
     assert r.returncode == 4  # EX_NOTINSTALLED
     data = json.loads(r.stdout)  # stdout is exactly one JSON object
     assert data["ok"] is True

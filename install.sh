@@ -36,7 +36,10 @@ set -Eeuo pipefail
 # ── Constants ──────────────────────────────────────────────────────────
 VERSION="4.0"
 REPO="anonysec/OVNode"
-APP_DIR="/opt/ovnode"
+# OVN_APP_DIR override exists for hermetic tests: status/uninstall probes
+# below must be runnable on machines that already host a node (like CI
+# sandboxes and dev boxes) without seeing the real install.
+APP_DIR="${OVN_APP_DIR:-/opt/ovnode}"
 DATA_BASE="/var/lib/ovnode"
 OPENVPN_ROOT="/etc/openvpn"
 DEFAULT_PORT=2083
