@@ -17,6 +17,7 @@ client (backend/node/requests.py):
     PUT    /sync/user/limit                  set_user_limit
     DELETE /sync/user/{uid}                  delete_user
     POST   /sync/user/{uid}/disconnect       disconnect_user
+    POST   /sync/user/{uid}/reset-usage      reset_user_usage
     GET    /sync/download/ovpn/{uid}         download_ovpn_client / _bytes
 
 The panel treats a call as successful ONLY when the response is HTTP 200
@@ -27,6 +28,7 @@ HTTP status (ovpn download must be a raw 200 body starting with "client").
 Authentication: the panel sends the node API key in the ``key`` header.
 """
 
+import os
 import time
 
 import psutil
@@ -136,6 +138,9 @@ async def get_status(
     # TLS certificate expiry (ISO date) when the node serves HTTPS — lets the
     # panel warn before the certificate lapses and breaks node connectivity.
     status["cert_expiry"] = _cert_expiry()
+    # VPN PKI expiries (CA 10y, server 5y): the panel can't see these
+    # otherwise, and a lapsed CA/server cert silently kills every client.
+    status["ca_expiry"], status["server_expiry"] = _pki_expiry()
     _ensure_crl_fresh()
     return ResponseModel(success=True, msg="Node status retrieved successfully", data=status)
 
@@ -190,26 +195,55 @@ def _read_cert_expiry() -> str | None:
         cert_file = settings.ssl_certfile
         if not cert_file:
             return None
-        import subprocess
-
-        out = subprocess.run(
-            ["openssl", "x509", "-enddate", "-noout", "-in", cert_file],
-            capture_output=True,
-            text=True,
-            timeout=10,
-        )
-        if out.returncode != 0:
-            return None
-        line = out.stdout.strip()
-        if not line.startswith("notAfter="):
-            return None
-        # OpenSSL emits RFC2822 (e.g. "Aug 12 12:00:00 2027 GMT").
-        import datetime as _dt
-
-        parsed = _dt.datetime.strptime(line[len("notAfter=") :].strip(), "%b %d %H:%M:%S %Y %Z")
-        return parsed.date().isoformat()
+        return _openssl_enddate(cert_file)
     except Exception:
         return None
+
+
+def _openssl_enddate(cert_file: str) -> str | None:
+    """Parse a PEM cert's notAfter into an ISO date (one openssl fork)."""
+    import subprocess
+
+    out = subprocess.run(
+        ["openssl", "x509", "-enddate", "-noout", "-in", cert_file],
+        capture_output=True,
+        text=True,
+        timeout=10,
+    )
+    if out.returncode != 0:
+        return None
+    line = out.stdout.strip()
+    if not line.startswith("notAfter="):
+        return None
+    # OpenSSL emits RFC2822 (e.g. "Aug 12 12:00:00 2027 GMT").
+    import datetime as _dt
+
+    parsed = _dt.datetime.strptime(line[len("notAfter=") :].strip(), "%b %d %H:%M:%S %Y %Z")
+    return parsed.date().isoformat()
+
+
+_pki_expiry_cached: tuple[str | None, str | None] | None = None
+_pki_expiry_checked_at = 0.0
+
+
+def _pki_expiry() -> tuple[str | None, str | None]:
+    """(ca_expiry, server_expiry) ISO dates, cached like the TLS one."""
+    global _pki_expiry_cached, _pki_expiry_checked_at
+    now = time.monotonic()
+    if _pki_expiry_cached is not None and now - _pki_expiry_checked_at < _CERT_EXPIRY_TTL:
+        return _pki_expiry_cached
+    try:
+        from core.openvpn.pki import CA_CERT, SERVER_CERT
+
+        result = (
+            _openssl_enddate(CA_CERT) if os.path.exists(CA_CERT) else None,
+            _openssl_enddate(SERVER_CERT) if os.path.exists(SERVER_CERT) else None,
+        )
+    except Exception:
+        result = (None, None)
+    _pki_expiry_cached = result
+    _pki_expiry_checked_at = now
+    return result
 
 
 @router.get("/config", response_model=ResponseModel)
@@ -289,6 +323,22 @@ async def disconnect_user_sessions(uid: str, api_key: str = Depends(check_api_ke
         msg="Disconnect command processed",
         data=disconnect_user(cn),
     )
+
+
+@router.post("/user/{uid}/reset-usage", response_model=ResponseModel)
+async def reset_user_usage(uid: str, api_key: str = Depends(check_api_key)):
+    """Zero a user's banked traffic counters (panel reset-usage flow).
+
+    Complements delete (which also clears): lets the panel restart counting
+    without revoking the certificate.
+    """
+    from core.openvpn import store
+
+    safe_id = validate_user_id(uid)
+    if safe_id is None:
+        return ResponseModel(success=False, msg="Invalid user id (must be UUID or simple id)")
+    store.reset_usage(cn_from_uid(safe_id))
+    return ResponseModel(success=True, msg="Usage counters reset", data={"id": safe_id})
 
 
 @router.post("/user", response_model=ResponseModel)

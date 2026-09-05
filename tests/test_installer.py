@@ -136,3 +136,14 @@ def test_already_installed_menu_defaults_to_quit():
     with open(INSTALLER, encoding="utf-8") as f:
         content = f.read()
     assert 'choice="$(ask "Select" "3")"' in content
+
+
+def test_uninstall_removes_firewall_allows():
+    """Uninstall must mirror open_firewall_ports (ufw delete / firewall-cmd
+    --remove-port) using installed .env values, never failing the run."""
+    with open(INSTALLER, encoding="utf-8") as f:
+        content = f.read()
+    assert "close_firewall_ports" in content
+    assert 'ufw delete allow "$svc/tcp"' in content
+    assert 'firewall-cmd --permanent --remove-port="$svc/tcp"' in content
+    assert "close_firewall_ports" in content.split("do_uninstall()")[1].split("emit_result")[0]

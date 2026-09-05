@@ -25,40 +25,16 @@ import shutil
 from core.logger import logger
 from core.openvpn import store
 
-_OPENVPN_ROOT = os.getenv("OVNODE_OPENVPN_ROOT", "/etc/openvpn")
-SERVER_CONF = os.path.join(_OPENVPN_ROOT, "server", "server.conf")
-CRL_FILE = os.path.join(_OPENVPN_ROOT, "server", "pki", "crl.pem")
 SCRIPTS_SRC_DIR = os.path.join(os.path.dirname(__file__), "..", "scripts")
 
 CONNECT_DST = os.path.join(store.SCRIPTS_DIR, "ovnode-client-connect.sh")
 DISCONNECT_DST = os.path.join(store.SCRIPTS_DIR, "ovnode-client-disconnect.sh")
 
-# Path the connect script reads to count live sessions. Must match the
-# `status` directive in server.conf and OVNODE_STATUS_FILE in the script.
-STATUS_FILE = os.getenv("OVNODE_STATUS_FILE", os.path.join(_OPENVPN_ROOT, "server", "status.log"))
 
-
-# Directives we need in server.conf for an exact N-device per-cert limit.
-# The management interface is required by the connect script for takeover
-# (limit=1) and by the agent for disconnects.
-def _required_directives() -> list[str]:
-    try:
-        from core.openvpn.pki import ensure_mgmt_password, mgmt_line
-
-        ensure_mgmt_password()
-        mgmt = mgmt_line()
-    except Exception:
-        mgmt_port = os.getenv("OVNODE_MANAGEMENT_PORT", "7505")
-        mgmt = f"management 127.0.0.1 {mgmt_port}"
-    return [
-        "duplicate-cn",
-        "script-security 2",
-        f"client-connect {CONNECT_DST}",
-        f"client-disconnect {DISCONNECT_DST}",
-        f"crl-verify {CRL_FILE}",
-        mgmt,
-        f"writepid {os.path.join(_OPENVPN_ROOT, 'server', 'ovnode.pid')}",
-    ]
+# server.conf has a SINGLE writer: pki._ensure_server_conf covers both PKI
+# hardening and these multi-login directives (hooks, duplicate-cn, mgmt).
+# This module owns scripts + env + restart only — it must never patch the
+# conf file itself (two writers made restarts order-dependent).
 
 
 def _write_mlogin_env() -> None:
@@ -104,87 +80,6 @@ def _install_scripts() -> bool:
     return changed
 
 
-def _patch_server_conf() -> bool:
-    """Ensure required directives exist in server.conf. Returns True if changed."""
-    if not os.path.exists(SERVER_CONF):
-        logger.warning("multilogin: %s not found; skipping conf patch", SERVER_CONF)
-        return False
-
-    with open(SERVER_CONF) as f:
-        content = f.read()
-
-    lines = content.splitlines()
-
-    # Repoint hook directives that reference an old scripts location (the
-    # hooks moved into the ovnode/ tree). Rewriting in place preserves the
-    # admin's line ordering.
-    repointed = False
-    _hook_targets = {"client-connect": CONNECT_DST, "client-disconnect": DISCONNECT_DST}
-    for i, ln in enumerate(lines):
-        parts = ln.strip().split()
-        if (
-            len(parts) == 2
-            and parts[0] in _hook_targets
-            and "ovnode-client-" in parts[1]
-            and parts[1] != _hook_targets[parts[0]]
-        ):
-            lines[i] = f"{parts[0]} {_hook_targets[parts[0]]}"
-            repointed = True
-
-    existing = {ln.strip() for ln in lines}
-    to_add = [d for d in _required_directives() if d not in existing]
-
-    # Upgrade legacy passwordless management line in place instead of
-    # appending a duplicate `management` directive.
-    upgraded_mgmt = False
-    for i, ln in enumerate(lines):
-        stripped = ln.strip()
-        if stripped.startswith("management ") and any(d.startswith("management ") for d in to_add):
-            canonical = next(d for d in to_add if d.startswith("management "))
-            lines[i] = canonical
-            to_add = [d for d in to_add if d != canonical]
-            upgraded_mgmt = True
-            break
-
-    # The connect script and the traffic parser count sessions from the status
-    # log, so a `status` directive must be present. Only add one if no status
-    # line exists at all (don't fight an existing custom path/interval).
-    has_status = any(ln.strip().startswith("status ") for ln in lines)
-    if not has_status:
-        to_add.append(f"status {STATUS_FILE} 5")
-
-    # The connect script counts sessions and resolves Client IDs from the
-    # status log with tab-separated awk, which requires the machine-readable
-    # status-version 3 layout. Version 1 has no CLIENT_LIST rows at all and
-    # version 2 is comma-separated — either would silently break both the
-    # connection limit and takeover kills. Ensure version 3, upgrading an
-    # existing version 1/2 directive in place.
-    replaced_status_version = False
-    for i, ln in enumerate(lines):
-        stripped = ln.strip()
-        if stripped.startswith("status-version") and stripped != "status-version 3":
-            lines[i] = "status-version 3"
-            replaced_status_version = True
-    has_status_version = any(ln.strip().startswith("status-version") for ln in lines)
-    if not has_status_version:
-        to_add.append("status-version 3")
-
-    if not to_add and not replaced_status_version and not repointed and not upgraded_mgmt:
-        return False
-
-    if to_add:
-        if lines and lines[-1].strip() != "":
-            lines.append("")
-        lines.append("# ovmanager multi-login (per-config connection limit) enforcement")
-        lines.extend(to_add)
-
-    with open(SERVER_CONF, "w") as f:
-        f.write("\n".join(lines) + "\n")
-
-    logger.info("multilogin: added directives to server.conf: %s", to_add)
-    return True
-
-
 def _restart_openvpn() -> None:
     from core.openvpn.control import restart_openvpn
 
@@ -194,9 +89,12 @@ def _restart_openvpn() -> None:
 
 def ensure_multilogin_setup() -> None:
     """Idempotently set up multi-login enforcement. Safe to call on every start."""
+    from core.openvpn.pki import _ensure_server_conf
+
     try:
         scripts_changed = _install_scripts()
-        conf_changed = _patch_server_conf()
+        # Single-writer conf pass (pki covers hooks + hardening).
+        conf_changed = bool(_ensure_server_conf())
         _write_mlogin_env()
         # server.conf may have been created/edited after _install_scripts() read it.
         store.fix_runtime_permissions()

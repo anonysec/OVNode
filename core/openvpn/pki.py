@@ -78,10 +78,28 @@ REQUIRED_DIRS = [
 
 
 def run_easyrsa(*args: str, timeout: int = 120, pki_dir: str | None = None) -> bool:
-    """Run easyrsa in batch mode. Returns True on success."""
+    """Run easyrsa in batch mode. Returns True on success.
+
+    Serialized with a lock file: parallel create/revoke calls corrupt
+    index.txt otherwise (easyrsa has no internal locking).
+    """
+    import fcntl
+
     easyrsa_bin = os.path.join(EASYRSA_DIR, "easyrsa")
     if not os.path.exists(easyrsa_bin):
         logger.error("easyrsa not found at %s", easyrsa_bin)
+        return False
+    lock_path = os.path.join(pki_dir or PKI_DIR, ".easyrsa.lock")
+    try:
+        lock_fh = open(lock_path, "a")
+    except OSError as e:
+        logger.error("easyrsa lock unavailable (%s) — refusing to run unlocked", e)
+        return False
+    try:
+        fcntl.flock(lock_fh.fileno(), fcntl.LOCK_EX)
+    except OSError as e:
+        logger.error("easyrsa lock failed (%s)", e)
+        lock_fh.close()
         return False
     try:
         cmd = [easyrsa_bin, f"--pki-dir={pki_dir or PKI_DIR}"] + list(args)
@@ -114,6 +132,12 @@ def run_easyrsa(*args: str, timeout: int = 120, pki_dir: str | None = None) -> b
     except Exception as e:
         logger.error("easyrsa %s error: %s", " ".join(args), e)
         return False
+    finally:
+        try:
+            fcntl.flock(lock_fh.fileno(), fcntl.LOCK_UN)
+        except OSError:
+            pass
+        lock_fh.close()
 
 
 _easyrsa = run_easyrsa
@@ -489,22 +513,52 @@ def _fresh_server_conf() -> str:
     return "\n".join(lines) + "\n"
 
 
-def _ensure_server_conf() -> None:
-    """Write a fresh hardened server.conf, or tune an existing one up."""
+def _ensure_server_conf() -> bool:
+    """Write a fresh hardened server.conf, or tune an existing one up.
+
+    Single writer for server.conf directives (fresh + tune-up): PKI/TLS
+    hardening AND the multi-login hook directives. Previously a second
+    patcher in multilogin.py re-scanned the same file, making restarts
+    order-dependent. Returns True when the file changed.
+    """
     if not os.path.exists(SERVER_CONF):
         os.makedirs(os.path.dirname(SERVER_CONF), exist_ok=True)
         with open(SERVER_CONF, "w", encoding="utf-8") as f:
             f.write(_fresh_server_conf())
         logger.info("Created hardened server.conf")
-        return
+        return True
 
     # Existing config → idempotent, non-destructive hardening pass.
     try:
         with open(SERVER_CONF, encoding="utf-8") as f:
             content = f.read()
         lines = content.splitlines()
+        # Multi-login hooks (single writer — replaces multilogin._patch_server_conf):
+        # repoint stale script paths in place, then ensure the hook directives
+        # and duplicate-cn exist. The connect script enforces max_logins.
+        connect_dst = os.path.join(SCRIPTS_DIR, "ovnode-client-connect.sh")
+        disconnect_dst = os.path.join(SCRIPTS_DIR, "ovnode-client-disconnect.sh")
+        hook_targets = {"client-connect": connect_dst, "client-disconnect": disconnect_dst}
+        repointed_hooks = False
+        for i, ln in enumerate(lines):
+            parts = ln.strip().split()
+            if (
+                len(parts) == 2
+                and parts[0] in hook_targets
+                and "ovnode-client-" in parts[1]
+                and parts[1] != hook_targets[parts[0]]
+            ):
+                lines[i] = f"{parts[0]} {hook_targets[parts[0]]}"
+                repointed_hooks = True
         existing = {ln.strip() for ln in lines}
         to_add = [d for d in _hardening_directives() if d not in existing]
+        for d in (
+            f"client-connect {connect_dst}",
+            f"client-disconnect {disconnect_dst}",
+            "duplicate-cn",
+        ):
+            if d not in existing:
+                to_add.append(d)
         # crl-verify must always be present (revocation enforcement).
         crl = f"crl-verify {CRL_FILE}"
         if crl not in existing:
@@ -557,7 +611,12 @@ def _ensure_server_conf() -> None:
             else:
                 out_lines.append(ln)
         changed = (
-            replaced_dh or replaced_status or removed_mgmt_client or upgraded_mgmt or bool(to_add)
+            replaced_dh
+            or replaced_status
+            or removed_mgmt_client
+            or upgraded_mgmt
+            or repointed_hooks
+            or bool(to_add)
         )
         if to_add:
             if out_lines and out_lines[-1].strip() != "":
@@ -568,8 +627,10 @@ def _ensure_server_conf() -> None:
             with open(SERVER_CONF, "w", encoding="utf-8") as f:
                 f.write("\n".join(out_lines) + "\n")
             logger.info("Hardened existing server.conf (added: %s)", to_add)
+        return changed
     except OSError as e:
         logger.error("Could not harden server.conf: %s", e)
+        return False
 
 
 # ── client template ──────────────────────────────────────────────────
