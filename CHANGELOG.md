@@ -1,6 +1,6 @@
 # Changelog
 
-## 2.0.0 (unreleased) — freeze + harden
+## 2.0.0 — 2026-09-05
 
 Pairs with OVManager panel `2.x`.
 
@@ -11,6 +11,7 @@ Pairs with OVManager panel `2.x`.
   (SIGHUP cannot rebind port/proto); NAT re-applied on restart.
 - New: `GET /sync/config` reports live port/proto/tunnel (drift detect).
 - Perf: API-TLS cert expiry cached 5 min (was an `openssl` fork per poll).
+- Lint gate clean (`ruff format --check`).
 - Headers: SPDX-MIT across the tree.
 
 ## 1.6.0
