@@ -655,6 +655,34 @@ open_firewall_ports() {
     fi
 }
 
+# Mirror of open_firewall_ports for uninstall: remove exactly what an
+# install would have opened, using the INSTALLED .env values (flags may
+# differ from install time). Best-effort — never fail the uninstall.
+close_firewall_ports() {
+    local env_get; env_get() { grep -E "^$1=" "$APP_DIR/.env" 2>/dev/null | head -1 | cut -d= -f2- | tr -d '"'; }
+    local svc vpn extras p vpn_all
+    svc="$(env_get SERVICE_PORT)"; : "${svc:=$DEFAULT_PORT}"
+    vpn="$(env_get OPENVPN_PORT)"; : "${vpn:=$DEFAULT_VPN}"
+    extras="$(env_get OVNODE_EXTRA_PORTS)"
+    vpn_all="$vpn ${extras//,/ }"
+    if command -v ufw >/dev/null 2>&1 && ufw status 2>/dev/null | grep -q "Status: active"; then
+        ufw delete allow "$svc/tcp" >/dev/null 2>&1 || true
+        for p in $vpn_all; do
+            ufw delete allow "$p/udp" >/dev/null 2>&1 || true
+            ufw delete allow "$p/tcp" >/dev/null 2>&1 || true
+        done
+        step "UFW: removed $svc/tcp + VPN port(s) ${vpn_all// /, }"
+    elif command -v firewall-cmd >/dev/null 2>&1 && firewall-cmd --state >/dev/null 2>&1; then
+        firewall-cmd --permanent --remove-port="$svc/tcp" >/dev/null 2>&1 || true
+        for p in $vpn_all; do
+            firewall-cmd --permanent --remove-port="$p/udp" >/dev/null 2>&1 || true
+            firewall-cmd --permanent --remove-port="$p/tcp" >/dev/null 2>&1 || true
+        done
+        firewall-cmd --reload >/dev/null 2>&1 || true
+        step "firewalld: removed $svc/tcp + VPN port(s) ${vpn_all// /, }"
+    fi
+}
+
 # ── Systemd unit ───────────────────────────────────────────────────────
 write_systemd_unit() {
     # ExecStart runs the venv interpreter directly: no uv resolution at
@@ -1021,6 +1049,7 @@ do_uninstall() {
     fi
 
     rm -f "$NAT_SCRIPT" "$NAT_CONF" "$SYSCTL_CONF" "$LOGROTATE_CONF"
+    close_firewall_ports
     rm -rf "$APP_DIR"
     local purged=false
     if [[ "$PURGE" -eq 1 ]]; then
