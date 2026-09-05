@@ -632,6 +632,22 @@ start_openvpn_service() {
     fi
 }
 
+stop_native_openvpn() {
+    # Docker mode only: OpenVPN runs inside the container on the shared host
+    # network namespace, so a native daemon holding 1194/7505 crash-loops
+    # the container's OpenVPN (seen twice: a stray, then a restarted unit).
+    # Native installs are untouched — start_openvpn_service owns that path.
+    if has_systemd; then
+        if systemctl is-active --quiet openvpn-server@server 2>/dev/null; then
+            run "Stopping conflicting native openvpn-server@server (Docker mode)" \
+                systemctl stop openvpn-server@server
+        fi
+        systemctl disable openvpn-server@server >/dev/null 2>&1 || true
+    elif command -v rc-service >/dev/null 2>&1; then
+        rc-service openvpn stop >/dev/null 2>&1 || true
+    fi
+}
+
 # ── Firewall ───────────────────────────────────────────────────────────
 # Every VPN port is opened for BOTH protocols: the panel can switch the
 # node between udp and tcp at runtime, and the extra-port redirects always
@@ -912,7 +928,13 @@ do_install() {
 
     # In Docker the OpenVPN daemon runs inside the container (supervised by
     # the entrypoint) — only manage it on the host for native installs.
-    [[ "$DOCKER" -eq 0 ]] && start_openvpn_service
+    # Docker installs additionally evict a native daemon if one holds the
+    # VPN/management ports on the shared host network namespace.
+    if [[ "$DOCKER" -eq 0 ]]; then
+        start_openvpn_service
+    else
+        stop_native_openvpn
+    fi
     setup_nat
     setup_logrotate
     open_firewall_ports
@@ -1004,6 +1026,7 @@ do_update() {
     [[ "$TLS_METHOD" != "none" ]] && scheme="https"
 
     if [[ "$DOCKER" -eq 1 ]]; then
+        stop_native_openvpn
         run "Rebuilding Docker container" docker compose -f "$(compose_file)" up -d --build
     else
         ensure_uv
