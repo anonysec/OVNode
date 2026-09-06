@@ -7,7 +7,7 @@ import time
 from collections import OrderedDict
 from threading import Lock
 
-from fastapi import Header, HTTPException, status
+from fastapi import Header, HTTPException, Request, status
 
 from core.config import settings
 from core.logger import logger
@@ -47,16 +47,17 @@ def _allowed(api_key: str) -> bool:
     return True
 
 
-async def check_api_key(key: str = Header(...)) -> str:
+async def check_api_key(key: str = Header(...), request: Request = None) -> str:
     """Check if the provided API key is valid (constant-time compare)."""
+    ip = request.client.host if request is not None and request.client else "?"
     if not _allowed(key):
-        logger.warning("Rate limit exceeded for API key")
+        logger.warning("Rate limit exceeded for API key from %s", ip)
         raise HTTPException(
             status_code=status.HTTP_429_TOO_MANY_REQUESTS,
             detail="Rate limit exceeded",
         )
     if not hmac.compare_digest(key, settings.api_key):
-        logger.warning("Invalid API key rejected")
+        logger.warning("Invalid API key rejected from %s", ip)
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
             detail="Invalid API key",
