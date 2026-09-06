@@ -39,6 +39,7 @@ class FakeMgmt:
         self._status_script = list(status_script)
         self._password = password
         self.killed = []
+        self.conns = 0
         self.port = _free_port()
         self._stop = threading.Event()
         self._srv = socket.socket()
@@ -60,6 +61,7 @@ class FakeMgmt:
             threading.Thread(target=self._handle, args=(conn,), daemon=True).start()
 
     def _handle(self, conn):
+        self.conns += 1
         try:
             conn.settimeout(5)
             conn.sendall(b">INFO:OpenVPN Management Interface\r\nENTER PASSWORD:\r\n")
@@ -69,37 +71,43 @@ class FakeMgmt:
                 if not chunk:
                     return
                 data += chunk
-            cmd = b""
-            while b"\n" not in cmd:
-                chunk = conn.recv(4096)
-                if not chunk:
+            # Real management is a session: loop commands until quit/close.
+            while True:
+                cmd = b""
+                while b"\n" not in cmd:
+                    try:
+                        chunk = conn.recv(4096)
+                    except TimeoutError:
+                        return
+                    if not chunk:
+                        return
+                    cmd += chunk
+                text = cmd.decode(errors="ignore").strip()
+                if text == "quit":
                     return
-                cmd += chunk
-            text = cmd.decode(errors="ignore").strip()
-            if text.startswith("client-kill"):
-                parts = text.split()
-                if len(parts) >= 2:
-                    self.killed.append(parts[1])
-                conn.sendall(b"SUCCESS: client-kill command succeeded\r\nEND\r\n")
-            elif text.startswith("status"):
-                if self._status_script:
-                    rows = self._status_script.pop(0)
+                if text.startswith("client-kill"):
+                    parts = text.split()
+                    if len(parts) >= 2:
+                        self.killed.append(parts[1])
+                    conn.sendall(b"SUCCESS: client-kill command succeeded\r\n")
+                elif text.startswith("status"):
+                    if self._status_script:
+                        rows = self._status_script.pop(0)
+                    else:
+                        rows = []
+                    body = "".join(
+                        f"CLIENT_LIST,{r[0]},{r[1]},{r[2]},0,0,now,0,{r[3]}\r\n" for r in rows
+                    )
+                    conn.sendall(("HEADER,CLIENT_LIST,Common Name\r\n" + body + "END\r\n").encode())
                 else:
-                    rows = []
-                body = "".join(
-                    f"CLIENT_LIST,{r[0]},{r[1]},{r[2]},0,0,now,0,{r[3]}\r\n" for r in rows
-                )
-                conn.sendall(("HEADER,CLIENT_LIST,Common Name\r\n" + body + "END\r\n").encode())
-            else:
-                conn.sendall(b"SUCCESS: ok\r\nEND\r\n")
-            try:
-                conn.recv(1024)  # quit
-            except OSError:
-                pass
+                    conn.sendall(b"SUCCESS: ok\r\nEND\r\n")
         except OSError:
             pass
         finally:
-            conn.close()
+            try:
+                conn.close()
+            except OSError:
+                pass
 
     def close(self):
         self._stop.set()
@@ -142,10 +150,12 @@ def test_corpse_reconnect_allowed_after_kill():
             f"ifconfig_pool_remote_ip=10.8.0.1\ncreated={now - 60}\n"
         )
         # mgmt: kill OK; first status shows corpse, then clean.
-        mgmt = FakeMgmt(status_script=[
-            [("u1", "5.5.5.5:4000", "10.8.0.1", "u1")],
-            [],
-        ])
+        mgmt = FakeMgmt(
+            status_script=[
+                [("u1", "5.5.5.5:4000", "10.8.0.1", "u1")],
+                [],
+            ]
+        )
         try:
             env = {
                 **os.environ,
@@ -314,8 +324,10 @@ def test_mgmt_down_still_rejects_limit2():
         status = os.path.join(server, "status.log")
         open(status, "w").write(
             "HEADER\tX\n"
-            + _status_row("u1", "5.5.5.5:4000", "10.8.0.1", 7) + "\n"
-            + _status_row("u1", "6.6.6.6:4001", "10.8.0.3", 9) + "\n"
+            + _status_row("u1", "5.5.5.5:4000", "10.8.0.1", 7)
+            + "\n"
+            + _status_row("u1", "6.6.6.6:4001", "10.8.0.3", 9)
+            + "\n"
         )
         os.makedirs(os.path.join(users, "u1"))
         open(os.path.join(users, "u1", "limit"), "w").write("2")
@@ -359,10 +371,12 @@ def test_pool_reuse_takeover_kills_same_pool_corpse():
             "common_name=u1\ntrusted_ip=5.5.5.5\ntrusted_port=4000\n"
             f"ifconfig_pool_remote_ip=10.8.0.2\ncreated={now - 60}\n"
         )
-        mgmt = FakeMgmt(status_script=[
-            [("u1", "5.5.5.5:4000", "10.8.0.2", "u1")],
-            [],
-        ])
+        mgmt = FakeMgmt(
+            status_script=[
+                [("u1", "5.5.5.5:4000", "10.8.0.2", "u1")],
+                [],
+            ]
+        )
         try:
             env = {
                 **os.environ,
@@ -403,7 +417,7 @@ def test_rapid_flap_all_reconnects_allowed():
         # Each round: mgmt sees the previous corpse once, then clean.
         script = []
         for i in range(3):
-            script.append([( "u1", f"5.5.5.{i}:4000", f"10.8.0.{i + 1}", "u1")])
+            script.append([("u1", f"5.5.5.{i}:4000", f"10.8.0.{i + 1}", "u1")])
             script.append([])
         mgmt = FakeMgmt(status_script=script)
         try:
@@ -434,11 +448,118 @@ def test_rapid_flap_all_reconnects_allowed():
                     ["bash", HOOK], capture_output=True, text=True, timeout=60, env=env
                 )
                 assert r.returncode == 0, f"flap round {i} rejected: {r.stderr}"
-            leftovers = sorted(n for n in os.listdir(sessions) if n != ".lock")
+            leftovers = sorted(n for n in os.listdir(sessions) if not n.startswith(".lock"))
             assert leftovers == ["u1.10.8.0.3"], f"marker churn: {leftovers}"
             assert sorted(mgmt.killed) == ["7", "8", "9"], mgmt.killed
         finally:
             mgmt.close()
+
+
+def test_parallel_full_reject_all_and_touch_nothing():
+    """Chaos 1: 8 parallel connects against 3 live rows (limit=3).
+    Nothing mutates mid-run, so every hook must deterministically REJECT
+    without touching mgmt or markers — per-CN locking must not deadlock."""
+    import tempfile
+
+    with tempfile.TemporaryDirectory() as tmp:
+        users = os.path.join(tmp, "users")
+        sessions = os.path.join(tmp, "sessions")
+        server = os.path.join(tmp, "server")
+        for d in (users, sessions, server):
+            os.makedirs(d)
+        open(os.path.join(server, "mgmt-pass"), "w").write("testpw\n")
+        status = os.path.join(server, "status.log")
+        with open(status, "w") as f:
+            f.write("HEADER\tX\n")
+            for i, pool in enumerate(("10.8.0.1", "10.8.0.2", "10.8.0.3")):
+                f.write(_status_row("u1", f"5.5.5.{i}:4000", pool, 7 + i) + "\n")
+        os.makedirs(os.path.join(users, "u1"))
+        open(os.path.join(users, "u1", "limit"), "w").write("3")
+        mgmt = FakeMgmt(status_script=[])
+        try:
+            base_env = {
+                **os.environ,
+                "OVNODE_USERS_DIR": users,
+                "OVNODE_SESSIONS_DIR": sessions,
+                "OVNODE_STATUS_FILE": status,
+                "OVNODE_MANAGEMENT_HOST": "127.0.0.1",
+                "OVNODE_MANAGEMENT_PORT": str(mgmt.port),
+                "OVNODE_MGMT_PASS_FILE": os.path.join(server, "mgmt-pass"),
+                "common_name": "u1",
+            }
+            procs = []
+            for i in range(8):
+                env = {
+                    **base_env,
+                    "trusted_ip": f"9.9.9.{i}",
+                    "trusted_port": str(5001 + i),
+                    "ifconfig_pool_remote_ip": f"10.8.1.{i}",
+                }
+                procs.append(
+                    subprocess.Popen(
+                        ["bash", HOOK],
+                        stdout=subprocess.PIPE,
+                        stderr=subprocess.PIPE,
+                        text=True,
+                        env=env,
+                    )
+                )
+            rcs = [p.wait(timeout=60) for p in procs]
+            assert rcs == [1] * 8, f"all must reject: {rcs}"
+            leftovers = [n for n in os.listdir(sessions) if not n.startswith(".lock")]
+            assert leftovers == [], f"markers written on reject: {leftovers}"
+            assert mgmt.conns == 0, "limit>1 reject must not touch mgmt"
+        finally:
+            mgmt.close()
+
+
+def test_parallel_degrade_converges_to_one_marker():
+    """Chaos 2: 8 parallel limit=1 connects, empty status, mgmt down.
+    Every hook degrades (ALLOW + replace markers) — final state must be
+    exactly one marker regardless of interleaving."""
+    import tempfile
+
+    with tempfile.TemporaryDirectory() as tmp:
+        users = os.path.join(tmp, "users")
+        sessions = os.path.join(tmp, "sessions")
+        server = os.path.join(tmp, "server")
+        for d in (users, sessions, server):
+            os.makedirs(d)
+        status = os.path.join(server, "status.log")
+        open(status, "w").write("HEADER\tX\n")
+        os.makedirs(os.path.join(users, "u1"))
+        open(os.path.join(users, "u1", "limit"), "w").write("1")
+        closed = _free_port()
+        base_env = {
+            **os.environ,
+            "OVNODE_USERS_DIR": users,
+            "OVNODE_SESSIONS_DIR": sessions,
+            "OVNODE_STATUS_FILE": status,
+            "OVNODE_MANAGEMENT_HOST": "127.0.0.1",
+            "OVNODE_MANAGEMENT_PORT": str(closed),
+            "common_name": "u1",
+        }
+        procs = []
+        for i in range(8):
+            env = {
+                **base_env,
+                "trusted_ip": f"9.9.9.{i}",
+                "trusted_port": str(5001 + i),
+                "ifconfig_pool_remote_ip": f"10.8.1.{i}",
+            }
+            procs.append(
+                subprocess.Popen(
+                    ["bash", HOOK],
+                    stdout=subprocess.PIPE,
+                    stderr=subprocess.PIPE,
+                    text=True,
+                    env=env,
+                )
+            )
+        rcs = [p.wait(timeout=60) for p in procs]
+        assert rcs == [0] * 8, f"all must degrade-allow: {rcs}"
+        leftovers = sorted(n for n in os.listdir(sessions) if not n.startswith(".lock"))
+        assert len(leftovers) == 1, f"must converge to one marker: {leftovers}"
 
 
 def test_disconnect_only_stale_keeps_live():
@@ -450,19 +571,28 @@ def test_disconnect_only_stale_keeps_live():
         sess_mod.SESSIONS_DIR = tmp
         now = int(time.time())
         with open(os.path.join(tmp, "u1.10.8.0.1"), "w") as f:
-            f.write("common_name=u1\ntrusted_ip=5.5.5.5\ntrusted_port=4000\n"
-                    f"ifconfig_pool_remote_ip=10.8.0.1\ncreated={now - 600}\n")
+            f.write(
+                "common_name=u1\ntrusted_ip=5.5.5.5\ntrusted_port=4000\n"
+                f"ifconfig_pool_remote_ip=10.8.0.1\ncreated={now - 600}\n"
+            )
         with open(os.path.join(tmp, "u1.10.8.0.2"), "w") as f:
-            f.write("common_name=u1\ntrusted_ip=9.9.9.9\ntrusted_port=5001\n"
-                    f"ifconfig_pool_remote_ip=10.8.0.2\ncreated={now - 5}\n")
+            f.write(
+                "common_name=u1\ntrusted_ip=9.9.9.9\ntrusted_port=5001\n"
+                f"ifconfig_pool_remote_ip=10.8.0.2\ncreated={now - 5}\n"
+            )
         status_path = os.path.join(tmp, "status.log")
         with open(status_path, "w") as f:
             f.write("HEADER\tX\n" + _status_row("u1", "9.9.9.9:5001", "10.8.0.2", 9) + "\n")
         # parse_sessions reads the canonical path; monkeypatch it.
         orig_parse = sess_mod._read_status_sessions
         sess_mod._read_status_sessions = lambda: [
-            {"common_name": "u1", "virtual_address": "10.8.0.2",
-             "trusted_ip": "9.9.9.9", "trusted_port": "5001", "client_id": "9"}
+            {
+                "common_name": "u1",
+                "virtual_address": "10.8.0.2",
+                "trusted_ip": "9.9.9.9",
+                "trusted_port": "5001",
+                "client_id": "9",
+            }
         ]
         orig_diag = sess_mod.user_diagnostics
         sess_mod.user_diagnostics = lambda **kw: {}

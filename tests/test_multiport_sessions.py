@@ -208,7 +208,11 @@ def test_connect_script_uses_pool_ip_session_key():
         content = f.read()
     assert 'session_key="${safe_cn}.${pool_ip_s}"' in content
     # takeover kills must target the management client id, not "kill ip:port"
-    assert "client-kill $cid" in content
+    assert "client-kill" in content
+    # one management session per takeover (auth once, pipelined kills),
+    # not a python fork per command
+    assert "mgmt_takeover" in content
+    assert "mgmt_send" not in content and "mgmt_query" not in content
 
 
 # ── CRL auto-renewal ─────────────────────────────────────────────────
