@@ -107,9 +107,7 @@ def _read_active_files() -> list[dict[str, Any]]:
 
 def _live_index(live_sessions: list[dict[str, Any]]) -> tuple[set, set]:
     """O(1) lookup sets for marker matching: {(cn, pool)} + {(cn, ip, port)}."""
-    pool = {
-        (s.get("common_name"), s.get("virtual_address") or "") for s in live_sessions
-    }
+    pool = {(s.get("common_name"), s.get("virtual_address") or "") for s in live_sessions}
     real = {
         (s.get("common_name"), s.get("trusted_ip") or "", s.get("trusted_port") or "")
         for s in live_sessions
@@ -359,12 +357,14 @@ def _management_send_many(commands: list[str]) -> list[dict[str, Any]]:
                 try:
                     s.sendall(f"{command}\n".encode())
                     response = _read_mgmt_reply(s, time.monotonic() + 3.0).strip()
-                    out.append({
-                        "available": True,
-                        "ok": "SUCCESS" in response.upper(),
-                        "banner": banner.strip(),
-                        "response": response,
-                    })
+                    out.append(
+                        {
+                            "available": True,
+                            "ok": "SUCCESS" in response.upper(),
+                            "banner": banner.strip(),
+                            "response": response,
+                        }
+                    )
                 except Exception as e:
                     out.append({"available": True, "ok": False, "error": str(e)})
             try:
