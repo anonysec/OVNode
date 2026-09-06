@@ -12,8 +12,11 @@ set -euo pipefail
 
 ACTIVE_DIR="${OVNODE_SESSIONS_DIR:-/etc/openvpn/ovnode/sessions}"
 USAGE_DIR="${OVNODE_USAGE_DIR:-/etc/openvpn/ovnode/usage}"
-LOCK_FILE="${ACTIVE_DIR}/.lock"
-USAGE_LOCK="${USAGE_DIR}/.lock"
+# Per-CN locks (assigned after safe_cn exists): the connect hook uses the
+# same names, so same-user connect/disconnect still serialize — while
+# different users never block each other. LOCK_FILE must match connect.sh.
+LOCK_FILE=""
+USAGE_LOCK=""
 LOG_TAG="ovnode-mlogin"
 
 cn="${common_name:-${1:-}}"
@@ -38,6 +41,9 @@ else
     session_key="${safe_cn}.noip.${trusted_ip_s}.${trusted_port_s}"
 fi
 session_file="${ACTIVE_DIR}/${session_key}"
+
+LOCK_FILE="${ACTIVE_DIR}/.lock.${safe_cn}"
+USAGE_LOCK="${USAGE_DIR}/.lock.${safe_cn}"
 
 mkdir -p "$ACTIVE_DIR"
 
