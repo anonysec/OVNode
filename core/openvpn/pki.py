@@ -182,9 +182,9 @@ def _vpn_dns() -> tuple[str, str]:
 
 def _max_clients() -> int:
     try:
-        return max(1, int(_env("max_clients", "100")))
+        return max(1, int(_env("max_clients", "250")))
     except ValueError:
-        return 100
+        return 250
 
 
 def _ipv6_enabled() -> bool:
@@ -451,22 +451,39 @@ def _hardening_directives() -> list[str]:
     ]
 
 
+def _fresh_proto() -> str:
+    """Fresh-install transport: udp when requested, else tcp.
+
+    Only consulted when generating a NEW server.conf / client template —
+    existing files are never rewritten (change_config() owns later flips).
+    """
+    try:
+        choice = str(_env("proto", "tcp")).strip().lower()
+    except Exception:
+        choice = "tcp"
+    return "udp" if choice.startswith("udp") else "tcp"
+
+
 def _fresh_server_conf() -> str:
     """Modern hardened server.conf template for new installs."""
     ensure_mgmt_password()
     port = _openvpn_port()
+    proto = _fresh_proto()
     dns1, dns2 = _vpn_dns()
     user, group = _runtime_user(), _runtime_group()
     lines = [
         f"port {port}",
-        "proto tcp",
+        f"proto {proto}",
         "dev tun",
         "topology subnet",
         f"server {_vpn_network()} {_vpn_netmask()}",
-        f"ifconfig-pool-persist {os.path.join(_OPENVPN_ROOT, 'server', 'ipp.txt')}",
+        # Flush the persisted pool every 10 min: ipp.txt otherwise grows
+        # forever (every CN ever seen), slowing pool allocation on restart.
+        f"ifconfig-pool-persist {os.path.join(_OPENVPN_ROOT, 'server', 'ipp.txt')} 600",
         'push "redirect-gateway def1 bypass-dhcp"',
         f'push "dhcp-option DNS {dns1}"',
         f'push "dhcp-option DNS {dns2}"',
+        'push "block-outside-dns"',
     ]
     if _ipv6_enabled():
         lines += [
@@ -485,13 +502,22 @@ def _fresh_server_conf() -> str:
         # ECDHE negotiates the key exchange; no static DH file needed.
         "dh none",
         f"tls-crypt {TLS_KEY}",
-        "tls-version-min 1.2",
+        # Fresh installs require TLS 1.3 (2.6+). Existing installs keep
+        # their value — the tune-up pass never rewrites tls-version lines.
+        "tls-version-min 1.3",
         "remote-cert-tls client",
         "data-ciphers AES-256-GCM:AES-128-GCM:CHACHA20-POLY1305",
         "data-ciphers-fallback AES-256-GCM",
         "auth SHA256",
-        "cipher AES-256-GCM",
-        "ncp-ciphers AES-256-GCM:AES-128-GCM",
+        # No `cipher` / `ncp-ciphers`: deprecated since 2.5/2.6, only
+        # data-ciphers negotiates.
+        # PPPoE/LTE-safe MTU + roomy socket buffers for single-flow speed.
+        "mssfix 1360",
+        "tun-mtu 1500",
+        "sndbuf 393216",
+        "rcvbuf 393216",
+        # Compression stays off explicitly (post-VORACLE default).
+        "allow-compression no",
         f"user {user}",
         f"group {group}",
         "persist-key",
@@ -508,11 +534,14 @@ def _fresh_server_conf() -> str:
         f"log-append {os.path.join(_OPENVPN_ROOT, 'server', 'openvpn.log')}",
         "verb 3",
         "mute 20",
-        "explicit-exit-notify 0",
+        f"explicit-exit-notify {1 if proto == 'udp' else 0}",
         "duplicate-cn",
         f"max-clients {_max_clients()}",
         f"cd {os.path.join(_OPENVPN_ROOT, 'server')}",
     ]
+    if proto == "udp":
+        # fast-io is UDP-only (the daemon warns on TCP); fresh installs only.
+        lines.append("fast-io")
     return "\n".join(lines) + "\n"
 
 
@@ -644,21 +673,21 @@ def _ensure_client_template() -> None:
     if os.path.exists(CLIENT_TEMPLATE):
         return
     port = _openvpn_port()
+    proto = _fresh_proto()
     tunnel_addr = os.getenv("TUNNEL_ADDRESS", "UPDATE_VIA_PANEL")
     content = f"""client
 dev tun
-proto tcp
+proto {proto}
 {_remote_lines(tunnel_addr, port)}
 resolv-retry infinite
 nobind
 persist-key
 persist-tun
 remote-cert-tls server
-tls-version-min 1.2
+tls-version-min 1.3
 auth SHA256
 data-ciphers AES-256-GCM:AES-128-GCM:CHACHA20-POLY1305
 data-ciphers-fallback AES-256-GCM
-cipher AES-256-GCM
 verb 3
 """
     with open(CLIENT_TEMPLATE, "w", encoding="utf-8") as f:

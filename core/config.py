@@ -45,6 +45,9 @@ class Settings(BaseSettings):
     data_dir: str = ""
     openvpn_port: int = Field(default=1194, ge=1, le=65535)
     tls_method: str = "none"
+    # Default VPN transport for FRESH installs (installer --proto / prompt).
+    # Existing server.conf files are never rewritten by this value.
+    ovnode_proto: str = "tcp"
     # OpenVPN server tuning (OVNODE_* env vars; see .env.example)
     ovnode_runtime_user: str = "nobody"
     ovnode_runtime_group: str = "nogroup"
@@ -53,7 +56,9 @@ class Settings(BaseSettings):
     ovnode_vpn_netmask: str = "255.255.255.0"
     ovnode_vpn_dns1: str = "1.1.1.1"
     ovnode_vpn_dns2: str = "8.8.8.8"
-    ovnode_max_clients: int = 100
+    # /24 pool fits ~250 concurrent clients; FD/RAM headroom is ample
+    # (LimitNOFILE 65536). Existing installs keep their stored value.
+    ovnode_max_clients: int = 250
     ovnode_enable_ipv6: bool = False
     ovnode_ipv6_prefix: str = "fd42:42:42:42::/64"
     # Extra VPN ports (comma-separated, e.g. "443,8443"). The node stays a

@@ -63,6 +63,7 @@ def test_usage_errors_exit_2_with_json():
             "0123456789abcdef",
         ],
         ["install", "--json", "--tls", "bogus", "--api-key", "0123456789abcdef"],
+        ["install", "--json", "--proto", "bogus", "--api-key", "0123456789abcdef"],
         ["--nonsense-flag"],
     ]
     for args in cases:

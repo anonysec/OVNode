@@ -52,10 +52,17 @@ USAGE_DIR = os.path.join(OVNODE_DIR, "usage")
 LOCK_FILE = os.path.join(SESSIONS_DIR, ".lock")
 
 # cn → username map cache for the usage/sessions hot path (the panel polls
-# every few seconds). Invalidated by every in-process write; the short TTL
-# covers out-of-band edits.
-_NAME_CACHE_TTL = 5.0
+# every few seconds). Invalidated by every in-process write; the TTL covers
+# out-of-band edits. 30s is safe: renames are rare and always invalidate.
+_NAME_CACHE_TTL = 30.0
 _name_cache: tuple[float, dict[str, str]] | None = None
+
+# Completed-session bytes cache: the usage hot path (listdir + N file
+# opens per poll) with none. Disconnect-hook banking writes files directly
+# and panel polls are 30-60s apart, so an 8s lag is invisible; explicit
+# reset_usage() invalidates so a manual reset shows immediately.
+_USAGE_CACHE_TTL = 8.0
+_usage_cache: tuple[float, dict[str, int]] | None = None
 
 
 # ── paths ────────────────────────────────────────────────────────────
@@ -207,6 +214,10 @@ def accumulated_usage(cn: str) -> int:
 
 def all_accumulated_usage() -> dict[str, int]:
     """cn → completed-session bytes for every user with recorded usage."""
+    global _usage_cache
+    now = time.monotonic()
+    if _usage_cache and now - _usage_cache[0] < _USAGE_CACHE_TTL:
+        return _usage_cache[1]
     usage: dict[str, int] = {}
     try:
         entries = os.listdir(USAGE_DIR)
@@ -217,10 +228,13 @@ def all_accumulated_usage() -> dict[str, int]:
             value = accumulated_usage(entry)
             if value:
                 usage[entry] = value
+    _usage_cache = (now, usage)
     return usage
 
 
 def reset_usage(cn: str) -> None:
+    global _usage_cache
+    _usage_cache = None
     try:
         os.remove(os.path.join(USAGE_DIR, _safe_cn(cn)))
     except FileNotFoundError:
