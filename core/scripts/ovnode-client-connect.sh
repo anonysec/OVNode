@@ -208,7 +208,7 @@ safe_cn="$(sanitize "$cn")"
 # The tree is created by the agent at startup; its absence indicates a
 # filesystem or permissions problem that must be fixed.
 if [[ ! -d "$USERS_DIR" ]]; then
-    log "CN=$cn USERS_DIR missing or not a directory — fail-closed; REJECT"
+    log "CN=$cn ip=${trusted_ip:-?}:${trusted_port:-?}; USERS_DIR missing or not a directory — fail-closed; REJECT"
     exit 1
 fi
 mkdir -p "$ACTIVE_DIR"
@@ -217,7 +217,7 @@ chmod 755 "$ACTIVE_DIR" 2>/dev/null || true
 # The disabled marker blocks an already-issued certificate from reconnecting
 # after Manager disables the user.
 if [[ -f "${USERS_DIR}/${safe_cn}/disabled" ]]; then
-    log "CN=$cn is disabled; REJECT"
+    log "CN=$cn ip=${trusted_ip:-?}:${trusted_port:-?} is disabled; REJECT"
     exit 1
 fi
 
@@ -361,7 +361,7 @@ if (( cur >= limit )); then
             [[ $m_ip =~ ^[0-9a-fA-F.:]+$ && $m_port =~ ^[0-9]+$ ]] || continue
             takeover_cmds+=("kill $m_ip:$m_port")
         done
-            log "CN=$cn limit=1 active=$active_files status=$status_count; TAKEOVER (${#takeover_cmds[@]} mgmt cmds, one session)"
+            log "CN=$cn ip=${trusted_ip:-?}:${trusted_port:-?} pool=${pool_ip:-none} limit=1 active=$active_files status=$status_count; TAKEOVER (${#takeover_cmds[@]} mgmt cmds, one session)"
             # NOTE: the || guards set -e — a bare failing $() would kill
             # the hook with python's code before rc=$? executes.
             rc=0
@@ -370,7 +370,7 @@ if (( cur >= limit )); then
         if (( rc == 0 )); then
             rm -f "${ACTIVE_DIR}/${safe_cn}."* 2>/dev/null || true
         elif (( rc == 1 )); then
-            log "CN=$cn takeover could not verify old session termination; REJECT"
+            log "CN=$cn ip=${trusted_ip:-?}:${trusted_port:-?} pool=${pool_ip:-none} takeover could not verify old session termination; REJECT"
             exit 1
         else
             # Degraded takeover: the corpse cannot be killed right now, but
@@ -378,11 +378,11 @@ if (( cur >= limit )); then
             # double session — ping-restart reaps the dead one, and the
             # marker swap below keeps max-login accounting exact.
             # Strict cases (limit>1, disabled, unknown) still fail closed.
-            log "CN=$cn limit=1 active=$active_files status=$status_count; management unavailable; DEGRADE (markers replaced, corpse reaped by ping-restart)"
+            log "CN=$cn ip=${trusted_ip:-?}:${trusted_port:-?} pool=${pool_ip:-none} limit=1 active=$active_files status=$status_count; management unavailable; DEGRADE (markers replaced, corpse reaped by ping-restart)"
             rm -f "${ACTIVE_DIR}/${safe_cn}."* 2>/dev/null || true
         fi
     else
-        log "CN=$cn limit=$limit active=$active_files status=$status_count; REJECT"
+        log "CN=$cn ip=${trusted_ip:-?}:${trusted_port:-?} pool=${pool_ip:-none} limit=$limit active=$active_files status=$status_count; REJECT"
         exit 1
     fi
 fi
@@ -396,5 +396,5 @@ created=$time_s
 EOF
 chmod 600 "$session_file" 2>/dev/null || true
 
-log "CN=$cn limit=$limit active=$active_files status=$status_count; ALLOW session=$session_key"
+log "CN=$cn ip=${trusted_ip:-?}:${trusted_port:-?} pool=${pool_ip:-none} limit=$limit active=$active_files status=$status_count; ALLOW session=$session_key"
 exit 0
