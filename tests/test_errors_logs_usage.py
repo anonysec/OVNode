@@ -169,6 +169,39 @@ def test_disconnect_hook_banks_usage():
     )
     with open(script) as f:
         content = f.read()
-    assert 'USAGE_DIR="/etc/openvpn/ovnode/usage"' in content
+    assert 'USAGE_DIR="${OVNODE_USAGE_DIR:-/etc/openvpn/ovnode/usage}"' in content
     assert "bytes_received" in content and "bytes_sent" in content
     assert "old + session_total" in content
+
+
+def test_disconnect_hook_execution_banks_and_cleans(tmp_path):
+    """Execute the real disconnect hook twice: bytes accumulate across
+    sessions (separate usage lock, atomic write) and the marker is gone."""
+    import subprocess
+
+    script = os.path.join(
+        os.path.dirname(__file__), "..", "core", "scripts", "ovnode-client-disconnect.sh"
+    )
+    sessions = tmp_path / "sessions"
+    usage = tmp_path / "usage"
+    sessions.mkdir()
+    usage.mkdir()
+    (sessions / "u9.10.8.0.5").write_text(
+        "common_name=u9\ntrusted_ip=1.2.3.4\ntrusted_port=1111\n"
+        "ifconfig_pool_remote_ip=10.8.0.5\ncreated=1700000000\n"
+    )
+    base_env = {
+        **os.environ,
+        "OVNODE_SESSIONS_DIR": str(sessions),
+        "OVNODE_USAGE_DIR": str(usage),
+        "common_name": "u9",
+        "trusted_ip": "1.2.3.4",
+        "trusted_port": "1111",
+        "ifconfig_pool_remote_ip": "10.8.0.5",
+    }
+    for rx, tx in (("100", "50"), ("7", "3")):
+        env = {**base_env, "bytes_received": rx, "bytes_sent": tx}
+        r = subprocess.run(["bash", script], capture_output=True, text=True, timeout=30, env=env)
+        assert r.returncode == 0, r.stderr
+    assert (usage / "u9").read_text().strip() == "160"
+    assert not (sessions / "u9.10.8.0.5").exists()

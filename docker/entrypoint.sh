@@ -27,6 +27,16 @@ VPN_SUBNET="${OVNODE_VPN_SUBNET:-10.8.0.0/24}"
 
 log() { echo "[entrypoint] $*" >&2; }
 
+# Content hash of server.conf for the supervisor watch. sha256 when
+# available, mtime fallback (busybox images without coreutils sha256).
+conf_hash_of() {
+    if command -v sha256sum >/dev/null 2>&1; then
+        sha256sum "$1" 2>/dev/null | awk '{print $1}'
+    else
+        stat -c %Y "$1" 2>/dev/null || echo ""
+    fi
+}
+
 # ── network prerequisites (all best-effort: fail loud, not fatal) ─────
 
 setup_tun() {
@@ -77,7 +87,7 @@ setup_nat() {
         fi
     fi
 
-    local main_port="${OPENVPN_PORT:-1194}" proto p
+    local main_port="${OPENVPN_PORT:-1194}" proto p pr
     proto="$(awk '$1 == "proto" {print $2; exit}' "$SERVER_CONF" 2>/dev/null || true)"
     proto="${proto%%-*}"; proto="${proto:-udp}"
     IFS=',' read -ra extra <<< "${OVNODE_EXTRA_PORTS:-}"
@@ -85,11 +95,27 @@ setup_nat() {
         p="$(echo "$p" | tr -d '[:space:]')"
         [[ "$p" =~ ^[0-9]+$ ]] || continue
         [[ "$p" == "$main_port" ]] && continue
-        if ! iptables -t nat -C PREROUTING -p "$proto" --dport "$p" -j REDIRECT --to-ports "$main_port" 2>/dev/null; then
-            iptables -t nat -A PREROUTING -p "$proto" --dport "$p" -j REDIRECT --to-ports "$main_port" 2>/dev/null \
-                && log "NAT: extra port ${p}/${proto} → ${main_port}" \
-                || log "WARNING: could not redirect extra port ${p}"
-        fi
+        # Both protocols, like the native installer: a tcp→udp flip must
+        # not leave the other family's redirect missing.
+        for pr in tcp udp; do
+            if ! iptables -t nat -C PREROUTING -p "$pr" --dport "$p" -j REDIRECT --to-ports "$main_port" 2>/dev/null; then
+                iptables -t nat -A PREROUTING -p "$pr" --dport "$p" -j REDIRECT --to-ports "$main_port" 2>/dev/null \
+                    && log "NAT: extra port ${p}/${pr} → ${main_port}" \
+                    || log "WARNING: could not redirect extra port ${p}/${pr}"
+            fi
+        done
+    done
+    # Prune a redirect for the non-current proto left by an older single-proto
+    # install (proto flip tcp→udp or back). Best-effort: never fatal.
+    for pr in tcp udp; do
+        [[ "$pr" == "$proto" ]] && continue
+        for p in "${extra[@]}"; do
+            p="$(echo "$p" | tr -d '[:space:]')"
+            [[ "$p" =~ ^[0-9]+$ ]] || continue
+            [[ "$p" == "$main_port" ]] && continue
+            iptables -t nat -D PREROUTING -p "$pr" --dport "$p" -j REDIRECT --to-ports "$main_port" 2>/dev/null \
+                && log "NAT: pruned stale extra port ${p}/${pr}" || true
+        done
     done
 }
 
@@ -125,13 +151,14 @@ supervise_openvpn() {
     setup_nat
 
     # Restart-with-backoff loop: a crashing OpenVPN must not take the sync
-    # API down with it. The loop also watches server.conf's mtime: the panel
-    # rewrites it atomically on POST /sync/config, and port/proto changes
-    # need a FULL restart (SIGHUP cannot rebind them), so a changed conf
-    # kills the child and the loop re-execs it fresh.
+    # API down with it. The loop also watches server.conf's CONTENT HASH (not
+    # mtime — a touch or atime-only change must not bounce tunnels): the
+    # panel rewrites it atomically on POST /sync/config, and port/proto
+    # changes need a FULL restart (SIGHUP cannot rebind them), so a changed
+    # conf kills the child and the loop re-execs it fresh.
     local backoff=2
-    local conf_mtime=""
-    conf_mtime="$(stat -c %Y "$SERVER_CONF" 2>/dev/null || echo "")"
+    local conf_hash=""
+    conf_hash="$(conf_hash_of "$SERVER_CONF")"
     while :; do
         log "starting OpenVPN (conf: ${SERVER_CONF})"
         set +e
@@ -140,11 +167,11 @@ supervise_openvpn() {
         local changed=0
         while kill -0 "$vpn_pid" 2>/dev/null; do
             sleep 2
-            local now_mtime=""
-            now_mtime="$(stat -c %Y "$SERVER_CONF" 2>/dev/null || echo "")"
-            if [[ -n "$now_mtime" && -n "$conf_mtime" && "$now_mtime" != "$conf_mtime" ]]; then
-                log "server.conf changed — restarting OpenVPN (full rebind)"
-                conf_mtime="$now_mtime"
+            local now_hash=""
+            now_hash="$(conf_hash_of "$SERVER_CONF")"
+            if [[ -n "$now_hash" && -n "$conf_hash" && "$now_hash" != "$conf_hash" ]]; then
+                log "server.conf content changed — restarting OpenVPN (full rebind)"
+                conf_hash="$now_hash"
                 kill "$vpn_pid" 2>/dev/null || true
                 wait "$vpn_pid" 2>/dev/null || true
                 setup_nat
@@ -152,7 +179,7 @@ supervise_openvpn() {
                 changed=1
                 break
             fi
-            conf_mtime="$now_mtime"
+            conf_hash="$now_hash"
         done
         if [[ "$changed" == "0" ]]; then
             wait "$vpn_pid" 2>/dev/null

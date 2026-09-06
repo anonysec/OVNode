@@ -10,9 +10,10 @@
 
 set -euo pipefail
 
-ACTIVE_DIR="/etc/openvpn/ovnode/sessions"
-USAGE_DIR="/etc/openvpn/ovnode/usage"
+ACTIVE_DIR="${OVNODE_SESSIONS_DIR:-/etc/openvpn/ovnode/sessions}"
+USAGE_DIR="${OVNODE_USAGE_DIR:-/etc/openvpn/ovnode/usage}"
 LOCK_FILE="${ACTIVE_DIR}/.lock"
+USAGE_LOCK="${USAGE_DIR}/.lock"
 LOG_TAG="ovnode-mlogin"
 
 cn="${common_name:-${1:-}}"
@@ -39,12 +40,13 @@ fi
 session_file="${ACTIVE_DIR}/${session_key}"
 
 mkdir -p "$ACTIVE_DIR"
-exec 9>"$LOCK_FILE"
-flock -x 9
 
 # ── usage accounting ─────────────────────────────────────────────
-# Accumulate this session's final byte counters (under the lock, so two
-# simultaneous disconnects of the same CN cannot lose an update).
+# Accumulate this session's final byte counters under a DEDICATED usage
+# lock (atomic tmp+rename): the global marker lock stays with marker
+# churn only, so a connect storm is never head-of-line blocked behind
+# accounting writes. Two simultaneous disconnects of the same CN still
+# cannot lose an update.
 rx="${bytes_received:-0}"
 tx="${bytes_sent:-0}"
 [[ "$rx" =~ ^[0-9]+$ ]] || rx=0
@@ -52,11 +54,19 @@ tx="${bytes_sent:-0}"
 session_total=$(( rx + tx ))
 if (( session_total > 0 )) && [[ -d "$USAGE_DIR" && -w "$USAGE_DIR" ]]; then
     usage_file="${USAGE_DIR}/${safe_cn}"
+    exec 8>"$USAGE_LOCK"
+    flock -x 8
     old="$(cat "$usage_file" 2>/dev/null || echo 0)"
     [[ "$old" =~ ^[0-9]+$ ]] || old=0
-    echo $(( old + session_total )) > "$usage_file"
+    tmp_file="${usage_file}.tmp.$$"
+    echo $(( old + session_total )) > "$tmp_file"
+    mv -f "$tmp_file" "$usage_file"
+    exec 8>&-
     log "CN=$cn session ended rx=$rx tx=$tx accumulated=$(( old + session_total ))"
 fi
+
+exec 9>"$LOCK_FILE"
+flock -x 9
 
 if [[ -f "$session_file" ]]; then
     rm -f "$session_file"

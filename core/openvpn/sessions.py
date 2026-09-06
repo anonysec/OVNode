@@ -54,7 +54,11 @@ MANAGEMENT_PORT = _parse_mgmt_port(os.getenv("OVNODE_MANAGEMENT_PORT"))
 # journalctl is a subprocess fork per call; the panel polls /sync/sessions
 # from several jobs, so cache the journal tail briefly to keep CPU flat.
 _JOURNAL_TTL = 5.0
-_journal_cache: dict[int, tuple[float, list[str]]] = {}
+_journal_cache: dict[str, tuple[int, float, list[str]]] = {}
+# Management liveness is probed on every diagnostics poll — cache briefly.
+_MGMT_TTL = 8.0
+_mgmt_available_cached: bool | None = None
+_mgmt_available_at = 0.0
 # Tri-state availability probe: None = unchecked, True/False = cached.
 # In Docker there is no journald/journalctl at all — without this, every
 # cache miss forked a doomed subprocess and logged a warning, spamming the
@@ -101,18 +105,43 @@ def _read_active_files() -> list[dict[str, Any]]:
     return rows
 
 
-def _marker_is_live(marker: dict[str, Any], live_sessions: list[dict[str, Any]]) -> bool:
+def _live_index(live_sessions: list[dict[str, Any]]) -> tuple[set, set]:
+    """O(1) lookup sets for marker matching: {(cn, pool)} + {(cn, ip, port)}."""
+    pool = {
+        (s.get("common_name"), s.get("virtual_address") or "") for s in live_sessions
+    }
+    real = {
+        (s.get("common_name"), s.get("trusted_ip") or "", s.get("trusted_port") or "")
+        for s in live_sessions
+    }
+    return pool, real
+
+
+def _marker_is_live(
+    marker: dict[str, Any],
+    live_sessions: list[dict[str, Any]],
+    _index: tuple[set, set] | None = None,
+) -> bool:
     """True when a marker corresponds to a session in the status file.
 
     Primary match: (common_name, pool IP) — IP-change proof.
     Fallback (legacy markers without a pool IP): (common_name, real ip:port).
+    Pass a prebuilt `_live_index()` when checking many markers.
     """
     cn = marker["common_name"]
     pool_ip = marker.get("ifconfig_pool_remote_ip", "")
     if pool_ip:
+        if _index is not None:
+            return (cn, pool_ip) in _index[0]
         return any(
             s["common_name"] == cn and s["virtual_address"] == pool_ip for s in live_sessions
         )
+    if _index is not None:
+        return (
+            cn,
+            marker.get("trusted_ip", ""),
+            marker.get("trusted_port", ""),
+        ) in _index[1]
     return any(
         s["common_name"] == cn
         and s["trusted_ip"] == marker.get("trusted_ip", "")
@@ -123,11 +152,13 @@ def _marker_is_live(marker: dict[str, Any], live_sessions: list[dict[str, Any]])
 
 def _journal_lines(hours: int) -> list[str]:
     global _journal_available
-    bounded = max(1, min(int(hours or 8), 168))
+    # Clamped: a client-controlled `hours` up to 168 used to fork a 7-day
+    # journal scan, and alternating values defeated the TTL cache.
+    bounded = max(1, min(int(hours or 8), 24))
     now = time.monotonic()
-    cached = _journal_cache.get(bounded)
-    if cached and now - cached[0] < _JOURNAL_TTL:
-        return cached[1]
+    cached = _journal_cache.get("last")
+    if cached and cached[0] == bounded and now - cached[1] < _JOURNAL_TTL:
+        return cached[2]
     if _journal_available is None:
         _journal_available = shutil.which("journalctl") is not None
         if not _journal_available:
@@ -154,7 +185,7 @@ def _journal_lines(hours: int) -> list[str]:
             logger.warning("Failed to read ovnode-mlogin journal: %s", e)
             lines = []
     _journal_cache.clear()
-    _journal_cache[bounded] = (now, lines)
+    _journal_cache["last"] = (bounded, now, lines)
     return lines
 
 
@@ -177,7 +208,8 @@ def user_diagnostics(common_name: str | None = None, hours: int = 8) -> dict[str
     """
     live = _read_status_sessions()
     active = _read_active_files()
-    stale = [a for a in active if not _marker_is_live(a, live)]
+    index = _live_index(live)
+    stale = [a for a in active if not _marker_is_live(a, live, index)]
 
     cn_filter = common_name or None
     if cn_filter:
@@ -272,50 +304,81 @@ def _mgmt_authenticate(s: socket.socket, banner: str) -> str:
 
 
 def _management_available() -> bool:
+    """Cached liveness probe: user_diagnostics() calls this on every poll,
+    so a fresh TCP handshake per call would be constant churn."""
+    global _mgmt_available_cached, _mgmt_available_at
+    now = time.monotonic()
+    if _mgmt_available_cached is not None and now - _mgmt_available_at < _MGMT_TTL:
+        return _mgmt_available_cached
     try:
         with socket.create_connection((MANAGEMENT_HOST, MANAGEMENT_PORT), timeout=1.0) as s:
             s.settimeout(1.0)
             banner = s.recv(512).decode(errors="ignore")
             _mgmt_authenticate(s, banner)
             s.sendall(b"quit\n")
-        return True
+        result = True
     except Exception:
-        return False
+        result = False
+    _mgmt_available_cached = result
+    _mgmt_available_at = now
+    return result
 
 
-def _management_send(command: str) -> dict[str, Any]:
+def _read_mgmt_reply(s: socket.socket, deadline: float) -> str:
+    """Read one management reply (up to SUCCESS/ERROR) or the deadline."""
+    s.settimeout(1.0)
+    chunks = []
+    while time.monotonic() < deadline:
+        try:
+            chunk = s.recv(4096)
+        except TimeoutError:
+            break
+        if not chunk:
+            break
+        chunks.append(chunk.decode(errors="ignore"))
+        upper = "".join(chunks).upper()
+        if "SUCCESS" in upper or "ERROR" in upper:
+            break
+    return "".join(chunks)
+
+
+def _management_send_many(commands: list[str]) -> list[dict[str, Any]]:
+    """Run several commands over ONE management connection.
+
+    A mass-kick previously paid a TCP handshake + banner + auth per CID;
+    pipelining keeps it to one. Results align with `commands`.
+    """
+    if not commands:
+        return []
     try:
         with socket.create_connection((MANAGEMENT_HOST, MANAGEMENT_PORT), timeout=3.0) as s:
             banner = s.recv(1024).decode(errors="ignore")
             banner = _mgmt_authenticate(s, banner)
-            s.sendall(f"{command}\n".encode())
-            # Read until the daemon terminates its reply (SUCCESS/ERROR line)
-            # or a deadline hits — a single 4KB recv can truncate multiline
-            # replies and mis-classify the result.
-            s.settimeout(1.0)
-            deadline = time.monotonic() + 3.0
-            chunks = []
-            while time.monotonic() < deadline:
+            out = []
+            for command in commands:
                 try:
-                    chunk = s.recv(4096)
-                except TimeoutError:
-                    break
-                if not chunk:
-                    break
-                chunks.append(chunk.decode(errors="ignore"))
-                text = "".join(chunks)
-                upper = text.upper()
-                if "SUCCESS" in upper or "ERROR" in upper:
-                    break
-            response = "".join(chunks)
+                    s.sendall(f"{command}\n".encode())
+                    response = _read_mgmt_reply(s, time.monotonic() + 3.0).strip()
+                    out.append({
+                        "available": True,
+                        "ok": "SUCCESS" in response.upper(),
+                        "banner": banner.strip(),
+                        "response": response,
+                    })
+                except Exception as e:
+                    out.append({"available": True, "ok": False, "error": str(e)})
             try:
                 s.sendall(b"quit\n")
             except OSError:
                 pass
-        ok = "SUCCESS" in response.upper()
-        return {"available": True, "ok": ok, "banner": banner.strip(), "response": response.strip()}
+            return out
     except Exception as e:
-        return {"available": False, "ok": False, "error": str(e)}
+        return [{"available": False, "ok": False, "error": str(e)} for _ in commands]
+
+
+def _management_send(command: str) -> dict[str, Any]:
+    """Single management command (kept for the `kill <cn>` fallback path)."""
+    return _management_send_many([command])[0]
 
 
 def _kill_target_ok(common_name: str) -> bool:
@@ -353,7 +416,8 @@ def _management_kill(common_name: str, live_sessions: list[dict[str, Any]]) -> d
     if not cids:
         return _management_send(f"kill {common_name}")
 
-    results = [_management_send(f"client-kill {cid}") for cid in cids]
+    # One connection for the whole batch (was: a handshake per CID).
+    results = _management_send_many([f"client-kill {cid}" for cid in cids])
     return {
         "available": any(r.get("available") for r in results),
         "ok": all(r.get("ok") for r in results),
@@ -381,13 +445,14 @@ def disconnect_user(common_name: str, only_stale: bool = False) -> dict[str, Any
     else:
         mgmt = _management_kill(common_name, live_sessions)
 
+    index = _live_index(live_sessions)
     removed_markers = []
     for marker in _read_active_files():
         if marker["common_name"] != common_name:
             continue
         # Remove stale markers immediately. If management succeeded, remove all
         # markers for that CN because the live sessions were killed.
-        if mgmt.get("ok") or not _marker_is_live(marker, live_sessions):
+        if mgmt.get("ok") or not _marker_is_live(marker, live_sessions, index):
             try:
                 os.remove(marker["path"])
                 removed_markers.append(marker["session_key"])

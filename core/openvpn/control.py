@@ -207,6 +207,13 @@ def change_config(request) -> bool:
     OVNODE_EXTRA_PORTS) so clients fail over between ports when an ISP
     blocks one. Cached .ovpn profiles are invalidated when the template
     actually changed.
+
+    Restart policy (tunnels are user traffic — never bounce them idly):
+    - nothing changed (same bytes) → return True, no write, no signal.
+    - port/proto values changed → full restart (rebind required).
+    - conf normalization only (e.g. `tcp-server` → `tcp`) → SIGHUP reload.
+    - template-only change (tunnel address) → no daemon signal at all;
+      the template is only read when generating .ovpn profiles.
     """
     from core.config import parse_extra_ports
 
@@ -234,19 +241,20 @@ def change_config(request) -> bool:
         old_port = old_port_match.group(1) if old_port_match else ""
         changed = (not old_proto.startswith(proto)) or (old_port != str(ovpn_port))
 
-        config = re.sub(r"^port\s+\d+", f"port {ovpn_port}", config, flags=re.MULTILINE)
+        new_config = re.sub(r"^port\s+\d+", f"port {ovpn_port}", config, flags=re.MULTILINE)
         # Match the full proto token (\S+) so variants like "tcp-server" are
         # fully replaced instead of leaving a dangling "-server".
-        config = re.sub(r"^proto\s+\S+", f"proto {proto}", config, flags=re.MULTILINE)
+        new_config = re.sub(r"^proto\s+\S+", f"proto {proto}", new_config, flags=re.MULTILINE)
         # explicit-exit-notify is a UDP-only nicety: 1 for UDP, 0 for TCP.
-        config = re.sub(
+        new_config = re.sub(
             r"^explicit-exit-notify\s+\d+",
             f"explicit-exit-notify {1 if proto == 'udp' else 0}",
-            config,
+            new_config,
             flags=re.MULTILINE,
         )
-
-        _atomic_write(setting_file, config)
+        conf_changed = new_config != config
+        if conf_changed:
+            _atomic_write(setting_file, new_config)
 
         # Update the client template
         with open(template_file) as file:
@@ -287,22 +295,35 @@ def change_config(request) -> bool:
         template = "\n".join(rebuilt) + "\n"
 
         template = re.sub(r"^proto\s+\S+", f"proto {proto}", template, flags=re.MULTILINE)
-        _atomic_write(template_file, template)
+        tmpl_changed = template != original_template
+        if tmpl_changed:
+            _atomic_write(template_file, template)
+
+        # No-op push (panel re-sent identical settings): touch nothing so the
+        # entrypoint mtime watcher and multilogin stay quiet — zero restarts.
+        if not conf_changed and not tmpl_changed:
+            logger.info("OpenVPN settings already match; no write, no restart.")
+            return True
 
         # If the protocol/port/remotes actually changed, the already-generated
         # client profiles are stale (they embed the old values) — remove them
         # so they regenerate from the updated template on the next download.
-        if changed or template != original_template:
+        if changed or tmpl_changed:
             _invalidate_cached_ovpn()
 
-        if not restart_openvpn():
-            # The config is already persisted on disk; a restart failure only
-            # means it activates on the next OpenVPN start. Don't report the
-            # change as failed — the write succeeded.
-            logger.warning(
-                "OpenVPN restart failed; new settings are saved and will "
-                "activate on the next OpenVPN (re)start"
-            )
+        if changed:
+            # Port/proto rebind requires a full restart.
+            if not restart_openvpn():
+                # The config is already persisted on disk; a restart failure
+                # only means it activates on the next OpenVPN start. Don't
+                # report the change as failed — the write succeeded.
+                logger.warning(
+                    "OpenVPN restart failed; new settings are saved and will "
+                    "activate on the next OpenVPN (re)start"
+                )
+        elif conf_changed:
+            # Normalization only (no rebind): reload without teardown.
+            _sighup_fallback()
 
         # CRITICAL for multi-login: re-apply scripts and server.conf directives
         try:

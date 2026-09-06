@@ -60,6 +60,7 @@ ACTION="install"
 PORT="${OVN_PORT:-}"
 API_KEY="${OVN_API_KEY:-}"
 VPN_PORTS="${OVN_VPN_PORTS:-}"
+VPN_PROTO="${OVN_PROTO:-}"
 NODE_NAME="${OVN_NAME:-}"
 BRANCH="${OVN_BRANCH:-main}"
 TLS_METHOD="${OVN_TLS:-none}"
@@ -222,6 +223,10 @@ show_help() {
                         First = listener; the rest are redirected to it and
                         included in every .ovpn (client failover).
     --vpn-port PORT     Shorthand for a single port
+    --proto PROTO       VPN transport: udp (recommended, faster) or
+                        tcp (fallback where UDP is blocked) [OVN_PROTO]
+                        Interactive installs ask (UDP recommended);
+                        unattended installs default to tcp.
     --name NAME         Node name                        [OVN_NAME, node-1]
     --branch BRANCH     Source branch                    [OVN_BRANCH, main]
     --tls METHOD        letsencrypt | letsencrypt-ip | selfsigned |
@@ -264,6 +269,7 @@ parse_args() {
             --port)       eval "$need2"; PORT="$2"; shift 2 ;;
             --api-key)    eval "$need2"; API_KEY="$2"; shift 2 ;;
             --vpn-ports|--vpn-port) eval "$need2"; VPN_PORTS="$2"; shift 2 ;;
+            --proto) eval "$need2"; VPN_PROTO="$2"; shift 2 ;;
             --name)       eval "$need2"; NODE_NAME="$2"; shift 2 ;;
             --branch)     eval "$need2"; BRANCH="$2"; shift 2 ;;
             --tls)        eval "$need2"; TLS_METHOD="$2"; shift 2 ;;
@@ -311,6 +317,12 @@ validate_input() {
     is_port "$PORT" || die "Invalid service port: '$PORT'" "$EX_USAGE"
     parse_vpn_ports
     [[ "$VPN_PORT" == "$PORT" ]] && die "OpenVPN port and service port must differ" "$EX_USAGE"
+    # Normalize transport early so every consumer sees tcp|udp only.
+    VPN_PROTO="$(echo "${VPN_PROTO:-tcp}" | tr '[:upper:]' '[:lower:]')"
+    case "$VPN_PROTO" in
+        udp|tcp) ;;
+        *) die "Invalid transport '$VPN_PROTO' (use udp or tcp)" "$EX_USAGE" ;;
+    esac
     [[ -n "$NODE_NAME" ]] || NODE_NAME="node-1"
     [[ "$NODE_NAME" =~ ^[A-Za-z0-9_-]{1,64}$ ]] || die "Invalid node name" "$EX_USAGE"
     [[ -n "$API_KEY" ]] || die "API key is required (--api-key / OVN_API_KEY; interactive installs generate one)" "$EX_USAGE"
@@ -570,8 +582,10 @@ setup_nat() {
 # ── Log rotation ───────────────────────────────────────────────────────
 # server.conf uses `log-append openvpn.log`, which grows without bound and
 # will eventually fill a small VPS disk (killing OpenVPN with it). The
-# agent log rotates itself; the OpenVPN log needs logrotate. copytruncate
-# is used because OpenVPN keeps the file descriptor open.
+# agent log rotates itself; the OpenVPN log needs logrotate. Native
+# installs SIGHUP the daemon (clean reopen, no teardown); Docker keeps
+# copytruncate because the daemon's PID namespace is unreachable from a
+# host logrotate postrotate.
 setup_logrotate() {
     if ! command -v logrotate >/dev/null 2>&1; then
         if [[ -n "$PKG_INSTALL" ]]; then
@@ -581,7 +595,8 @@ setup_logrotate() {
             return 0
         fi
     fi
-    cat > "$LOGROTATE_CONF" << ROTATE
+    if [[ "${DOCKER:-0}" -eq 1 ]]; then
+        cat > "$LOGROTATE_CONF" << ROTATE
 ${OPENVPN_ROOT}/server/openvpn.log {
     size 10M
     rotate 3
@@ -591,6 +606,20 @@ ${OPENVPN_ROOT}/server/openvpn.log {
     copytruncate
 }
 ROTATE
+    else
+        cat > "$LOGROTATE_CONF" << ROTATE
+${OPENVPN_ROOT}/server/openvpn.log {
+    size 10M
+    rotate 3
+    compress
+    missingok
+    notifempty
+    postrotate
+        systemctl kill -s HUP openvpn-server@server >/dev/null 2>&1 || true
+    endscript
+}
+ROTATE
+    fi
     step "Log rotation configured ($LOGROTATE_CONF)"
 }
 
@@ -629,6 +658,20 @@ start_openvpn_service() {
         rc-service openvpn start >/dev/null 2>&1 && step "OpenVPN started (OpenRC)" || warn "Start OpenVPN manually"
     else
         warn "No init system detected — start OpenVPN manually: openvpn --config $OPENVPN_ROOT/server/server.conf"
+    fi
+}
+
+# Mandatory post-flight for Docker mode (twice bitten): the container's
+# OpenVPN must own 1194/7505. A native daemon holding those ports on the
+# shared host network namespace crash-loops the container's OpenVPN
+# (mgmt bind EADDRINUSE), while the agent health check stays green.
+check_container_openvpn() {
+    local cid=""
+    cid="$(docker compose -f "$(compose_file)" ps -q 2>/dev/null | head -n 1)"
+    if [[ -n "$cid" ]] && docker exec "$cid" pgrep -x openvpn >/dev/null 2>&1; then
+        step "OpenVPN running in container"
+    else
+        warn "OpenVPN not detected in container — check: docker logs ${NODE_NAME}; host stray check: ss -tlnp | grep -E '1194|7505'"
     fi
 }
 
@@ -762,6 +805,7 @@ DATA_DIR=${DATA_BASE}/${NODE_NAME}
 SERVICE_PORT=${PORT}
 API_KEY=${API_KEY}
 OPENVPN_PORT=${VPN_PORT}
+OVNODE_PROTO=${VPN_PROTO:-tcp}
 TLS_METHOD=${TLS_METHOD}
 $( if [[ -n "$EXTRA_PORTS" ]]; then echo "OVNODE_EXTRA_PORTS=${EXTRA_PORTS}"; fi )
 $( if [[ "$IPV6" -eq 1 ]]; then echo "OVNODE_ENABLE_IPV6=1"; fi )
@@ -925,6 +969,7 @@ do_install() {
         health="unreachable"
         warn "Agent did not answer /sync/health — check: journalctl -u $SYSTEMD_SERVICE -n 50"
     fi
+    [[ "$DOCKER" -eq 1 ]] && check_container_openvpn
 
     # In Docker the OpenVPN daemon runs inside the container (supervised by
     # the entrypoint) — only manage it on the host for native installs.
@@ -1043,6 +1088,7 @@ do_update() {
         health="unreachable"
         warn "Agent did not answer /sync/health after update — check: journalctl -u $SYSTEMD_SERVICE -n 50"
     fi
+    [[ "$DOCKER" -eq 1 ]] && check_container_openvpn
     step "Update complete"
     line ""
 
@@ -1167,6 +1213,21 @@ interactive_setup() {
     VPN_PORTS="$(ask "OpenVPN port(s), comma sep." "${VPN_PORTS:-$DEFAULT_VPN}")"
     API_KEY="$(ask "API key (blank=generate)" "${API_KEY:-$api_default}")"
 
+    # Transport: UDP is faster (no TCP-over-TCP meltdown); TCP only where
+    # DPI/firewalls block UDP. Interactive default is UDP; unattended
+    # installs stay on TCP (previous behavior, zero surprise).
+    if [[ -z "$VPN_PROTO" ]]; then
+        if is_tty && [[ "$YES" -eq 0 ]]; then
+            sep; line "  VPN transport:"
+            line "  ${WH}1${NC})  UDP — faster, recommended"
+            line "  ${WH}2${NC})  TCP — only where UDP is blocked"
+            local proto_choice; proto_choice="$(ask "Transport" "1")"
+            [[ "$proto_choice" == "2" ]] && VPN_PROTO="tcp" || VPN_PROTO="udp"
+        else
+            VPN_PROTO="tcp"
+        fi
+    fi
+
     if [[ "$DOCKER" -eq 0 ]]; then
         sep; line "  Deployment:"
         line "  ${WH}1${NC})  Native — systemd services (recommended)"
@@ -1276,7 +1337,7 @@ main() {
     field "Mode"      "$([ "$DOCKER" -eq 1 ] && echo Docker || echo Native)"
     field "Node"      "$NODE_NAME"
     field "Service"   "$PORT"
-    field "OpenVPN"   "$(vpn_ports_label)"
+    field "OpenVPN"   "$(vpn_ports_label)/$VPN_PROTO"
     field "TLS"       "$TLS_METHOD"
     field "Install"   "$APP_DIR"
     field "Data"      "$DATA_BASE/$NODE_NAME"

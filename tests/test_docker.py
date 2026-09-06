@@ -45,6 +45,13 @@ def test_entrypoint_handles_networking():
     assert "ip_forward" in content
     assert "MASQUERADE" in content
     assert "OVNODE_EXTRA_PORTS" in content  # multi-port REDIRECT rules
+    # Redirects cover both families: a tcp→udp flip must not strand one.
+    assert "for pr in tcp udp" in content
+    # Supervisor watches content hash, not mtime: a touch must not bounce
+    # tunnels, and a proto flip must prune the stale family's redirect.
+    assert "conf_hash_of" in content
+    assert "content changed" in content
+    assert "pruned stale extra port" in content
 
 
 def test_dockerfile_contract():

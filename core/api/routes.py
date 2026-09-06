@@ -167,8 +167,9 @@ async def get_logs(
 
 
 # openssl fork per call is too heavy for a /sync/status poll cadence, but a
-# cert lasts months — cache briefly (same idea as the CRL daily check).
-_CERT_EXPIRY_TTL = 300.0
+# cert lasts years — cache for a day (same idea as the CRL daily check).
+# Manual cert replacement becomes visible within 24h at most.
+_CERT_EXPIRY_TTL = 86400.0
 _cert_expiry_cached: str | None = None
 _cert_expiry_checked_at = 0.0
 
