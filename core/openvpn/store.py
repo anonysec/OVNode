@@ -8,19 +8,21 @@ so a node backup/export is exactly two paths: this tree + the PKI.
 
     <OVNODE_OPENVPN_ROOT>/ovnode/
     ├── users/<cn>/          one folder per user — the whole user
-    │   ├── name             panel username (display / usage keying)
-    │   ├── limit            max simultaneous logins (0 = unlimited)
-    │   ├── disabled         marker file — exists = connections rejected
+    │   ├── name             panel username (display / usage keying, 0600)
+    │   ├── state            limit + disabled flag (world-readable, hook hot path)
+    │   │                    legacy split files (limit, disabled marker) are
+    │   │                    still honored when `state` is absent (migration)
     │   └── client.ovpn      cached generated profile (disposable)
     ├── sessions/            live-session markers written by the hooks
-    │   └── .lock
+    │   └── .lock.<cn>       per-CN flock files
+    ├── usage/<cn>           banked byte counters (hook-writable)
     └── scripts/             installed connect/disconnect hooks
 
-Plain files, one value each: the bash enforcement hooks read ``limit`` and
-``disabled`` directly with no parser, and admins can inspect or fix a user
-with ``ls``. Legacy layouts (clients/, limits/, disabled/, ovnode-active/,
-uid_map.json) are migrated automatically by :func:`ensure_layout`, so
-restoring an old node backup onto a current build just works.
+Plain files, simply parsed: the bash enforcement hooks read ``state`` with
+no parser, and admins can inspect or fix a user with ``ls``. Legacy layouts
+(clients/, limits/, disabled/, ovnode-active/, uid_map.json) are migrated
+automatically by :func:`ensure_layout`, so restoring an old node backup
+onto a current build just works.
 """
 
 from __future__ import annotations
@@ -109,9 +111,18 @@ def create_user(cn: str) -> None:
 
 
 def delete_user(cn: str) -> None:
-    """Remove the whole user folder — name, limit, markers, cached profile."""
+    """Remove the whole user folder — name, state, cached profile.
+
+    Also removes the per-CN session lock (hook litter) — it is recreated
+    on next connect. Usage counters are reset separately (banked bytes must
+    survive user-folder wipes on some paths; see reset_usage callers).
+    """
     _invalidate_name_cache()
     shutil.rmtree(user_dir(cn), ignore_errors=True)
+    try:
+        os.remove(os.path.join(SESSIONS_DIR, f".lock.{cn}"))
+    except OSError:
+        pass
     reset_usage(cn)
 
 
@@ -141,31 +152,92 @@ def set_name(cn: str, name: str) -> None:
     _write(cn, "name", name, mode=0o600)
 
 
-def get_limit(cn: str) -> int | None:
-    raw = _read(cn, "limit")
+# ── enforcement state (limit + disabled) ──────────────────────────
+# One world-readable file per user (`state`), read by the connect hook on
+# every handshake. Previously two files (`limit` value + `disabled`
+# existence marker); the split readers remain as fallback so pre-merge
+# installs and backups keep working with zero migration step.
+
+
+def _parse_state_file(path: str) -> dict[str, str]:
     try:
-        return int(raw) if raw is not None else None
-    except ValueError:
-        return None
+        out: dict[str, str] = {}
+        with open(path, encoding="utf-8") as f:
+            for line in f:
+                if "=" in line:
+                    k, v = line.strip().split("=", 1)
+                    out[k.strip()] = v.strip()
+        return out
+    except OSError:
+        return {}
+
+
+def read_state(cn: str) -> dict[str, object]:
+    """Merged {limit: int|None, disabled: bool} for a user.
+
+    Prefers the `state` file; falls back per-field to the legacy `limit`
+    value file and `disabled` existence marker.
+    """
+    data = _parse_state_file(_attr_path(cn, "state"))
+    limit: int | None = None
+    if data.get("limit", "").isdigit():
+        limit = int(data["limit"])
+    else:
+        raw = _read(cn, "limit")
+        if raw is not None and raw.strip().isdigit():
+            limit = int(raw.strip())
+    if data.get("disabled") == "1":
+        disabled = True
+    elif "disabled" in data:
+        disabled = False
+    else:
+        disabled = os.path.exists(_attr_path(cn, "disabled"))
+    return {"limit": limit, "disabled": disabled}
+
+
+def write_state(cn: str, limit: int | None = None, disabled: bool | None = None) -> None:
+    """Atomically merge fields into the `state` file (tmp+rename).
+
+    Unspecified fields keep their current (dual-read) values. Legacy split
+    files are removed once the merged file lands, so the tree converges.
+    """
+    current = read_state(cn)
+    if limit is None:
+        limit = current["limit"]
+    if disabled is None:
+        disabled = current["disabled"]
+    create_user(cn)
+    path = _attr_path(cn, "state")
+    tmp = f"{path}.tmp.{os.getpid()}"
+    with open(tmp, "w", encoding="utf-8") as f:
+        f.write(f"limit={int(limit) if limit is not None else 1}\n")
+        f.write(f"disabled={1 if disabled else 0}\n")
+    os.chmod(tmp, 0o644)
+    os.replace(tmp, path)
+    for legacy in ("limit", "disabled"):
+        try:
+            os.remove(_attr_path(cn, legacy))
+        except OSError:
+            pass
+
+
+def get_limit(cn: str) -> int | None:
+    value = read_state(cn)["limit"]
+    return int(value) if value is not None else None
 
 
 def set_limit(cn: str, max_logins: int) -> None:
-    # Read by the connect hook (as the OpenVPN runtime user) → world-readable.
-    _write(cn, "limit", str(max(0, int(max_logins))))
+    # Read by the connect hook (as the OpenVPN runtime user) → the merged
+    # file stays world-readable.
+    write_state(cn, limit=max(0, int(max_logins)))
 
 
 def is_disabled(cn: str) -> bool:
-    return os.path.exists(_attr_path(cn, "disabled"))
+    return bool(read_state(cn)["disabled"])
 
 
 def set_disabled(cn: str, disabled: bool) -> None:
-    if disabled:
-        _write(cn, "disabled", "disabled")
-    else:
-        try:
-            os.remove(_attr_path(cn, "disabled"))
-        except FileNotFoundError:
-            pass
+    write_state(cn, disabled=bool(disabled))
 
 
 # ── username lookups ─────────────────────────────────────────────────

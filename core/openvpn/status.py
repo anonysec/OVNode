@@ -18,12 +18,42 @@ from __future__ import annotations
 
 import logging
 import os
+import time
 from collections.abc import Iterator
 
 logger = logging.getLogger("ovnode")
 
 _OPENVPN_ROOT = os.getenv("OVNODE_OPENVPN_ROOT", "/etc/openvpn")
 STATUS_FILE = os.getenv("OVNODE_STATUS_FILE", os.path.join(_OPENVPN_ROOT, "server", "status.log"))
+
+# Shared parse cache: every panel poll cycle hits /sync/usage + /sync/sessions
+# (+ diagnostics, disconnect) within milliseconds of each other, and each
+# used to re-read + re-parse the whole file. The daemon rewrites it every
+# 5s, so a 2s TTL keyed by (mtime, size) can never serve data older than
+# one generation. Treat returned rows as READ-ONLY (shared object).
+_PARSE_TTL = 2.0
+_parse_cache: dict[str, tuple[tuple[int, int], float, list[dict]]] = {}
+
+
+def _cached_rows(path: str = STATUS_FILE) -> list[dict]:
+    """Parsed session rows, shared across endpoints within the TTL window."""
+    global _parse_cache
+    try:
+        st = os.stat(path)
+        key = (st.st_mtime_ns, st.st_size)
+    except OSError:
+        return list(iter_sessions(path))
+    now = time.monotonic()
+    hit = _parse_cache.get(path)
+    if hit is not None and hit[0] == key and now - hit[1] < _PARSE_TTL:
+        return hit[2]
+    rows = list(iter_sessions(path))
+    # Bound the cache: one entry per distinct path (production uses one).
+    if len(_parse_cache) > 8:
+        _parse_cache.clear()
+    _parse_cache[path] = (key, now, rows)
+    return rows
+
 
 # Modern (OpenVPN >= 2.4) CLIENT_LIST columns, used when no HEADER line exists.
 _DEFAULT_COLUMNS = {
@@ -107,7 +137,7 @@ def parse_usage(path: str = STATUS_FILE) -> dict | None:
     """→ {"users": {cn: bytes}, "sessions": {cn: {real_addr: bytes}}}. None if empty."""
     users: dict[str, int] = {}
     sessions: dict[str, dict[str, int]] = {}
-    for s in iter_sessions(path):
+    for s in _cached_rows(path):
         total = s["bytes_received"] + s["bytes_sent"]
         cn = s["common_name"]
         users[cn] = users.get(cn, 0) + total
@@ -117,4 +147,4 @@ def parse_usage(path: str = STATUS_FILE) -> dict | None:
 
 def parse_sessions(path: str = STATUS_FILE) -> list[dict]:
     """→ list of session dicts (cn, addresses, counters, client id)."""
-    return list(iter_sessions(path))
+    return list(_cached_rows(path))

@@ -604,3 +604,95 @@ def test_disconnect_only_stale_keeps_live():
             sess_mod._read_status_sessions = orig_parse
             sess_mod.user_diagnostics = orig_diag
             sess_mod.SESSIONS_DIR = old_sessions
+
+
+def _hook_env(users, sessions, server, status, mgmt_port, cn="u1", pool="10.8.0.2"):
+    return {
+        **os.environ,
+        "OVNODE_USERS_DIR": users,
+        "OVNODE_SESSIONS_DIR": sessions,
+        "OVNODE_STATUS_FILE": status,
+        "OVNODE_MANAGEMENT_HOST": "127.0.0.1",
+        "OVNODE_MANAGEMENT_PORT": str(mgmt_port),
+        "OVNODE_MGMT_PASS_FILE": os.path.join(server, "mgmt-pass"),
+        "common_name": cn,
+        "trusted_ip": "9.9.9.9",
+        "trusted_port": "5001",
+        "ifconfig_pool_remote_ip": pool,
+    }
+
+
+def _mktree(tmp):
+    users = os.path.join(tmp, "users")
+    sessions = os.path.join(tmp, "sessions")
+    server = os.path.join(tmp, "server")
+    for d in (users, sessions, server):
+        os.makedirs(d)
+    open(os.path.join(server, "mgmt-pass"), "w").write("testpw\n")
+    status = os.path.join(server, "status.log")
+    open(status, "w").write("HEADER\tX\n")
+    return users, sessions, server, status
+
+
+def test_state_file_limit_enforced():
+    """Merged `state` file drives the limit exactly like the legacy file."""
+    import tempfile
+
+    with tempfile.TemporaryDirectory() as tmp:
+        users, sessions, server, status = _mktree(tmp)
+        os.makedirs(os.path.join(users, "u1"))
+        with open(os.path.join(users, "u1", "state"), "w") as f:
+            f.write("limit=2\ndisabled=0\n")
+        with open(status, "w") as f:
+            f.write(
+                "HEADER\tX\n"
+                + _status_row("u1", "5.5.5.5:4000", "10.8.0.1", 7)
+                + "\n"
+                + _status_row("u1", "6.6.6.6:4001", "10.8.0.3", 9)
+                + "\n"
+            )
+        mgmt = FakeMgmt(status_script=[])
+        try:
+            env = _hook_env(users, sessions, server, status, mgmt.port)
+            r = subprocess.run(["bash", HOOK], capture_output=True, text=True, timeout=60, env=env)
+            assert r.returncode == 1, "2 live sessions at limit=2 (state) must reject"
+            assert mgmt.conns == 0, "limit>1 reject must not touch mgmt"
+        finally:
+            mgmt.close()
+
+
+def test_state_file_disabled_rejects():
+    """`disabled=1` in the merged file rejects without mgmt traffic."""
+    import tempfile
+
+    with tempfile.TemporaryDirectory() as tmp:
+        users, sessions, server, status = _mktree(tmp)
+        os.makedirs(os.path.join(users, "u1"))
+        with open(os.path.join(users, "u1", "state"), "w") as f:
+            f.write("limit=1\ndisabled=1\n")
+        mgmt = FakeMgmt(status_script=[])
+        try:
+            env = _hook_env(users, sessions, server, status, mgmt.port)
+            r = subprocess.run(["bash", HOOK], capture_output=True, text=True, timeout=60, env=env)
+            assert r.returncode == 1, "disabled=1 (state) must reject"
+            assert mgmt.conns == 0, "disabled reject must not touch mgmt"
+        finally:
+            mgmt.close()
+
+
+def test_legacy_disabled_marker_still_rejects():
+    """Pre-merge `disabled` existence marker keeps working (dual-read)."""
+    import tempfile
+
+    with tempfile.TemporaryDirectory() as tmp:
+        users, sessions, server, status = _mktree(tmp)
+        os.makedirs(os.path.join(users, "u1"))
+        open(os.path.join(users, "u1", "disabled"), "w").close()
+        mgmt = FakeMgmt(status_script=[])
+        try:
+            env = _hook_env(users, sessions, server, status, mgmt.port)
+            r = subprocess.run(["bash", HOOK], capture_output=True, text=True, timeout=60, env=env)
+            assert r.returncode == 1, "legacy disabled marker must reject"
+            assert mgmt.conns == 0
+        finally:
+            mgmt.close()

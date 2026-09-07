@@ -61,6 +61,7 @@ ok("client-connect" in conf and "client-disconnect" in conf, "hooks")
 ok("crl-verify" in conf, "crl")
 ok("duplicate-cn" in conf and "max-clients 250" in conf, "mlogin+cap")
 ok("explicit-exit-notify 0" in conf, "exit notify")
+ok("\nverb 2\n" in conf, "verb 2 fresh")
 
 tpl = read(CLIENT_TEMPLATE)
 ok("tls-version-min 1.3" in tpl, "tpl tls min")
@@ -70,14 +71,15 @@ ok("remote UPDATE_VIA_PANEL 1194" in tpl, "tpl remote")
 
 # client .ovpn embeds tls-crypt
 from core.openvpn.users import create_user_on_server
-from core.openvpn.store import ovpn_path, get_limit, _attr_path
+from core.openvpn.store import ovpn_path, get_limit
 uid = "testuser42"
 ok(create_user_on_server(uid, "Test User", max_logins=2), "create user")
 ovpn = read(ovpn_path(uid))
 ok("<tls-crypt>" in ovpn and "</tls-crypt>" in ovpn, "ovpn tls-crypt")
 ok("BEGIN OpenVPN Static key" in ovpn, "ovpn key content")
 ok("BEGIN CERTIFICATE" in ovpn and "BEGIN PRIVATE KEY" in ovpn, "ovpn cert+key")
-ok(read(_attr_path(uid, "limit")).strip() == "2", "limit file")
+from core.openvpn.store import get_limit
+ok(get_limit(uid) == 2, "limit state")
 
 # existing conf hardening preserves admin edits
 with open(SERVER_CONF, "w") as f:

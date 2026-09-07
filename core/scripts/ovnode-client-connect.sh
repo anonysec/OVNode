@@ -214,23 +214,49 @@ fi
 mkdir -p "$ACTIVE_DIR"
 chmod 755 "$ACTIVE_DIR" 2>/dev/null || true
 
-# The disabled marker blocks an already-issued certificate from reconnecting
-# after Manager disables the user.
-if [[ -f "${USERS_DIR}/${safe_cn}/disabled" ]]; then
-    log "CN=$cn ip=${trusted_ip:-?}:${trusted_port:-?} is disabled; REJECT"
-    exit 1
+# Enforcement state: one world-readable `state` file per user
+# (limit=<n> / disabled=<0|1>), read here with bash builtins. Legacy split
+# files (`limit` value, `disabled` existence marker) are honored per-field
+# when `state` is absent or unparseable — pre-merge installs and backups
+# keep working; the agent converges the tree on next write.
+limit="$DEFAULT_LIMIT"
+user_disabled=0
+state_limit_set=0
+state_file="${USERS_DIR}/${safe_cn}/state"
+if [[ -f $state_file ]]; then
+    while IFS='=' read -r k v; do
+        case "$k" in
+            limit)
+                if [[ $v =~ ^[0-9]+$ ]]; then
+                    limit="$v"
+                    state_limit_set=1
+                fi
+                ;;
+            disabled) [[ $v == 1 ]] && user_disabled=1 ;;
+        esac
+    done < "$state_file" 2>/dev/null || true
+fi
+if (( user_disabled == 0 )) && [[ -f "${USERS_DIR}/${safe_cn}/disabled" ]]; then
+    user_disabled=1
+fi
+if (( state_limit_set == 0 )); then
+    limit_file="${USERS_DIR}/${safe_cn}/limit"
+    if [[ -f $limit_file ]]; then
+        # NOTE: read exits nonzero on a newline-less file AFTER assigning
+        # what it read — so no `|| raw=` clobber here (it once turned
+        # limit=2 into limit=1 and allowed a second device).
+        raw=""
+        IFS= read -r raw < "$limit_file" 2>/dev/null || true
+        raw="${raw//[^0-9]/}"
+        [[ -n $raw ]] && limit="$raw"
+    fi
 fi
 
-limit="$DEFAULT_LIMIT"
-limit_file="${USERS_DIR}/${safe_cn}/limit"
-if [[ -f $limit_file ]]; then
-    # NOTE: read exits nonzero on a newline-less file AFTER assigning what
-    # it read — so no `|| raw=` clobber here (it once turned limit=2 into
-    # limit=1 and allowed a second device).
-    raw=""
-    IFS= read -r raw < "$limit_file" 2>/dev/null || true
-    raw="${raw//[^0-9]/}"
-    [[ -n $raw ]] && limit="$raw"
+# The disabled flag blocks an already-issued certificate from reconnecting
+# after Manager disables the user.
+if (( user_disabled == 1 )); then
+    log "CN=$cn ip=${trusted_ip:-?}:${trusted_port:-?} is disabled; REJECT"
+    exit 1
 fi
 
 if [[ "$limit" -eq 0 ]]; then

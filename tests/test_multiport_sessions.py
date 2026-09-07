@@ -257,3 +257,55 @@ def test_crl_renewed_when_near_expiry(tmp_path, monkeypatch):
     # Renewal fails and CRL already expired → report failure.
     monkeypatch.setattr(pki, "_crl_days_remaining", lambda: -1)
     assert pki._ensure_crl() is False
+
+
+def _v3_row(cn, real, pool, cid):
+    return "\t".join(
+        ["CLIENT_LIST", cn, real, pool, "10", "20", "now", "1700000000", cn, "", str(cid)]
+    )
+
+
+def test_status_parse_cache_shared_and_invalidated(tmp_path, monkeypatch):
+    """One parse per poll cycle: repeated calls share rows; content change
+    (mtime+size) invalidates; missing file parses empty without caching."""
+    import os
+
+    from core.openvpn import status as status_mod
+
+    monkeypatch.setattr(status_mod, "_parse_cache", {})
+    status = tmp_path / "status.log"
+    status.write_text(
+        "HEADER\tCLIENT_LIST\tCommon Name\n" + _v3_row("u1", "1.1.1.1:1", "10.8.0.1", 7) + "\n"
+    )
+
+    parses = []
+    real_iter = status_mod.iter_sessions
+    monkeypatch.setattr(
+        status_mod,
+        "iter_sessions",
+        lambda path=status_mod.STATUS_FILE: (parses.append(1), list(real_iter(path)))[1],
+    )
+
+    first = status_mod.parse_sessions(str(status))
+    second = status_mod.parse_sessions(str(status))
+    assert len(first) == 1 and len(second) == 1
+    assert parses == [1], "second call must hit the cache"
+    # usage shares the same cached rows, not a second parse
+    # (minimal header → default column map: rx field is "20", tx "now"→0)
+    assert status_mod.parse_usage(str(status))["users"] == {"u1": 20}
+    assert parses == [1]
+
+    # Content change → new mtime/size → re-parse.
+    with open(status, "a") as f:
+        f.write(_v3_row("u2", "2.2.2.2:2", "10.8.0.2", 9) + "\n")
+    third = status_mod.parse_sessions(str(status))
+    assert sorted(s["common_name"] for s in third) == ["u1", "u2"]
+    assert parses == [1, 1]
+
+    # Missing file → empty, and never cached as a hit (returns fresh each time).
+    missing = str(tmp_path / "nope.log")
+    assert status_mod.parse_sessions(missing) == []
+    assert status_mod.parse_usage(missing) is None
+
+    monkeypatch.setattr(status_mod, "_parse_cache", {})
+    assert os.path.exists(status)

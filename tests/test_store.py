@@ -10,7 +10,7 @@ from core.openvpn import store
 
 
 def test_user_folder_holds_all_state():
-    """One folder per user: name, limit, disabled marker, cached profile."""
+    """One folder per user: name, merged state file, cached profile."""
     cn = "9001"
     try:
         store.set_name(cn, "bob")
@@ -18,13 +18,14 @@ def test_user_folder_holds_all_state():
         store.set_disabled(cn, True)
 
         d = store.user_dir(cn)
-        assert sorted(os.listdir(d)) == ["disabled", "limit", "name"]
+        assert sorted(os.listdir(d)) == ["name", "state"]
         assert store.get_name(cn) == "bob"
         assert store.get_limit(cn) == 3
         assert store.is_disabled(cn) is True
 
         store.set_disabled(cn, False)
         assert store.is_disabled(cn) is False
+        assert store.get_limit(cn) == 3  # untouched field survives
 
         store.delete_user(cn)
         assert not store.user_exists(cn)
@@ -116,3 +117,58 @@ def test_set_limit_by_username_reaches_cn():
         assert store.get_limit("9003") == 4
     finally:
         store.delete_user("9003")
+
+
+def test_state_file_merges_limit_and_disabled():
+    """Writes converge split files into one world-readable `state` file."""
+    import stat
+
+    cn = "9004"
+    try:
+        store.set_limit(cn, 2)
+        store.set_disabled(cn, True)
+        d = store.user_dir(cn)
+        assert sorted(os.listdir(d)) == ["state"]
+        mode = stat.S_IMODE(os.stat(os.path.join(d, "state")).st_mode)
+        assert mode == 0o644
+        assert store.read_state(cn) == {"limit": 2, "disabled": True}
+        # Partial update preserves the other field.
+        store.set_limit(cn, 5)
+        assert store.read_state(cn) == {"limit": 5, "disabled": True}
+        store.set_disabled(cn, False)
+        assert store.read_state(cn) == {"limit": 5, "disabled": False}
+    finally:
+        store.delete_user(cn)
+
+
+def test_state_read_falls_back_to_legacy_split_files():
+    """Pre-merge installs (limit value + disabled marker) keep working, and
+    the next write converges them into `state`."""
+    cn = "9005"
+    try:
+        d = store.user_dir(cn)
+        os.makedirs(d, exist_ok=True)
+        with open(os.path.join(d, "limit"), "w") as f:
+            f.write("3")
+        open(os.path.join(d, "disabled"), "w").close()
+        assert store.read_state(cn) == {"limit": 3, "disabled": True}
+        assert store.get_limit(cn) == 3
+        assert store.is_disabled(cn) is True
+        store.set_limit(cn, 4)
+        assert sorted(os.listdir(d)) == ["state"]
+        assert store.read_state(cn) == {"limit": 4, "disabled": True}
+    finally:
+        store.delete_user(cn)
+
+
+def test_delete_user_cleans_session_lock():
+    """Per-CN flock litter does not accumulate across user lifecycles."""
+    cn = "9006"
+    try:
+        store.set_limit(cn, 1)
+        lock = os.path.join(store.SESSIONS_DIR, f".lock.{cn}")
+        open(lock, "w").close()
+        store.delete_user(cn)
+        assert not os.path.exists(lock)
+    finally:
+        store.delete_user(cn)

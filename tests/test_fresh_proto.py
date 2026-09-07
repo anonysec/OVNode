@@ -61,3 +61,20 @@ def test_fresh_conf_honors_udp():
 
 def test_fresh_conf_rejects_garbage_safely():
     _fresh_conf("bogus-proto", expect="tcp")
+
+
+def test_fresh_vars_use_fast_curve_and_keep_existing(tmp_path, monkeypatch):
+    """Fresh PKI defaults to prime256v1; an existing vars file is sacred."""
+    from core.openvpn import pki as pki_mod
+
+    easyrsa = tmp_path / "easy-rsa"
+    easyrsa.mkdir()
+    monkeypatch.setattr(pki_mod, "EASYRSA_DIR", str(easyrsa))
+    pki_mod._write_easyrsa_vars()
+    content = (easyrsa / "vars").read_text()
+    assert 'EASYRSA_CURVE "prime256v1"' in content
+    assert "secp384r1" not in content
+    # Existing file (e.g. secp384r1 fleet) is never rewritten.
+    (easyrsa / "vars").write_text('set_var EASYRSA_CURVE "secp384r1"\n')
+    pki_mod._write_easyrsa_vars()
+    assert 'EASYRSA_CURVE "secp384r1"' in (easyrsa / "vars").read_text()
