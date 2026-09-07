@@ -18,8 +18,7 @@ import tempfile
 
 from fastapi.testclient import TestClient
 
-TUNE_SCRIPT = (
-    r"""
+TUNE_SCRIPT = r"""
 import os
 import sys
 
@@ -58,7 +57,6 @@ bad = [name for cond, name in checks if not cond]
 print("TUNE", "OK" if not bad else "MISSING " + ",".join(bad))
 sys.exit(1 if bad else 0)
 """
-)
 
 
 def _run_check_script(script: str, root: str):
