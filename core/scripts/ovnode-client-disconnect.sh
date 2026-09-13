@@ -71,7 +71,12 @@ if (( session_total > 0 )) && [[ -d "$USAGE_DIR" && -w "$USAGE_DIR" ]]; then
     tmp_file="$(mktemp "${usage_file}.tmp.XXXXXX" 2>/dev/null)" || tmp_file=""
     if [[ -n "$tmp_file" ]]; then
         echo $(( old + session_total )) > "$tmp_file"
+        # mktemp creates 0600; the usage file must stay readable by the
+        # agent like the old shell-redirect (umask-based) files were.
+        chmod 644 "$tmp_file"
         mv -f "$tmp_file" "$usage_file"
+    else
+        log "CN=$cn usage accounting skipped (mktemp failed, rx=$rx tx=$tx)"
     fi
     exec 8>&-
     log "CN=$cn session ended rx=$rx tx=$tx accumulated=$(( old + session_total ))"

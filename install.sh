@@ -497,7 +497,7 @@ CONF
 # Usage: ovnode-nat.sh [apply|cleanup]
 set -u
 CONF="/etc/default/ovnode-nat"
-VPN_PRIMARY_PORT="" VPN_EXTRA_PORTS=""
+VPN_PRIMARY_PORT="" VPN_EXTRA_PORTS="" VPN_SUBNET="10.8.0.0/24" VPN_TUN_DEV="tun0"
 # shellcheck disable=SC1090
 [[ -f "$CONF" ]] && . "$CONF"
 
@@ -523,15 +523,29 @@ each_redirect() {  # each_redirect <add|del>
 
 IFACE="$(ip route show default 2>/dev/null | awk '{print $5; exit}')"
 
+# Docker and other hardening set FORWARD policy DROP, which kills masqueraded
+# client traffic after POSTROUTING. Accept the VPN subnet through the
+# DOCKER-USER admin hook (evaluated before Docker's own jumps; recreated
+# empty by Docker, so re-added here on every apply).
+forward_rules() {  # forward_rules <add|del>
+    local op="$1"
+    iptables -L DOCKER-USER -n >/dev/null 2>&1 || return 0
+    rule "$op" filter DOCKER-USER -s "$VPN_SUBNET" -i "$VPN_TUN_DEV" -o "$IFACE" -j ACCEPT
+    rule "$op" filter DOCKER-USER -i "$IFACE" -o "$VPN_TUN_DEV" \
+        -m conntrack --ctstate RELATED,ESTABLISHED -j ACCEPT
+}
+
 case "${1:-apply}" in
     apply)
         if [[ -z "$IFACE" ]]; then echo "ovnode-nat: no default interface found" >&2; exit 1; fi
         rule add nat POSTROUTING -o "$IFACE" -j MASQUERADE
         each_redirect add
+        forward_rules add
         ;;
     cleanup)
         [[ -n "$IFACE" ]] && rule del nat POSTROUTING -o "$IFACE" -j MASQUERADE
         each_redirect del
+        [[ -n "$IFACE" ]] && forward_rules del
         ;;
     *) echo "usage: $0 [apply|cleanup]" >&2; exit 2 ;;
 esac
