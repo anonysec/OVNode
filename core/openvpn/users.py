@@ -83,6 +83,22 @@ def _build_ovpn(cn: str) -> bool:
             if tls_block:
                 out.write(tls_block)
         os.chmod(out_path, 0o600)
+        # Post-build sanity: the panel validates downloads start with
+        # "client" or contain "<ca>" — reject a corrupt template early
+        # instead of caching a broken profile that fails every handshake.
+        try:
+            with open(out_path, encoding="utf-8", errors="ignore") as check:
+                head = check.read(4096)
+            if not (head.lstrip().startswith("client") or "<ca>" in head):
+                logger.error("Built .ovpn for cn='%s' failed validation (bad template?)", cn)
+                try:
+                    os.remove(out_path)
+                except OSError:
+                    pass
+                return False
+        except OSError as e:
+            logger.error("Could not validate .ovpn for cn='%s': %s", cn, e)
+            return False
         logger.info("Built client profile for cn='%s'", cn)
         return True
     except Exception as e:

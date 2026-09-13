@@ -64,9 +64,15 @@ if (( session_total > 0 )) && [[ -d "$USAGE_DIR" && -w "$USAGE_DIR" ]]; then
     flock -x 8
     old="$(cat "$usage_file" 2>/dev/null || echo 0)"
     [[ "$old" =~ ^[0-9]+$ ]] || old=0
-    tmp_file="${usage_file}.tmp.$$"
-    echo $(( old + session_total )) > "$tmp_file"
-    mv -f "$tmp_file" "$usage_file"
+    # mktemp (O_EXCL) instead of a predictable .tmp.$$ name: USAGE_DIR is
+    # writable by the runtime user, so a guessable path is symlink bait.
+    # Guarded: accounting is best-effort and must never abort the hook
+    # (marker removal below must still run) if mktemp ever fails.
+    tmp_file="$(mktemp "${usage_file}.tmp.XXXXXX" 2>/dev/null)" || tmp_file=""
+    if [[ -n "$tmp_file" ]]; then
+        echo $(( old + session_total )) > "$tmp_file"
+        mv -f "$tmp_file" "$usage_file"
+    fi
     exec 8>&-
     log "CN=$cn session ended rx=$rx tx=$tx accumulated=$(( old + session_total ))"
 fi
