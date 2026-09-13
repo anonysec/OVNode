@@ -42,7 +42,7 @@ def _prune(buckets: OrderedDict[str, list[float]], now: float, window: float) ->
         buckets.popitem(last=False)
 
 
-def _allowed(api_key: str) -> bool:
+def _allowed(api_key: str) -> tuple[bool, float]:
     now = time.monotonic()
     # Do not retain attacker-controlled API-key strings in memory.
     key = hashlib.sha256(str(api_key).encode()).hexdigest()[:32]
@@ -50,11 +50,12 @@ def _allowed(api_key: str) -> bool:
         _prune(_ratelimit_buckets, now, _WINDOW)
         bucket = [ts for ts in _ratelimit_buckets.get(key, []) if now - ts < _WINDOW]
         if len(bucket) >= _MAX_REQUESTS:
+            retry_after = max(1.0, _WINDOW - (now - bucket[0])) if bucket else 1.0
             _ratelimit_buckets[key] = bucket
-            return False
+            return False, retry_after
         bucket.append(now)
         _ratelimit_buckets[key] = bucket
-    return True
+    return True, 0.0
 
 
 def _heavy_allowed(api_key: str) -> tuple[bool, float]:
@@ -76,11 +77,13 @@ def _heavy_allowed(api_key: str) -> tuple[bool, float]:
 async def check_api_key(key: str = Header(...), request: Request = None) -> str:
     """Check if the provided API key is valid (constant-time compare)."""
     ip = request.client.host if request is not None and request.client else "?"
-    if not _allowed(key):
+    ok, retry_after = _allowed(key)
+    if not ok:
         logger.warning("Rate limit exceeded for API key from %s", ip)
         raise HTTPException(
             status_code=status.HTTP_429_TOO_MANY_REQUESTS,
             detail="Rate limit exceeded",
+            headers={"Retry-After": str(int(retry_after))},
         )
     if not hmac.compare_digest(key, settings.api_key):
         logger.warning("Invalid API key rejected from %s", ip)
