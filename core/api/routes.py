@@ -35,7 +35,7 @@ import psutil
 from fastapi import APIRouter, Depends, Request
 from fastapi.responses import FileResponse
 
-from core.api.auth import check_api_key
+from core.api.auth import check_api_key, check_api_key_heavy
 from core.api.schemas import ResponseModel, SetSettingsModel, User, UserLimit
 from core.logger import log_stats, recent_logs
 from core.openvpn.control import change_config
@@ -348,7 +348,7 @@ async def reset_user_usage(uid: str, api_key: str = Depends(check_api_key)):
 
 
 @router.post("/user", response_model=ResponseModel)
-async def create_user(user: User, api_key: str = Depends(check_api_key)):
+async def create_user(user: User, api_key: str = Depends(check_api_key_heavy)):
     """Create a client certificate + .ovpn (create_user()).
 
     ``id`` is optional — NodeRequests only includes it when the panel knows
@@ -369,7 +369,7 @@ async def create_user(user: User, api_key: str = Depends(check_api_key)):
 
 
 @router.delete("/user/{uid}", response_model=ResponseModel)
-async def delete_user(uid: str, api_key: str = Depends(check_api_key)):
+async def delete_user(uid: str, api_key: str = Depends(check_api_key_heavy)):
     safe_id = validate_user_id(uid)
     if safe_id is None:
         return ResponseModel(success=False, msg="Invalid user id (must be UUID or simple id)")

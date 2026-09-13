@@ -65,7 +65,7 @@ Common flags:
 bash <(curl -sSL URL) \
   --name eu-1 --port 2083 --vpn-ports 1194,443,8443 \
   --api-key "$(openssl rand -hex 32)" \
-  --ipv6 --tls none
+  --ipv6 --tls none   # ⚠️ --tls none sends the API key in cleartext; prefer selfsigned/LE
 ```
 
 For automation and AI agents, `--json` gives a machine interface: exactly one JSON object on stdout (all logs on stderr), never prompts, documented exit codes (`0` ok, `1` error, `2` usage, `3` already installed, `4` not installed), and every flag has an `OVN_*` env equivalent:

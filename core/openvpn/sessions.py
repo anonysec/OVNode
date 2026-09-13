@@ -278,13 +278,25 @@ def _mgmt_password() -> str | None:
     return None
 
 
+_mgmt_passwordless_warned = False
+
+
 def _mgmt_authenticate(s: socket.socket, banner: str) -> str:
     """Handle ENTER PASSWORD challenge when the daemon requires it.
 
     Returns the (possibly updated) banner after auth. Legacy passwordless
-    daemons skip this entirely.
+    daemons skip this entirely — but that means any local process can drive
+    the management socket, so warn loudly (once) instead of staying silent.
     """
+    global _mgmt_passwordless_warned
     if "ENTER PASSWORD" not in banner.upper() and "PASSWORD:" not in banner.upper():
+        if not _mgmt_passwordless_warned:
+            _mgmt_passwordless_warned = True
+            logger.warning(
+                "Management socket has NO password (legacy install) — any local "
+                "process can kill VPN sessions. Restart the agent to upgrade to "
+                "password-protected management."
+            )
         return banner
     pw = _mgmt_password()
     if not pw:
