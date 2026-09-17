@@ -1541,13 +1541,13 @@ installed_menu() {
             uninstall   "Uninstall" \
             quit        "Quit")"
         case "$tag" in
-            status)      do_status ;;
-            service)     node_service_menu ;;
-            restart-vpn) check_root; restart_vpn ;;
-            logs)        do_node_logs ;;
-            backup)      check_root; do_node_backup ;;
-            update)      do_update ;;
-            tls)         check_root; node_tls_menu ;;
+            status)      do_status || warn "Status failed" ;;
+            service)     node_service_menu || warn "Service action failed" ;;
+            restart-vpn) check_root; restart_vpn || warn "VPN restart failed" ;;
+            logs)        do_node_logs || warn "Could not read logs" ;;
+            backup)      check_root; do_node_backup || warn "Backup failed" ;;
+            update)      do_update || warn "Update failed" ;;
+            tls)         check_root; node_tls_menu || warn "TLS action failed" ;;
             uninstall)   do_uninstall; return 0 ;;
             *)           return 0 ;;
         esac
