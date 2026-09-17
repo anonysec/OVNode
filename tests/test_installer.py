@@ -74,12 +74,25 @@ def test_usage_errors_exit_2_with_json():
             assert data["ok"] is False and data["exit_code"] == 2
 
 
-def test_stdout_carries_only_json():
+def test_stdout_carries_only_json(tmp_path):
     """In --json mode stdout must be parseable as a single object even when
-    the run fails — all human output goes to stderr."""
-    r = sh("install", "--json", "--api-key", "0123456789abcdef")
+    the run fails — all human output goes to stderr.
+
+    Uses a usage error (not a full run): the suite may run as root, and a
+    "successful" install would really provision /opt/ovnode.
+    """
+    r = sh(
+        "install",
+        "--json",
+        "--port",
+        "abc",
+        "--api-key",
+        "0123456789abcdef",
+        env={"OVN_APP_DIR": str(tmp_path / "empty")},
+    )
+    assert r.returncode == 2
     data = json.loads(r.stdout)
-    assert data["ok"] is False  # dies at root check in the sandbox
+    assert data["ok"] is False
     assert "error" in data
     # Progress/log lines never leak to stdout.
     assert "\n" not in r.stdout.strip()
@@ -92,18 +105,18 @@ def test_env_overrides_mirror_flags():
     assert "16 characters" in data["error"]
 
 
-def test_json_implies_noninteractive():
+def test_json_implies_noninteractive(tmp_path):
     """--json must never hang waiting for a prompt (AI/automation safety)."""
-    import os
-
-    if os.path.isdir("/opt/ovnode"):
-        import pytest
-
-        pytest.skip(
-            "/opt/ovnode is already installed here; already-installed exit (3) is also correct"
-        )
-    r = sh("install", "--json", "--api-key", "0123456789abcdef")  # stdin closed
-    assert r.returncode in (1, 2)  # fails fast, never blocks
+    r = sh(
+        "install",
+        "--json",
+        "--port",
+        "abc",
+        "--api-key",
+        "0123456789abcdef",
+        env={"OVN_APP_DIR": str(tmp_path / "empty")},
+    )  # stdin closed
+    assert r.returncode == 2  # fails fast at validation, never blocks
 
 
 def test_nat_script_is_idempotent_and_docker_skips_host_nat():
@@ -273,3 +286,34 @@ def test_menu_without_terminal_is_usage_error():
 def test_logs_command_never_crashes():
     r = sh("logs", "5")
     assert r.returncode == 0
+
+
+def test_no_function_ends_with_a_failing_test():
+    """`set -e` trap: a function whose last statement is `[[ ... ]] && ...`
+    returns 1 when the test is false, which exits the whole installer."""
+    import re
+
+    lines = open(INSTALLER, encoding="utf-8").readlines()
+    func = None
+    body: list[str] = []
+    offenders = []
+    for i, line in enumerate(lines, 1):
+        m = re.match(r"^([a-zA-Z_][a-zA-Z0-9_]*)\(\)\s*\{$", line)
+        if m and func is None:
+            func, body = m.group(1), []
+            continue
+        if func is None:
+            continue
+        if line == "}":
+            meaningful = [
+                ln.strip()
+                for ln in body
+                if ln.strip() and not ln.strip().startswith("#")
+            ]
+            tail = meaningful[-1] if meaningful else ""
+            if re.match(r"^\[\[.*\]\]\s*&&", tail):
+                offenders.append((func, i, tail))
+            func = None
+        else:
+            body.append(line)
+    assert not offenders, offenders

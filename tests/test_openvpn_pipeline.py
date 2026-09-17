@@ -159,7 +159,22 @@ sys.exit(1 if FAIL else 0)
 
 def test_openvpn_pipeline():
     with tempfile.TemporaryDirectory(prefix="ovnode-pki-") as root:
-        env = {**os.environ, "OVNODE_OPENVPN_ROOT": root}
+        # change_config rolls the pushed settings back when the restart fails
+        # (no service manager in the sandbox), so provide a systemctl that
+        # succeeds — the happy path for a healthy node — and exercise the
+        # rollback itself in tests/test_threadpool_and_rollback.py.
+        fake_bin = os.path.join(root, "fake-bin")
+        os.makedirs(fake_bin, exist_ok=True)
+        systemctl = os.path.join(fake_bin, "systemctl")
+        with open(systemctl, "w", encoding="utf-8") as f:
+            f.write("#!/bin/sh\nexit 0\n")
+        os.chmod(systemctl, 0o755)
+
+        env = {
+            **os.environ,
+            "OVNODE_OPENVPN_ROOT": root,
+            "PATH": fake_bin + os.pathsep + os.environ.get("PATH", ""),
+        }
         r = subprocess.run(
             [sys.executable, "-c", CHECK_SCRIPT],
             capture_output=True,
