@@ -34,7 +34,7 @@
 set -Eeuo pipefail
 
 # ── Constants ──────────────────────────────────────────────────────────
-VERSION="2.1.1"
+VERSION="2.1.2"
 # Forks: point source downloads (and update pulls) at your own repo.
 REPO="${OVN_REPO:-anonysec/OVNode}"
 # OVN_APP_DIR override exists for hermetic tests: status/uninstall probes
@@ -1066,7 +1066,7 @@ do_install() {
             warn "systemd not found — start the agent manually: cd $APP_DIR && .venv/bin/python main.py"
         else
             write_systemd_unit
-            run "Starting node agent service" systemctl restart "$SYSTEMD_SERVICE"
+            run "Starting node agent service" systemctl_bounded restart "$SYSTEMD_SERVICE"
         fi
     fi
 
@@ -1194,7 +1194,7 @@ do_update() {
         run "Updating Python dependencies" uv_sync
         # Re-write the unit: older installs launched via `uv run`.
         has_systemd && write_systemd_unit
-        run "Restarting node agent" systemctl restart "$SYSTEMD_SERVICE"
+        run "Restarting node agent" systemctl_bounded restart "$SYSTEMD_SERVICE"
     fi
     setup_nat
     setup_logrotate
@@ -1225,7 +1225,9 @@ do_uninstall() {
     confirm "Remove OVNode and stop all services?" || die "Cancelled."
 
     # Stopping the NAT unit runs its ExecStop cleanup (rules removed).
-    systemctl stop "$SYSTEMD_SERVICE" "$NAT_SERVICE" openvpn-server@server 2>/dev/null || true
+    systemctl_bounded stop "$SYSTEMD_SERVICE"
+    systemctl_bounded stop "$NAT_SERVICE"
+    systemctl_bounded stop openvpn-server@server
     systemctl disable "$SYSTEMD_SERVICE" "$NAT_SERVICE" openvpn-server@server 2>/dev/null || true
     rm -f "/etc/systemd/system/$SYSTEMD_SERVICE" "/etc/systemd/system/$NAT_SERVICE"
     systemctl daemon-reload 2>/dev/null || true
@@ -1439,6 +1441,28 @@ node_name_from_env() {
 
 is_docker_node() { [[ -f "$(compose_file)" ]]; }
 
+# systemd waits up to TimeoutStopSec for a stuck unit; bound the wait so an
+# uninstall/update never looks frozen, then force the unit.
+STOP_TIMEOUT="${OVN_STOP_TIMEOUT:-20}"
+
+systemctl_bounded() {  # systemctl_bounded stop|restart <unit>
+    local action="$1" unit="$2"
+    # Not loaded (Docker install, or NAT unit absent): nothing to do.
+    if [[ "$(systemctl show -p LoadState --value "$unit" 2>/dev/null)" != "loaded" ]]; then
+        return 0
+    fi
+    if timeout "$STOP_TIMEOUT" systemctl "$action" "$unit" 2>/dev/null; then
+        return 0
+    fi
+    warn "systemctl $action $unit did not finish in ${STOP_TIMEOUT}s — forcing it"
+    systemctl kill -s SIGKILL "$unit" >/dev/null 2>&1 || true
+    sleep 1
+    if [[ "$action" == "restart" ]]; then
+        timeout "$STOP_TIMEOUT" systemctl start "$unit" 2>/dev/null || true
+    fi
+    return 0
+}
+
 node_service_action() {  # start|stop|restart
     if is_docker_node; then
         command -v docker >/dev/null 2>&1 || die "Docker not found on this host"
@@ -1450,7 +1474,7 @@ node_service_action() {  # start|stop|restart
 }
 
 restart_vpn() {
-    if systemctl restart openvpn-server@server 2>/dev/null; then
+    if timeout "$STOP_TIMEOUT" systemctl restart openvpn-server@server 2>/dev/null; then
         step "OpenVPN restarted (systemd)"
         return 0
     fi
