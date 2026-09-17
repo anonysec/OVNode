@@ -126,17 +126,50 @@ def test_success_output_includes_panel_bundle():
 
 
 def test_tls_wizard_defaults_to_selfsigned():
-    """First-timers get encryption by default; None stays opt-in for LAN use."""
+    """TLS is always on: self-signed is the default and plain HTTP is gone."""
     with open(INSTALLER, encoding="utf-8") as f:
         content = f.read()
-    assert 'tls_choice="$(ask "TLS mode" "3")"' in content
+    assert 'tls_choice="$(ask "TLS mode" "1")"' in content
+    assert "None (HTTP)" not in content
+    assert 'TLS_METHOD="${OVN_TLS:-selfsigned}"' in content
 
 
-def test_already_installed_menu_defaults_to_quit():
-    """On EOF/Enter the menu must quit, never auto-start update/uninstall."""
+def test_plain_http_is_rejected():
+    """--tls none must fail with a usage error and a clear message."""
+    r = sh(
+        "install",
+        "--json",
+        "--tls",
+        "none",
+        "--api-key",
+        "0123456789abcdef",
+        env={"OVN_APP_DIR": "/tmp/ovn-nowhere"},
+    )
+    assert r.returncode == 2, r.stderr
+    data = json.loads(r.stdout)
+    assert "Plain HTTP is not allowed" in data["error"]
+
+
+def test_start_menu_offers_express_custom_update_uninstall():
+    """A bare interactive run opens the friendly menu (not the wizard)."""
     with open(INSTALLER, encoding="utf-8") as f:
         content = f.read()
-    assert 'choice="$(ask "Select" "3")"' in content
+    assert "start_menu" in content
+    for label in ("Express", "Custom", "Update", "Uninstall"):
+        assert label in content
+    # Express skips every question and turns TLS on.
+    assert "apply_express_defaults()" in content
+    assert "TLS_METHOD=\"selfsigned\"" in content
+    assert ': "${VPN_PROTO:=udp}"' in content
+
+
+def test_already_installed_menu_never_auto_runs_destructive_actions():
+    """Enter/EOF/cancel must not start update or uninstall by default."""
+    with open(INSTALLER, encoding="utf-8") as f:
+        content = f.read()
+    assert 'tui_select "OVNode — node"' in content
+    assert 'quit        "Quit")' in content
+    assert "*)           return 0 ;;" in content
 
 
 def test_env_recovery_survives_missing_keys(tmp_path):
@@ -185,3 +218,58 @@ def test_repo_override_for_forks():
     with open(INSTALLER, encoding="utf-8") as f:
         content = f.read()
     assert 'REPO="${OVN_REPO:-anonysec/OVNode}"' in content
+
+
+def test_installer_hardening_guards():
+    """Source-level guards for issues that only bite on real servers.
+
+    The tar downloads used a fixed /tmp path (symlink/TOCTOU as root) and PKI
+    backups were created with the caller's umask (world-readable CA key), so
+    lock the fixed patterns in.
+    """
+    with open(INSTALLER, encoding="utf-8") as f:
+        content = f.read()
+    assert "mktemp /tmp/ovn.XXXXXX.tar.gz" in content
+    assert "curl -fsSLo /tmp/ovn.tar.gz" not in content
+    assert "umask 077" in content
+    assert 'chmod 600 "$file"' in content
+    assert "chmod 600 /etc/ssl/self-signed/privkey.pem" in content
+
+
+def test_terminal_command_and_tui_are_installed():
+    """The installer copies itself to /usr/local/bin as ovnode (+ ovn)."""
+    with open(INSTALLER, encoding="utf-8") as f:
+        content = f.read()
+    assert 'BIN_DIR="${OVN_BIN_DIR:-/usr/local/bin}"' in content
+    assert 'CLI_NAME="ovnode"' in content
+    assert 'CLI_ALIAS="ovn"' in content
+    assert content.count("install_cli") >= 3  # definition + do_install + do_update
+    assert content.count("remove_cli") >= 2  # definition + do_uninstall
+    assert "command -v whiptail" in content and "tui_select" in content
+
+
+def test_help_lists_tui_commands():
+    r = sh("help")
+    output = r.stdout + r.stderr
+    for token in (
+        "start | stop | restart",
+        "restart-vpn",
+        "logs [N|-f]",
+        "backup",
+        "tls",
+        "menu",
+        "Installed commands: ovnode",
+    ):
+        assert token in output, token
+
+
+def test_menu_without_terminal_is_usage_error():
+    """`menu` must not fall back to defaults and start installing."""
+    r = sh("menu")
+    assert r.returncode == 2
+    assert "No terminal available" in r.stderr
+
+
+def test_logs_command_never_crashes():
+    r = sh("logs", "5")
+    assert r.returncode == 0

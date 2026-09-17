@@ -14,6 +14,7 @@ from __future__ import annotations
 
 import os
 import subprocess
+import tempfile
 
 from core.logger import logger
 from core.openvpn import store
@@ -46,6 +47,16 @@ def _cert_paths(cn: str) -> tuple[str, str]:
 # ── profile generation ───────────────────────────────────────────────
 
 
+def _profile_head_is_valid(path: str) -> bool:
+    """True when a cached .ovpn looks like a real client profile."""
+    try:
+        with open(path, encoding="utf-8", errors="ignore") as check:
+            head = check.read(4096)
+    except OSError:
+        return False
+    return head.lstrip().startswith("client") or "<ca>" in head
+
+
 def _build_ovpn(cn: str) -> bool:
     """(Re)build users/<cn>/client.ovpn from the template + cert bundle."""
     crt, inline = _cert_paths(cn)
@@ -65,40 +76,45 @@ def _build_ovpn(cn: str) -> bool:
     try:
         store.create_user(cn)
         out_path = store.ovpn_path(cn)
-        with open(out_path, "w") as out:
-            subprocess.run(
-                ["grep", "-vh", "^#", CLIENT_TEMPLATE, cert_src],
-                stdout=out,
-                check=True,
-                timeout=30,
-            )
-            # Embed the private key in the standard <key>…</key> block.
-            with open(key_path, encoding="utf-8") as kf:
-                out.write("<key>\n")
-                out.write(kf.read())
-                out.write("</key>\n")
-            # server.conf uses tls-crypt; the profile must embed the same
-            # pre-shared key inline or the handshake fails.
-            tls_block = tls_crypt_block()
-            if tls_block:
-                out.write(tls_block)
-        os.chmod(out_path, 0o600)
-        # Post-build sanity: the panel validates downloads start with
-        # "client" or contain "<ca>" — reject a corrupt template early
-        # instead of caching a broken profile that fails every handshake.
+        # Write via a same-directory temp file: the profile embeds the client
+        # private key and the tls-crypt PSK, and mkstemp creates it 0600 from
+        # the first byte — a plain open("w") is 0644 under the default umask
+        # and would leak the key until a later chmod. os.replace makes the
+        # final file appear atomically.
+        directory = os.path.dirname(out_path) or "."
+        fd, tmp_path = tempfile.mkstemp(dir=directory, prefix=".client-ovpn-")
         try:
-            with open(out_path, encoding="utf-8", errors="ignore") as check:
-                head = check.read(4096)
-            if not (head.lstrip().startswith("client") or "<ca>" in head):
+            with os.fdopen(fd, "w", encoding="utf-8") as out:
+                subprocess.run(
+                    ["grep", "-vh", "^#", CLIENT_TEMPLATE, cert_src],
+                    stdout=out,
+                    check=True,
+                    timeout=30,
+                )
+                # Embed the private key in the standard <key>…</key> block.
+                with open(key_path, encoding="utf-8") as kf:
+                    out.write("<key>\n")
+                    out.write(kf.read())
+                    out.write("</key>\n")
+                # server.conf uses tls-crypt; the profile must embed the same
+                # pre-shared key inline or the handshake fails.
+                tls_block = tls_crypt_block()
+                if tls_block:
+                    out.write(tls_block)
+            # Post-build sanity: the panel validates downloads start with
+            # "client" or contain "<ca>" — reject a corrupt template before it
+            # is swapped in.
+            if not _profile_head_is_valid(tmp_path):
                 logger.error("Built .ovpn for cn='%s' failed validation (bad template?)", cn)
+                return False
+            os.replace(tmp_path, out_path)
+            tmp_path = ""
+        finally:
+            if tmp_path:
                 try:
-                    os.remove(out_path)
+                    os.remove(tmp_path)
                 except OSError:
                     pass
-                return False
-        except OSError as e:
-            logger.error("Could not validate .ovpn for cn='%s': %s", cn, e)
-            return False
         logger.info("Built client profile for cn='%s'", cn)
         return True
     except Exception as e:
@@ -157,6 +173,16 @@ def delete_user_on_server(uid: str) -> DeleteResult:
             return DeleteResult.FAILED
         if not _easyrsa("gen-crl"):
             logger.error("Failed to regenerate CRL after revoking '%s'", cn)
+            return DeleteResult.FAILED
+    else:
+        # Retried delete: easyrsa moves the cert out of issued/ on revoke, so
+        # a crash after revoke but before gen-crl leaves no crt here. If the
+        # CRL is older than the PKI index it does not cover the revoked cert —
+        # regenerate before reporting success.
+        from core.openvpn.pki import crl_is_current
+
+        if not crl_is_current() and not _easyrsa("gen-crl"):
+            logger.error("Failed to regenerate CRL while completing delete of '%s'", cn)
             return DeleteResult.FAILED
 
     for path in (crt, inline, os.path.join(_OPENVPN_ROOT, "ccd", cn)):
@@ -221,18 +247,18 @@ def set_user_limit(uid_or_name: str, max_logins: int) -> bool:
         return False
 
 
-async def download_ovpn_file(uid: str) -> str | None:
+def download_ovpn_file(uid: str) -> str | None:
     """Path to the user's .ovpn, creating cert/profile lazily if needed."""
     cn = cn_from_uid(uid)
     _, inline = _cert_paths(cn)
 
+    path = store.ovpn_path(cn)
+    if os.path.exists(path) and _profile_head_is_valid(path):
+        return path
     if os.path.exists(inline) and _build_ovpn(cn):
-        return store.ovpn_path(cn)
-    if os.path.exists(store.ovpn_path(cn)):
-        return store.ovpn_path(cn)
+        return path
     if create_user_on_server(uid, store.get_name(cn) or ""):
-        path = store.ovpn_path(cn)
-        return path if os.path.exists(path) else None
+        return path if os.path.exists(path) and _profile_head_is_valid(path) else None
     return None
 
 

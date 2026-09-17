@@ -78,6 +78,10 @@ ovpn = read(ovpn_path(uid))
 ok("<tls-crypt>" in ovpn and "</tls-crypt>" in ovpn, "ovpn tls-crypt")
 ok("BEGIN OpenVPN Static key" in ovpn, "ovpn key content")
 ok("BEGIN CERTIFICATE" in ovpn and "BEGIN PRIVATE KEY" in ovpn, "ovpn cert+key")
+import glob as _glob
+_prof_dir = os.path.dirname(ovpn_path(uid))
+ok((os.stat(ovpn_path(uid)).st_mode & 0o777) == 0o600, "ovpn mode 0600")
+ok(not _glob.glob(os.path.join(_prof_dir, ".client-ovpn-*")), "no temp profiles")
 from core.openvpn.store import get_limit
 ok(get_limit(uid) == 2, "limit state")
 
@@ -118,6 +122,35 @@ try:
 except Exception:
     bad = None
 ok(bad is None or not change_config(bad), "bad port rejected")
+
+# Failed profile builds must not leave a partial world-readable file behind.
+from core.openvpn.users import _build_ovpn, _cert_paths
+bad_uid = "testuser43"
+ok(create_user_on_server(bad_uid, "Bad Template", max_logins=1), "create user for failure test")
+_os.remove(ovpn_path(bad_uid))
+_crt, _inline = _cert_paths(bad_uid)
+with open(CLIENT_TEMPLATE, "w", encoding="utf-8") as f:
+    f.write("this is not a client config\n")
+with open(_inline, "w", encoding="utf-8") as f:
+    f.write("garbage material\n")
+ok(not _build_ovpn(bad_uid), "broken material rejected")
+ok(not os.path.exists(ovpn_path(bad_uid)), "no profile written on failure")
+_bad_dir = os.path.dirname(ovpn_path(bad_uid))
+ok(not _glob.glob(os.path.join(_bad_dir, ".client-ovpn-*")), "no temp on failure")
+
+# Retried delete: the cert is already revoked/moved but the CRL predates the
+# revocation — the delete must regenerate the CRL instead of reporting OK.
+from core.openvpn.users import delete_user_on_server
+from core.validation import DeleteResult
+from core.openvpn.pki import CRL_FILE, PKI_DIR, run_easyrsa as _run_easyrsa
+retry_uid = "testuser44"
+ok(create_user_on_server(retry_uid, "Retry User", max_logins=1), "create retry user")
+ok(_run_easyrsa("revoke", retry_uid), "revoke directly (simulating a crashed delete)")
+import time as _time
+_os.utime(_os.path.join(PKI_DIR, "index.txt"), (_time.time() + 5, _time.time() + 5))
+old_crl = os.stat(CRL_FILE).st_mtime
+ok(delete_user_on_server(retry_uid) == DeleteResult.OK, "retried delete reports OK")
+ok(os.stat(CRL_FILE).st_mtime > old_crl, "CRL regenerated on retried delete")
 
 print(f"RESULT: {PASS} passed, {FAIL} failed")
 sys.exit(1 if FAIL else 0)

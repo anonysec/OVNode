@@ -12,6 +12,7 @@ client (backend/node/requests.py):
     GET    /sync/sessions                    get_sessions
     GET    /sync/config                      read_config (drift detect)
     POST   /sync/config                      update_config
+    POST   /sync/restart                     restart_vpn
     POST   /sync/user                        create_user
     PUT    /sync/user                        change_user_status
     PUT    /sync/user/limit                  set_user_limit
@@ -19,6 +20,7 @@ client (backend/node/requests.py):
     POST   /sync/user/{uid}/disconnect       disconnect_user
     POST   /sync/user/{uid}/reset-usage      reset_user_usage
     GET    /sync/download/ovpn/{uid}         download_ovpn_client / _bytes
+    POST   /sync/update                      trigger_update
 
 The panel treats a call as successful ONLY when the response is HTTP 200
 with ``{"success": true}`` — so handlers report business failures inside the
@@ -33,11 +35,12 @@ import time
 
 import psutil
 from fastapi import APIRouter, Depends, Request
+from fastapi.concurrency import run_in_threadpool
 from fastapi.responses import FileResponse
 
 from core.api.auth import check_api_key, check_api_key_heavy
 from core.api.schemas import ResponseModel, SetSettingsModel, User, UserLimit
-from core.logger import log_stats, recent_logs
+from core.logger import log_stats, logger, recent_logs
 from core.openvpn.control import change_config
 from core.openvpn.sessions import disconnect_user, user_diagnostics
 from core.openvpn.users import (
@@ -274,6 +277,85 @@ async def update_config(
     return ResponseModel(success=True, msg="Configuration updated successfully")
 
 
+@router.post("/update", response_model=ResponseModel)
+async def update_node_software(api_key: str = Depends(check_api_key_heavy)):
+    """Trigger the node's self-update (POST /sync/update, trigger_update()).
+
+    Native installs launch ``install.sh update --json`` detached and answer
+    immediately; Docker nodes refuse (the host owns the container image).
+    Heavy-limited: an update restarts the agent, so a hot loop must not
+    queue them.
+    """
+    from core.updater import trigger_update
+
+    return ResponseModel(**trigger_update())
+
+
+@router.post("/restart", response_model=ResponseModel)
+async def restart_openvpn_service(api_key: str = Depends(check_api_key_heavy)):
+    """Restart/reload OpenVPN (POST /sync/restart, restart_vpn()).
+
+    Reports failures inside the contract envelope instead of raising, so a
+    broken OpenVPN — or a failing service manager — never takes this API down
+    with it. ``data.openvpn_running`` is the liveness check performed *after*
+    the restart attempt. Heavy-limited: a restart briefly bounces tunnels, so
+    a hot panel loop must not queue them.
+    """
+    from core.openvpn.control import openvpn_is_running, restart_openvpn
+
+    try:
+        restarted = bool(await run_in_threadpool(restart_openvpn))
+        error = ""
+    except Exception as e:
+        restarted = False
+        error = str(e)
+        logger.error("Panel-triggered OpenVPN restart failed: %s", e, exc_info=e)
+    try:
+        running = bool(await run_in_threadpool(openvpn_is_running))
+    except Exception as e:
+        running = False
+        logger.warning("Could not determine OpenVPN liveness: %s", e)
+    if restarted:
+        return ResponseModel(
+            success=True,
+            msg="OpenVPN restart command completed",
+            data={"openvpn_running": running},
+        )
+    msg = f"OpenVPN restart failed: {error}" if error else "OpenVPN restart failed"
+    return ResponseModel(success=False, msg=msg, data={"openvpn_running": running})
+
+
+@router.post("/renew-cert", response_model=ResponseModel)
+async def renew_server_cert(api_key: str = Depends(check_api_key_heavy)):
+    """Renew the OpenVPN server certificate, then restart OpenVPN.
+
+    Used by the panel when the server certificate is close to expiry. The old
+    certificate is archived by easyrsa; connected clients reconnect after the
+    restart.
+    """
+    from core.openvpn.control import restart_openvpn
+    from core.openvpn.pki import SERVER_CERT, renew_server_certificate
+
+    renewed = bool(await run_in_threadpool(renew_server_certificate))
+    if not renewed:
+        return ResponseModel(
+            success=False,
+            msg="Server certificate renewal failed — check the node logs",
+        )
+    restarted = bool(await run_in_threadpool(restart_openvpn))
+    if not restarted:
+        return ResponseModel(
+            success=False,
+            msg="Certificate renewed, but OpenVPN did not restart — restart it manually",
+        )
+    expiry = await run_in_threadpool(_openssl_enddate, SERVER_CERT)
+    return ResponseModel(
+        success=True,
+        msg="Server certificate renewed; OpenVPN restarted",
+        data={"server_expiry": expiry},
+    )
+
+
 @router.get("/usage", response_model=ResponseModel)
 async def get_all_user_usage(api_key: str = Depends(check_api_key)):
     """Traffic counters — consumed by get_usage() (traffic sync + mlogin).
@@ -358,7 +440,8 @@ async def create_user(user: User, api_key: str = Depends(check_api_key_heavy)):
     if uid is None:
         return ResponseModel(success=False, msg="Invalid user id (must be UUID or simple id)")
     max_logins = user.max_logins if user.max_logins is not None else 1
-    success = create_user_on_server(uid, user.name or "", max_logins)
+    # easyrsa can fork for up to 120s — never run it on the event loop.
+    success = await run_in_threadpool(create_user_on_server, uid, user.name or "", max_logins)
     if success:
         return ResponseModel(
             success=True,
@@ -373,7 +456,8 @@ async def delete_user(uid: str, api_key: str = Depends(check_api_key_heavy)):
     safe_id = validate_user_id(uid)
     if safe_id is None:
         return ResponseModel(success=False, msg="Invalid user id (must be UUID or simple id)")
-    result = delete_user_on_server(safe_id)
+    # revoke + gen-crl can fork easyrsa for ~240s — off the event loop.
+    result = await run_in_threadpool(delete_user_on_server, safe_id)
     if result == DeleteResult.OK:
         return ResponseModel(
             success=True,
@@ -430,18 +514,27 @@ async def set_user_login_limit(payload: UserLimit, api_key: str = Depends(check_
 
 
 @router.get("/download/ovpn/{uid}")
-async def download_ovpn(uid: str, api_key: str = Depends(check_api_key)):
+async def download_ovpn(uid: str, request: Request, api_key: str = Depends(check_api_key)):
     """Return the client's .ovpn profile (download_ovpn_client()/_bytes()).
 
     The panel validates the raw body: it must start with "client" or contain
     "<ca>" — which the generated profile always does. The client cert/config
     is created lazily here on first download (the panel intentionally does
     not create node-side users at Add User time).
+
+    The tight cert-issuing budget is charged only on the cold path (profile
+    missing → easyrsa fork); cached downloads keep the normal bucket.
     """
     safe_id = validate_user_id(uid)
     if safe_id is None:
         return ResponseModel(success=False, msg="Invalid user id (must be UUID or simple id)")
-    response = await download_ovpn_file(safe_id)
+    from core.api.auth import apply_heavy_limit
+    from core.openvpn import store
+
+    if not os.path.exists(store.ovpn_path(cn_from_uid(safe_id))):
+        apply_heavy_limit(request)
+    # Lazy cert issuance/profile build inside this call is blocking work.
+    response = await run_in_threadpool(download_ovpn_file, safe_id)
     if response:
         return FileResponse(
             path=response,

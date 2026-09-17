@@ -2,7 +2,7 @@
 
 [![CI](https://github.com/anonysec/OVNode/actions/workflows/ci.yml/badge.svg)](https://github.com/anonysec/OVNode/actions/workflows/ci.yml)
 [![License: MIT](https://img.shields.io/badge/License-MIT-green.svg)](LICENSE)
-[![Version](https://img.shields.io/badge/version-2.0.0-blue)](CHANGELOG.md)
+[![Version](https://img.shields.io/badge/version-2.1.0-blue)](CHANGELOG.md)
 
 OpenVPN node agent for [OVManager](https://github.com/anonysec/OVManager). Manages the OpenVPN server, PKI, per-user configs, traffic accounting, and multi-login enforcement — implementing exactly the sync API OVManager's panel expects.
 
@@ -50,11 +50,13 @@ Identity: the OpenVPN CN is the panel's numeric user id (`str(user.id)`); the di
 bash <(curl -sSL https://anonysec.github.io/OVNode/install.sh)
 ```
 
-Wizard defaults are fine (`node-1`, `2083`, `1194`, blank API key =
-generated, self-signed TLS). Save the green summary (node name + API key),
-then register it in the panel: **Nodes → Add Node**.
+The menu offers **Express** (recommended — no questions: `node-1`, port
+`2083`, UDP, self-signed TLS, generated API key) or **Custom** (asks every
+question; plain HTTP is not offered). Save the green summary (node name +
+API key), then register it in the panel: **Nodes → Add Node**.
 
 Full walkthrough: [docs/quickstart.md](docs/quickstart.md) ·
+under the hood: [docs/how-it-works.md](docs/how-it-works.md) ·
 stuck: [docs/troubleshooting.md](docs/troubleshooting.md).
 
 Advanced / unattended:
@@ -65,7 +67,7 @@ Common flags:
 bash <(curl -sSL URL) \
   --name eu-1 --port 2083 --vpn-ports 1194,443,8443 \
   --api-key "$(openssl rand -hex 32)" \
-  --ipv6 --tls none   # ⚠️ --tls none sends the API key in cleartext; prefer selfsigned/LE
+  --ipv6 --tls selfsigned   # selfsigned (default) | letsencrypt | custom
 ```
 
 For automation and AI agents, `--json` gives a machine interface: exactly one JSON object on stdout (all logs on stderr), never prompts, documented exit codes (`0` ok, `1` error, `2` usage, `3` already installed, `4` not installed), and every flag has an `OVN_*` env equivalent:
@@ -88,6 +90,16 @@ bash <(curl -sSL URL) update
 bash <(curl -sSL URL) uninstall
 bash <(curl -sSL URL) --purge uninstall
 ```
+
+## Terminal menu
+
+Every install adds a command — run `ovnode` (or `ovn`) on the server and
+pick from a menu: **Status · Start/Stop/Restart agent · Restart VPN · Logs ·
+Backup · Update · TLS · Uninstall**. `logs -f` follows live.
+
+Every item is also a plain command for scripts (stable exit codes):
+`ovnode status | start | stop | restart | restart-vpn | logs [N|-f] |
+backup | update | tls | menu | help`.
 
 Forks: `OVN_REPO=myorg/OVNode` points source downloads and update pulls
 at your own repo.
