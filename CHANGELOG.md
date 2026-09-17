@@ -1,5 +1,12 @@
 # Changelog
 
+## 2.1.2 — 2026-09-17
+
+Companion to panel 2.1.2.
+
+- Uninstall/update stop and restart every unit through a 20-second bound and
+  force-kill on timeout, so a stuck service can no longer freeze the
+  installer; units that are not loaded are skipped quietly.
 ## 2.1.1 — 2026-09-17
 
 Companion to panel 2.1.1. No node-agent behavior changes.
