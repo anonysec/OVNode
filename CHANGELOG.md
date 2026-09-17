@@ -1,5 +1,16 @@
 # Changelog
 
+## 2.1.1 — 2026-09-17
+
+Companion to panel 2.1.1. No node-agent behavior changes.
+
+- Installer: passwords echo as `*` while typing; uninstall asks
+  "Also delete data and backups?" (default No); default node name is
+  `ovnode`.
+- Backups: `backup --keep N` prunes old `/var/backups` tarballs, and a host
+  timer can run it daily via `ovnode auto-backup on|off|status
+  [--time HH:MM] [--keep N]` (off by default).
+
 ## 2.1.0 — 2026-09-17
 
 Companion release to OVManager panel 2.1.0 — same sync API contract.

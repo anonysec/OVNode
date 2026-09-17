@@ -12,12 +12,12 @@ You need: a Linux server (Debian/Ubuntu recommended), `sudo` access.
 bash <(curl -sSL https://anonysec.github.io/OVNode/install.sh)
 ```
 
-Pick **Express** (recommended: `node-1`, port `2083`, UDP, self-signed TLS,
+Pick **Express** (recommended: `ovnode`, port `2083`, UDP, self-signed TLS,
 generated API key — no questions) or **Custom**:
 
 | Question | Beginner answer |
 |---|---|
-| Node name | `node-1` (one short word; you will type the **same** name in the panel — renaming later orphans old data, so pick once) |
+| Node name | `ovnode` (one short word; you will type the **same** name in the panel — renaming later orphans old data, so pick once) |
 | Service port | Enter (`2083` — the panel's API, not the VPN) |
 | OpenVPN ports | Enter (`1194`; add `443,8443` for users on restrictive networks) |
 | API key | Leave blank — a strong one is generated. **Copy it from the summary.** |
@@ -31,7 +31,7 @@ One-liner for scripts (same result, no questions):
 
 ```bash
 curl -sSL https://anonysec.github.io/OVNode/install.sh \
-  | sudo bash -s -- install -y --name node-1 --tls selfsigned \
+  | sudo bash -s -- install -y --name ovnode --tls selfsigned \
     --api-key "$(openssl rand -hex 32)"
 ```
 
@@ -40,7 +40,7 @@ curl -sSL https://anonysec.github.io/OVNode/install.sh \
 In OVManager: **Nodes → Add Node** (or paste the printed `ovnode://`
 bundle — it fills everything):
 
-* Name = node name, **exactly** (`node-1`)
+* Name = node name, **exactly** (`ovnode`)
 * Address = this server's **public** IP (if the summary shows `10.x` /
   `192.168.x`, the box is behind NAT — use the public IP)
 * Port `2083`, API key from step 1, TLS **on** (self-signed or Let's Encrypt)

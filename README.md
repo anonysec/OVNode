@@ -2,7 +2,7 @@
 
 [![CI](https://github.com/anonysec/OVNode/actions/workflows/ci.yml/badge.svg)](https://github.com/anonysec/OVNode/actions/workflows/ci.yml)
 [![License: MIT](https://img.shields.io/badge/License-MIT-green.svg)](LICENSE)
-[![Version](https://img.shields.io/badge/version-2.1.0-blue)](CHANGELOG.md)
+[![Version](https://img.shields.io/badge/version-2.1.1-blue)](CHANGELOG.md)
 
 OpenVPN node agent for [OVManager](https://github.com/anonysec/OVManager). Manages the OpenVPN server, PKI, per-user configs, traffic accounting, and multi-login enforcement — implementing exactly the sync API OVManager's panel expects.
 
@@ -50,7 +50,7 @@ Identity: the OpenVPN CN is the panel's numeric user id (`str(user.id)`); the di
 bash <(curl -sSL https://anonysec.github.io/OVNode/install.sh)
 ```
 
-The menu offers **Express** (recommended — no questions: `node-1`, port
+The menu offers **Express** (recommended — no questions: `ovnode`, port
 `2083`, UDP, self-signed TLS, generated API key) or **Custom** (asks every
 question; plain HTTP is not offered). Save the green summary (node name +
 API key), then register it in the panel: **Nodes → Add Node**.
@@ -131,7 +131,7 @@ All optional except `API_KEY` — see `.env.example`:
 |---|---|---|
 | `SERVICE_PORT` | `2083` | Sync API port the panel connects to |
 | `API_KEY` | — | Shared secret with the panel (min 16 chars) |
-| `NODE_NAME` | `node-1` | Must match the node name registered in the panel |
+| `NODE_NAME` | `ovnode` | Must match the node name registered in the panel |
 | `OVNODE_RUNTIME_USER` / `OVNODE_RUNTIME_GROUP` | `nobody` / `nogroup` | OpenVPN privilege drop |
 | `OVNODE_MANAGEMENT_PORT` | `7505` | Local management interface |
 | `OVNODE_VPN_NETWORK` / `OVNODE_VPN_NETMASK` | `10.8.0.0` / `255.255.255.0` | Client pool |
