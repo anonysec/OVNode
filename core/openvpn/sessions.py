@@ -270,7 +270,8 @@ def _mgmt_password() -> str | None:
             continue
         try:
             with open(path, encoding="utf-8") as f:
-                pw = f.read().strip().splitlines()[0].strip() if f else ""
+                lines = f.read().strip().splitlines()
+            pw = lines[0].strip() if lines else ""
             if pw:
                 return pw
         except OSError:

@@ -22,6 +22,8 @@ import subprocess
 from datetime import UTC
 
 from core.logger import logger
+from core.openvpn import dns as dns_policy
+from core.openvpn import ipv6 as ipv6_policy
 from core.openvpn.store import SCRIPTS_DIR
 from core.openvpn.store import ensure_layout as _ensure_store_layout
 
@@ -392,6 +394,36 @@ def _days_until_openssl_date(raw: str) -> int | None:
         return None
 
 
+def renew_server_certificate() -> bool:
+    """Renew the OpenVPN server certificate (panel action).
+
+    easyrsa archives the old certificate under ``pki/renewed/`` and issues a
+    fresh one; callers restart OpenVPN afterwards so clients pick it up.
+    """
+    if not os.path.exists(SERVER_CERT):
+        logger.error("Cannot renew server certificate: %s is missing", SERVER_CERT)
+        return False
+    if not _easyrsa("renew", "server", "nopass"):
+        logger.error("Server certificate renewal failed")
+        return False
+    logger.info("Server certificate renewed (previous cert archived under renewed/)")
+    return True
+
+
+def crl_is_current() -> bool:
+    """True when the CRL was generated after the last PKI change.
+
+    easyrsa's index.txt is updated by revoke/issue; a CRL older than the index
+    may not list a just-revoked certificate. Callers use this to decide whether
+    a ``gen-crl`` run is still owed before reporting a delete as complete.
+    """
+    index = os.path.join(PKI_DIR, "index.txt")
+    try:
+        return os.path.getmtime(CRL_FILE) >= os.path.getmtime(index)
+    except OSError:
+        return False
+
+
 def _ensure_crl() -> bool:
     """Generate the CRL when missing or near expiry; keep it OpenVPN-readable."""
     if os.path.exists(CRL_FILE):
@@ -471,7 +503,9 @@ def _fresh_server_conf() -> str:
     ensure_mgmt_password()
     port = _openvpn_port()
     proto = _fresh_proto()
-    dns1, dns2 = _vpn_dns()
+    # Panel-managed DNS state wins over installer defaults, so a node whose
+    # server.conf gets regenerated keeps the operator's chosen resolvers.
+    dns_lines = [f'push "dhcp-option DNS {server}"' for server in dns_policy.effective(_vpn_dns())]
     user, group = _runtime_user(), _runtime_group()
     lines = [
         f"port {port}",
@@ -483,16 +517,14 @@ def _fresh_server_conf() -> str:
         # forever (every CN ever seen), slowing pool allocation on restart.
         f"ifconfig-pool-persist {os.path.join(_OPENVPN_ROOT, 'server', 'ipp.txt')} 600",
         'push "redirect-gateway def1 bypass-dhcp"',
-        f'push "dhcp-option DNS {dns1}"',
-        f'push "dhcp-option DNS {dns2}"',
+        *dns_lines,
         'push "block-outside-dns"',
     ]
-    if _ipv6_enabled():
-        lines += [
-            "tun-ipv6",
-            f"server-ipv6 {_ipv6_prefix()}",
-            'push "route-ipv6 2000::/3"',
-        ]
+    # Panel-managed IPv6 state wins over the installer/env default, exactly
+    # like the DNS push lines above.
+    ipv6_enabled, ipv6_prefix = ipv6_policy.effective()
+    if ipv6_enabled:
+        lines += ipv6_policy.block_lines(ipv6_prefix)
     lines += [
         # 10s ping, 60s dead-time: dynamic-IP corpses are reaped fast enough
         # for the connect-hook takeover to matter. Existing installs keep
@@ -729,7 +761,35 @@ def tls_crypt_block() -> str:
 
 
 def init_pki() -> None:
-    """Initialize PKI + OpenVPN config. Safe to call on every startup."""
+    """Initialize PKI + OpenVPN config. Safe to call on every startup.
+
+    The whole check-then-create sequence runs under a dedicated init lock:
+    two agent processes sharing one PKI (e.g. a stray manual start next to
+    the service) would otherwise both see "no CA" and race build-ca.
+    """
+    import fcntl
+
+    os.makedirs(PKI_DIR, exist_ok=True)
+    lock_path = os.path.join(PKI_DIR, ".pki-init.lock")
+    try:
+        lock_fh = open(lock_path, "a")
+    except OSError as e:
+        logger.warning("PKI init lock unavailable (%s) — initializing unguarded", e)
+        _init_pki_locked()
+        return
+    try:
+        fcntl.flock(lock_fh.fileno(), fcntl.LOCK_EX)
+        _init_pki_locked()
+    finally:
+        try:
+            fcntl.flock(lock_fh.fileno(), fcntl.LOCK_UN)
+        except OSError:
+            pass
+        lock_fh.close()
+
+
+def _init_pki_locked() -> None:
+    """The actual init sequence; callers hold the PKI init lock."""
     for d in REQUIRED_DIRS:
         os.makedirs(d, exist_ok=True)
     # Store layout first: it also migrates any legacy on-disk layout, and

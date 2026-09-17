@@ -12,7 +12,8 @@ You need: a Linux server (Debian/Ubuntu recommended), `sudo` access.
 bash <(curl -sSL https://anonysec.github.io/OVNode/install.sh)
 ```
 
-Answer the wizard:
+Pick **Express** (recommended: `node-1`, port `2083`, UDP, self-signed TLS,
+generated API key — no questions) or **Custom**:
 
 | Question | Beginner answer |
 |---|---|
@@ -21,7 +22,7 @@ Answer the wizard:
 | OpenVPN ports | Enter (`1194`; add `443,8443` for users on restrictive networks) |
 | API key | Leave blank — a strong one is generated. **Copy it from the summary.** |
 | Mode | `1` Native on a normal VPS. `2` Docker if you prefer containers (needs `/dev/net/tun`, handled automatically). |
-| TLS | `3` Self-signed (encrypted; then turn TLS **on** in the panel). Never `5` None over the internet. |
+| TLS | `1` Self-signed (default; encrypted — turn TLS **on** in the panel). Plain HTTP is not offered. |
 
 You get a green summary: node name, address, service URL, **API key**.
 Keep the key — it is shown once.
@@ -42,7 +43,7 @@ bundle — it fills everything):
 * Name = node name, **exactly** (`node-1`)
 * Address = this server's **public** IP (if the summary shows `10.x` /
   `192.168.x`, the box is behind NAT — use the public IP)
-* Port `2083`, API key from step 1, TLS on (self-signed) / off (only if None)
+* Port `2083`, API key from step 1, TLS **on** (self-signed or Let's Encrypt)
 
 Green row = connected. Then Users → Add User → download `.ovpn` → connect
 with any OpenVPN client.

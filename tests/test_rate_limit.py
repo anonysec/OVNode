@@ -50,3 +50,24 @@ def test_buckets_recover_after_window(monkeypatch):
         assert auth._allowed("rl-recover-key") == (True, 0.0)
     finally:
         auth._ratelimit_buckets.clear()
+
+
+def test_bruteforce_limited_by_client_not_by_submitted_key():
+    """Guessing with a fresh key every request must still hit the limit.
+
+    Regression: buckets were keyed on the submitted key, so every guess got
+    a fresh 120/min allowance and brute force was effectively unlimited.
+    """
+    from fastapi.testclient import TestClient
+
+    from core.app import api
+
+    auth._ratelimit_buckets.clear()
+    try:
+        c = TestClient(api)
+        last = None
+        for i in range(auth._MAX_REQUESTS + 1):
+            last = c.get("/sync/status", headers={"key": f"wrong-key-{i:05d}"})
+        assert last.status_code == 429
+    finally:
+        auth._ratelimit_buckets.clear()

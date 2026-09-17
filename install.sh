@@ -34,7 +34,7 @@
 set -Eeuo pipefail
 
 # ── Constants ──────────────────────────────────────────────────────────
-VERSION="4.0"
+VERSION="2.1.0"
 # Forks: point source downloads (and update pulls) at your own repo.
 REPO="${OVN_REPO:-anonysec/OVNode}"
 # OVN_APP_DIR override exists for hermetic tests: status/uninstall probes
@@ -51,6 +51,10 @@ NAT_SCRIPT="/usr/local/sbin/ovnode-nat.sh"
 NAT_CONF="/etc/default/ovnode-nat"
 SYSCTL_CONF="/etc/sysctl.d/99-ovnode.conf"
 LOGROTATE_CONF="/etc/logrotate.d/ovnode"
+# Terminal command installed by install_cli() (copy of this installer).
+BIN_DIR="${OVN_BIN_DIR:-/usr/local/bin}"
+CLI_NAME="ovnode"
+CLI_ALIAS="ovn"
 
 # Exit codes (documented in --help; stable for automation)
 EX_OK=0 EX_ERROR=1 EX_USAGE=2 EX_ALREADY=3 EX_NOTINSTALLED=4
@@ -63,7 +67,7 @@ VPN_PORTS="${OVN_VPN_PORTS:-}"
 VPN_PROTO="${OVN_PROTO:-}"
 NODE_NAME="${OVN_NAME:-}"
 BRANCH="${OVN_BRANCH:-main}"
-TLS_METHOD="${OVN_TLS:-none}"
+TLS_METHOD="${OVN_TLS:-selfsigned}"
 TLS_DOMAIN="${OVN_TLS_DOMAIN:-}"
 TLS_KEY="${OVN_TLS_KEY:-}"
 TLS_CERT="${OVN_TLS_CERT:-}"
@@ -74,6 +78,20 @@ YES="${OVN_YES:-0}"
 PURGE="${OVN_PURGE:-0}"
 JSON="${OVN_JSON:-0}"
 QUIET="${OVN_QUIET:-0}"
+# True when the caller passed a CLI flag (as opposed to env defaults): used to
+# decide whether early validation / the start menu should run.
+CLI_FLAGS=0
+CMD_GIVEN=0
+# Set by the start menu: 1 = Express (no further questions).
+EXPRESS=0
+LOGS_ARG=""
+# Any OVN_* input present (mirrors CLI flags for early validation / no menu).
+ENV_INPUTS=0
+for _ovn_var in OVN_PORT OVN_API_KEY OVN_VPN_PORTS OVN_PROTO OVN_NAME OVN_TLS \
+                OVN_TLS_DOMAIN OVN_TLS_KEY OVN_TLS_CERT OVN_DOCKER OVN_IPV6 OVN_NO_NAT; do
+    if [[ -n "${!_ovn_var:-}" ]]; then ENV_INPUTS=1; fi
+done
+unset _ovn_var
 # Derived by validate_input:
 VPN_PORT="" EXTRA_PORTS=""
 
@@ -209,12 +227,24 @@ show_help() {
   Usage:
     bash <(curl -Ls URL) [command] [flags]
 
+  No command? An interactive menu opens: Express / Custom / Update / Uninstall.
+  Express installs with safe defaults (node-1, UDP, self-signed TLS, generated
+  API key). Custom asks every question. Plain HTTP is not offered.
+
   Commands:
     install             Install OVNode (default when omitted)
     update              Pull latest source and restart (with backup)
-    uninstall           Remove OVNode (data kept unless --purge)
     status              Report install state (respects --json)
+    start | stop | restart   Control the node agent service
+    restart-vpn         Restart/reload OpenVPN
+    logs [N|-f]         Last N log lines (default 100), or follow with -f
+    backup              Save state + PKI backups now (/var/backups)
+    tls                 Show/replace the cert (self-signed, LE, custom)
+    menu                Open the interactive menu
+    uninstall           Remove OVNode (data kept unless --purge)
     help                This help
+
+  Installed commands: ovnode (alias ovn) — same subcommands, plus a menu.
 
   Flags (every flag has an OVN_* env equivalent; CLI wins):
     --port PORT         Sync API port                    [OVN_PORT, 2083]
@@ -223,14 +253,13 @@ show_help() {
                         First = listener; the rest are redirected to it and
                         included in every .ovpn (client failover).
     --vpn-port PORT     Shorthand for a single port
-    --proto PROTO       VPN transport: udp (recommended, faster) or
-                        tcp (fallback where UDP is blocked) [OVN_PROTO]
-                        Interactive installs ask (UDP recommended);
-                        unattended installs default to tcp.
+    --proto PROTO       VPN transport: udp (default, faster) or tcp
+                        (fallback where UDP is blocked)  [OVN_PROTO]
     --name NAME         Node name                        [OVN_NAME, node-1]
     --branch BRANCH     Source branch                    [OVN_BRANCH, main]
-    --tls METHOD        letsencrypt | letsencrypt-ip | selfsigned |
-                        custom | none                    [OVN_TLS, none]
+    --tls METHOD        selfsigned (default) | letsencrypt | letsencrypt-ip |
+                        custom                           [OVN_TLS]
+                        Plain HTTP ("none") is rejected.
     --tls-domain DOM    Domain/IP for Let's Encrypt      [OVN_TLS_DOMAIN]
     --tls-key  FILE     Private key (--tls custom)       [OVN_TLS_KEY]
     --tls-cert FILE     Certificate (--tls custom)       [OVN_TLS_CERT]
@@ -261,28 +290,41 @@ parse_args() {
     local need2='[[ $# -ge 2 ]] || die "$1 needs a value" "$EX_USAGE"'
     while [[ $# -gt 0 ]]; do
         case "$1" in
-            install)      ACTION="install"; shift ;;
-            update)       ACTION="update"; shift ;;
-            uninstall|--uninstall) ACTION="uninstall"; shift ;;
-            status)       ACTION="status"; shift ;;
+            install)      ACTION="install"; CMD_GIVEN=1; shift ;;
+            update)       ACTION="update"; CMD_GIVEN=1; shift ;;
+            uninstall|--uninstall) ACTION="uninstall"; CMD_GIVEN=1; shift ;;
+            status)       ACTION="status"; CMD_GIVEN=1; shift ;;
             help|--help|-h) show_help ;;
-            --port)       eval "$need2"; PORT="$2"; shift 2 ;;
-            --api-key)    eval "$need2"; API_KEY="$2"; shift 2 ;;
-            --vpn-ports|--vpn-port) eval "$need2"; VPN_PORTS="$2"; shift 2 ;;
-            --proto) eval "$need2"; VPN_PROTO="$2"; shift 2 ;;
-            --name)       eval "$need2"; NODE_NAME="$2"; shift 2 ;;
-            --branch)     eval "$need2"; BRANCH="$2"; shift 2 ;;
-            --tls)        eval "$need2"; TLS_METHOD="$2"; shift 2 ;;
-            --tls-domain) eval "$need2"; TLS_DOMAIN="$2"; shift 2 ;;
-            --tls-key)    eval "$need2"; TLS_KEY="$2"; shift 2 ;;
-            --tls-cert)   eval "$need2"; TLS_CERT="$2"; shift 2 ;;
-            --docker)     DOCKER=1; shift ;;
-            --ipv6)       IPV6=1; shift ;;
-            --no-nat)     NO_NAT=1; shift ;;
-            --yes|-y)     YES=1; shift ;;
-            --purge)      PURGE=1; shift ;;
-            --json)       JSON=1; YES=1; shift ;;
+            --port)       eval "$need2"; PORT="$2"; CLI_FLAGS=1; shift 2 ;;
+            --api-key)    eval "$need2"; API_KEY="$2"; CLI_FLAGS=1; shift 2 ;;
+            --vpn-ports|--vpn-port) eval "$need2"; VPN_PORTS="$2"; CLI_FLAGS=1; shift 2 ;;
+            --proto) eval "$need2"; VPN_PROTO="$2"; CLI_FLAGS=1; shift 2 ;;
+            --name)       eval "$need2"; NODE_NAME="$2"; CLI_FLAGS=1; shift 2 ;;
+            --branch)     eval "$need2"; BRANCH="$2"; CLI_FLAGS=1; shift 2 ;;
+            --tls)        eval "$need2"; TLS_METHOD="$2"; CLI_FLAGS=1; shift 2 ;;
+            --tls-domain) eval "$need2"; TLS_DOMAIN="$2"; CLI_FLAGS=1; shift 2 ;;
+            --tls-key)    eval "$need2"; TLS_KEY="$2"; CLI_FLAGS=1; shift 2 ;;
+            --tls-cert)   eval "$need2"; TLS_CERT="$2"; CLI_FLAGS=1; shift 2 ;;
+            --docker)     DOCKER=1; CLI_FLAGS=1; shift ;;
+            --ipv6)       IPV6=1; CLI_FLAGS=1; shift ;;
+            --no-nat)     NO_NAT=1; CLI_FLAGS=1; shift ;;
+            --yes|-y)     YES=1; CLI_FLAGS=1; shift ;;
+            --purge)      PURGE=1; CLI_FLAGS=1; shift ;;
+            --json)       JSON=1; YES=1; CLI_FLAGS=1; shift ;;
             --quiet|-q)   QUIET=1; shift ;;
+            start)        ACTION="start"; CMD_GIVEN=1; shift ;;
+            stop)         ACTION="stop"; CMD_GIVEN=1; shift ;;
+            restart)      ACTION="restart"; CMD_GIVEN=1; shift ;;
+            restart-vpn)  ACTION="restart-vpn"; CMD_GIVEN=1; shift ;;
+            backup)       ACTION="backup"; CMD_GIVEN=1; shift ;;
+            tls)          ACTION="tls"; CMD_GIVEN=1; shift ;;
+            menu)         ACTION="menu"; CMD_GIVEN=1; shift ;;
+            logs)         ACTION="logs"; CMD_GIVEN=1
+                          if [[ $# -ge 2 && ( "$2" == "-f" || "$2" =~ ^[0-9]+$ ) ]]; then
+                              LOGS_ARG="$2"; shift 2
+                          else
+                              shift
+                          fi ;;
             *)            die "Unknown option: $1 (--help for usage)" "$EX_USAGE" ;;
         esac
     done
@@ -318,7 +360,8 @@ validate_input() {
     parse_vpn_ports
     [[ "$VPN_PORT" == "$PORT" ]] && die "OpenVPN port and service port must differ" "$EX_USAGE"
     # Normalize transport early so every consumer sees tcp|udp only.
-    VPN_PROTO="$(echo "${VPN_PROTO:-tcp}" | tr '[:upper:]' '[:lower:]')"
+    # UDP is the default: faster, and the panel can switch a node to TCP later.
+    VPN_PROTO="$(echo "${VPN_PROTO:-udp}" | tr '[:upper:]' '[:lower:]')"
     case "$VPN_PROTO" in
         udp|tcp) ;;
         *) die "Invalid transport '$VPN_PROTO' (use udp or tcp)" "$EX_USAGE" ;;
@@ -328,7 +371,8 @@ validate_input() {
     [[ -n "$API_KEY" ]] || die "API key is required (--api-key / OVN_API_KEY; interactive installs generate one)" "$EX_USAGE"
     [[ ${#API_KEY} -ge 16 ]] || die "API key must be at least 16 characters (openssl rand -hex 32)" "$EX_USAGE"
     case "$TLS_METHOD" in
-        letsencrypt|letsencrypt-ip|selfsigned|custom|none) ;;
+        letsencrypt|letsencrypt-ip|selfsigned|custom) ;;
+        none) die "Plain HTTP is not allowed — pick selfsigned (default), letsencrypt, letsencrypt-ip or custom" "$EX_USAGE" ;;
         *) die "Invalid TLS method: '$TLS_METHOD'" "$EX_USAGE" ;;
     esac
     if [[ "$TLS_METHOD" == "letsencrypt" || "$TLS_METHOD" == "letsencrypt-ip" ]]; then
@@ -388,9 +432,17 @@ backup_dir() {
     local stamp; stamp="$(date +%Y%m%d-%H%M%S)"
     local base; base="$(basename "$src")"
     local file="/var/backups/${label}-${base}-${stamp}.tar.gz"
+    # The archive contains the PKI (CA private key) and, in Docker mode, the
+    # generated compose file with the API key — create it root-only from the
+    # start (tar would otherwise honor the caller's umask).
+    local old_umask; old_umask="$(umask)"
+    umask 077
     if tar -czf "$file" -C "$(dirname "$src")" "$base" 2>/dev/null; then
+        umask "$old_umask"
+        chmod 600 "$file" 2>/dev/null || true
         step "Backup saved: $file"
     else
+        umask "$old_umask"
         warn "Backup failed for $src — continuing anyway"
     fi
 }
@@ -403,6 +455,9 @@ generate_selfsigned() {
         -keyout /etc/ssl/self-signed/privkey.pem \
         -out /etc/ssl/self-signed/fullchain.pem \
         -subj "/C=US/ST=Local/L=Local/O=OVNode/CN=${cn:-ovnode}" >/dev/null 2>&1
+    # The sync API TLS key is a secret: owner-only (the agent runs as root).
+    chmod 600 /etc/ssl/self-signed/privkey.pem
+    chmod 644 /etc/ssl/self-signed/fullchain.pem
     TLS_KEY="/etc/ssl/self-signed/privkey.pem"
     TLS_CERT="/etc/ssl/self-signed/fullchain.pem"
     step "Self-signed certificate generated"
@@ -801,11 +856,13 @@ fetch_source() {
         run "Cloning repository ($BRANCH)" \
             git clone --depth 1 --branch "$BRANCH" "https://github.com/${REPO}.git" "$APP_DIR"
     else
+        local tmp
+        tmp="$(mktemp /tmp/ovn.XXXXXX.tar.gz)"
         run "Downloading source tarball" \
-            curl -sSLo /tmp/ovn.tar.gz "https://github.com/${REPO}/archive/refs/heads/${BRANCH}.tar.gz"
+            curl -fsSLo "$tmp" "https://github.com/${REPO}/archive/refs/heads/${BRANCH}.tar.gz"
         mkdir -p "$APP_DIR"
-        tar -xzf /tmp/ovn.tar.gz --strip-components=1 -C "$APP_DIR" >/dev/null 2>&1 || die "Extract failed"
-        rm -f /tmp/ovn.tar.gz
+        tar -xzf "$tmp" --strip-components=1 -C "$APP_DIR" >/dev/null 2>&1 || die "Extract failed"
+        rm -f "$tmp"
     fi
 }
 
@@ -997,6 +1054,7 @@ do_install() {
     setup_nat
     setup_logrotate
     open_firewall_ports
+    install_cli
 
     sep; line ""
     step "${B}Installation complete!${NC}"
@@ -1054,8 +1112,13 @@ do_update() {
     else
         parse_vpn_ports
     fi
-    [[ "$TLS_METHOD" != "none" ]] || TLS_METHOD="$(env_get TLS_METHOD)"
-    : "${TLS_METHOD:=none}"
+    # Update keeps the install's existing TLS mode: read it from .env unless
+    # the caller passed --tls / OVN_TLS. (Legacy nodes may legitimately have
+    # "none" recorded; that still works — only new installs reject it.)
+    if [[ "$CLI_FLAGS" -eq 0 && -z "${OVN_TLS:-}" ]]; then
+        TLS_METHOD="$(env_get TLS_METHOD)"
+    fi
+    : "${TLS_METHOD:=selfsigned}"
 
     line ""; info "Updating OVNode..."
     detect_os
@@ -1075,10 +1138,12 @@ do_update() {
         git stash pop --quiet 2>/dev/null || true
     else
         warn "No git checkout — re-downloading source over existing install (.env preserved)"
+        local tmp
+        tmp="$(mktemp /tmp/ovn.XXXXXX.tar.gz)"
         run "Downloading source" \
-            curl -sSLo /tmp/ovn.tar.gz "https://github.com/${REPO}/archive/refs/heads/${BRANCH}.tar.gz"
-        tar -xzf /tmp/ovn.tar.gz --strip-components=1 -C "$APP_DIR" >/dev/null 2>&1 || die "Extract failed"
-        rm -f /tmp/ovn.tar.gz
+            curl -fsSLo "$tmp" "https://github.com/${REPO}/archive/refs/heads/${BRANCH}.tar.gz"
+        tar -xzf "$tmp" --strip-components=1 -C "$APP_DIR" >/dev/null 2>&1 || die "Extract failed"
+        rm -f "$tmp"
     fi
 
     local scheme="http"
@@ -1103,6 +1168,7 @@ do_update() {
         warn "Agent did not answer /sync/health after update — check: journalctl -u $SYSTEMD_SERVICE -n 50"
     fi
     [[ "$DOCKER" -eq 1 ]] && check_container_openvpn
+    install_cli
     step "Update complete"
     line ""
 
@@ -1133,6 +1199,7 @@ do_uninstall() {
     fi
 
     rm -f "$NAT_SCRIPT" "$NAT_CONF" "$SYSCTL_CONF" "$LOGROTATE_CONF"
+    remove_cli
     close_firewall_ports
     rm -rf "$APP_DIR"
     local purged=false
@@ -1162,7 +1229,7 @@ do_status() {
         local env_get; env_get() { grep -E "^$1=" "$APP_DIR/.env" 2>/dev/null | head -1 | cut -d= -f2- | tr -d '"' || true; }
         node="$(env_get NODE_NAME)"; : "${node:=node-1}"
         port="$(env_get SERVICE_PORT)"; : "${port:=$DEFAULT_PORT}"
-        tls="$(env_get TLS_METHOD)"; : "${tls:=none}"
+        tls="$(env_get TLS_METHOD)"; : "${tls:=selfsigned}"
         mode="native"
         [[ -f "$DATA_BASE/$node/docker-compose.yml" ]] && mode="docker"
 
@@ -1250,21 +1317,257 @@ interactive_setup() {
         [[ "$dep" == "2" ]] && DOCKER=1
     fi
 
-    sep; line "  TLS (encrypts the panel ↔ node API):"
-    line "  ${WH}1${NC})  Let's Encrypt (domain)      needs a domain pointed here + free port 80"
-    line "  ${WH}2${NC})  Let's Encrypt (IP)          short-lived cert, no domain needed"
-    line "  ${WH}3${NC})  Self-signed                 encrypted; turn TLS *on* in the panel"
-    line "  ${WH}4${NC})  Custom cert path            you already have key + cert files"
-    line "  ${WH}5${NC})  None (HTTP)                 unsafe on the internet — key travels in cleartext"
+    sep; line "  TLS (encrypts the panel ↔ node API — always on):"
+    line "  ${WH}1${NC})  Self-signed (default)     encrypted; turn TLS *on* in the panel"
+    line "  ${WH}2${NC})  Let's Encrypt (domain)    needs a domain pointed here + free port 80"
+    line "  ${WH}3${NC})  Let's Encrypt (this IP)  short-lived cert, no domain needed"
+    line "  ${WH}4${NC})  Custom cert path          you already have key + cert files"
     local tls_choice
-    tls_choice="$(ask "TLS mode" "3")"
-    case "${tls_choice:-3}" in
-        1) TLS_METHOD="letsencrypt"; TLS_DOMAIN="$(ask "Domain" "")"; [[ -n "$TLS_DOMAIN" ]] || die "Domain required for Let's Encrypt" ;;
-        2) TLS_METHOD="letsencrypt-ip"; TLS_DOMAIN="$(primary_ip)" ;;
-        3) TLS_METHOD="selfsigned" ;;
+    tls_choice="$(ask "TLS mode" "1")"
+    case "${tls_choice:-1}" in
+        1) TLS_METHOD="selfsigned" ;;
+        2) TLS_METHOD="letsencrypt"; TLS_DOMAIN="$(ask "Domain" "")"; [[ -n "$TLS_DOMAIN" ]] || die "Domain required for Let's Encrypt" ;;
+        3) TLS_METHOD="letsencrypt-ip"; TLS_DOMAIN="$(primary_ip)" ;;
         4) TLS_METHOD="custom"; TLS_KEY="$(ask "Key file" "")"; TLS_CERT="$(ask "Cert file" "")" ;;
-        *) TLS_METHOD="none" ;;
+        *) TLS_METHOD="selfsigned" ;;
     esac
+}
+
+# Express install: safe defaults, no further questions. TLS is always on.
+apply_express_defaults() {
+    : "${PORT:=$(find_free_port "$DEFAULT_PORT")}"
+    : "${VPN_PORTS:=$DEFAULT_VPN}"
+    : "${NODE_NAME:=node-1}"
+    : "${VPN_PROTO:=udp}"
+    TLS_METHOD="selfsigned"
+    [[ -n "$API_KEY" ]] || API_KEY="$(openssl rand -hex 32)"
+    EXPRESS=1
+}
+
+# Friendly front door: shown only for a bare interactive invocation.
+start_menu() {
+    line "  What do you want to do?"
+    line ""
+    line "  ${GR}1${NC})  Express    Install with safe defaults (recommended)"
+    line "  ${WH}2${NC})  Custom     Choose every option yourself"
+    line "  ${CY}3${NC})  Update     Update to the latest version"
+    line "  ${YL}4${NC})  Uninstall  Remove OVNode (data kept by default)"
+    line ""
+    local choice
+    choice="$(ask "Select" "1")"
+    case "${choice:-1}" in
+        1) apply_express_defaults ;;
+        2) EXPRESS=0 ;;
+        3) confirm "Update OVNode now?" && do_update; exit "$EX_OK" ;;
+        4) do_uninstall; exit "$EX_OK" ;;
+        *) apply_express_defaults ;;
+    esac
+    line ""
+}
+
+
+# ── Terminal command (TUI) ─────────────────────────────────────────────
+# install_cli() copies this installer to $BIN_DIR as "ovnode" (+ "ovn"), so a
+# bare `ovnode` opens the menu. Every action is also a subcommand for scripts:
+# status | start | stop | restart | restart-vpn | logs [N|-f] | backup |
+# update | tls | uninstall | menu | help.
+
+env_get() {  # env_get FILE KEY → value
+    [[ -f "$1" ]] || return 0
+    awk -F= -v k="$2" '$1 == k { sub(/^[^=]*=/, ""); print; exit }' "$1" | tr -d '\r'
+}
+
+env_set() {  # env_set FILE KEY VALUE — rewrite one line, atomically
+    local file="$1" key="$2" value="$3" tmp
+    if [[ ! -f "$file" ]]; then
+        printf '%s=%s\n' "$key" "$value" >> "$file"
+        return 0
+    fi
+    tmp="$(mktemp "${file}.XXXXXX")" || die "Could not create a temp file next to $file"
+    ENV_K="$key" ENV_V="$value" awk '
+        BEGIN { k = ENVIRON["ENV_K"]; v = ENVIRON["ENV_V"]; done = 0 }
+        index($0, k "=") == 1 { if (!done) { print k "=" v; done = 1 } ; next }
+        { print }
+        END { if (!done) print k "=" v }
+    ' "$file" > "$tmp" || { rm -f "$tmp"; die "Could not update $file"; }
+    chmod --reference="$file" "$tmp" 2>/dev/null || chmod 600 "$tmp"
+    chown --reference="$file" "$tmp" 2>/dev/null || true
+    mv -f "$tmp" "$file"
+}
+
+node_name_from_env() {
+    local name; name="$(env_get "$APP_DIR/.env" NODE_NAME)"
+    printf '%s' "${name:-node-1}"
+}
+
+is_docker_node() { [[ -f "$(compose_file)" ]]; }
+
+node_service_action() {  # start|stop|restart
+    if is_docker_node; then
+        command -v docker >/dev/null 2>&1 || die "Docker not found on this host"
+        ( cd "$APP_DIR" && docker compose -f "$(compose_file)" "$1" ) || die "docker compose $1 failed"
+    else
+        systemctl "$1" "$SYSTEMD_SERVICE" || die "systemctl $1 $SYSTEMD_SERVICE failed"
+    fi
+    step "Node agent $1: done"
+}
+
+restart_vpn() {
+    if systemctl restart openvpn-server@server 2>/dev/null; then
+        step "OpenVPN restarted (systemd)"
+        return 0
+    fi
+    local pidfile pid found=0
+    for pidfile in "$OPENVPN_ROOT/server/ovnode.pid" /run/openvpn-server/*.pid; do
+        [[ -f "$pidfile" ]] || continue
+        pid="$(cat "$pidfile" 2>/dev/null || true)"
+        if [[ -n "$pid" ]] && kill -HUP "$pid" 2>/dev/null; then found=1; fi
+    done
+    if [[ "$found" -eq 0 ]]; then
+        for pid in $(pgrep -x openvpn 2>/dev/null || true); do
+            kill -HUP "$pid" 2>/dev/null && found=1
+        done
+    fi
+    if [[ "$found" -eq 1 ]]; then
+        step "OpenVPN reloaded (SIGHUP)"
+    else
+        warn "No running OpenVPN process found — it starts with the agent"
+    fi
+}
+
+do_node_logs() {
+    local arg="${1:-100}" name
+    name="$(node_name_from_env)"
+    if is_docker_node; then
+        if [[ "$arg" == "-f" ]]; then docker logs -f --tail 100 "ovnode-$name"; else docker logs --tail "$arg" "ovnode-$name"; fi \
+            || warn "Could not read container logs"
+    elif [[ "$arg" == "-f" ]]; then
+        journalctl -u "$SYSTEMD_SERVICE" -n 100 -f || warn "Could not read logs"
+    else
+        journalctl -u "$SYSTEMD_SERVICE" -n "$arg" --no-pager || warn "Could not read logs"
+    fi
+}
+
+do_node_backup() {
+    backup_dir "$DATA_BASE" "node"
+    backup_dir "$OPENVPN_ROOT/server/pki" "node-pki"
+}
+
+node_service_menu() {
+    local tag
+    tag="$(tui_select "Node service" start "Start" stop "Stop" restart "Restart" back "Back")"
+    case "$tag" in
+        start|stop|restart) check_root; node_service_action "$tag" ;;
+        *) return 0 ;;
+    esac
+}
+
+node_tls_menu() {
+    local envfile="$APP_DIR/.env"
+    [[ -f "$envfile" ]] || die "Not installed ($envfile missing)"
+    local method keyfile certfile expiry
+    method="$(env_get "$envfile" TLS_METHOD)"; : "${method:=selfsigned}"
+    keyfile="$(env_get "$envfile" SSL_KEYFILE)"
+    certfile="$(env_get "$envfile" SSL_CERTFILE)"
+    expiry="$(openssl x509 -enddate -noout -in "$certfile" 2>/dev/null | cut -d= -f2 || true)"
+    line ""
+    line "${B}TLS certificate — panel ↔ node API${NC}"
+    kv "Mode"    "$method"
+    kv "Key file"  "${keyfile:-<none>}"
+    kv "Cert file" "${certfile:-<none>}"
+    [[ -n "$expiry" ]] && kv "Expires" "$expiry"
+    line ""
+    line "  1) Self-signed (regenerate)"
+    line "  2) Let's Encrypt for a domain"
+    line "  3) Let's Encrypt for this IP"
+    line "  4) Custom key + cert paths"
+    line "  0) Back"
+    local c; c="$(ask "Select" "0")"
+    case "${c:-0}" in
+        1) TLS_METHOD="selfsigned" ;;
+        2) TLS_METHOD="letsencrypt"; TLS_DOMAIN="$(ask "Domain" "")"
+           [[ -n "$TLS_DOMAIN" ]] || { warn "Domain required"; return 0; } ;;
+        3) TLS_METHOD="letsencrypt-ip"; TLS_DOMAIN="$(primary_ip)" ;;
+        4) TLS_METHOD="custom"; TLS_KEY="$(ask "Key file" "")"; TLS_CERT="$(ask "Cert file" "")"
+           [[ -f "$TLS_KEY" && -f "$TLS_CERT" ]] || { warn "Key/cert files not found"; return 0; } ;;
+        0|*) return 0 ;;
+    esac
+    setup_tls || return 0
+    env_set "$envfile" TLS_METHOD "$TLS_METHOD"
+    env_set "$envfile" SSL_KEYFILE "$TLS_KEY"
+    env_set "$envfile" SSL_CERTFILE "$TLS_CERT"
+    step "Certificate updated — restarting the node agent"
+    node_service_action restart
+}
+
+# Boxed menu when whiptail is already installed; colored menu otherwise.
+tui_select() {  # tui_select "Title" tag label [tag label ...] → prints the tag
+    local title="$1"; shift
+    local tags=() labels=() tag i=0
+    while [[ $# -ge 2 ]]; do tags+=("$1"); labels+=("$2"); shift 2; done
+    if command -v whiptail >/dev/null 2>&1 && is_tty; then
+        local args=() out
+        for tag in "${tags[@]}"; do args+=("$tag" "${labels[$i]}"); i=$((i + 1)); done
+        out="$(whiptail --title "$title" --menu "Choose an action" 24 78 12 "${args[@]}" 3>&1 1>&2 2>&3)" && {
+            printf '%s' "$out"
+            return 0
+        }
+        return 0
+    fi
+    line "${B}${title}${NC}"; line ""
+    i=0
+    for tag in "${tags[@]}"; do
+        i=$((i + 1))
+        printf '  %b%d%b)  %s\n' "$WH" "$i" "$NC" "${labels[$((i - 1))]}" >&2
+    done
+    line ""
+    local choice; choice="$(ask "Select" "1")"
+    [[ "$choice" =~ ^[0-9]+$ ]] || { printf '%s' "${tags[0]}"; return 0; }
+    printf '%s' "${tags[$(((choice - 1) % ${#tags[@]}))]}"
+}
+
+installed_menu() {
+    warn "OVNode is already installed"
+    while true; do
+        local tag
+        tag="$(tui_select "OVNode — node" \
+            status      "Status — agent, VPN, version" \
+            service     "Start / Stop / Restart agent" \
+            restart-vpn "Restart VPN (OpenVPN reload)" \
+            logs        "Logs" \
+            backup      "Backup now (state + PKI)" \
+            update      "Update" \
+            tls         "TLS certificate" \
+            uninstall   "Uninstall" \
+            quit        "Quit")"
+        case "$tag" in
+            status)      do_status ;;
+            service)     node_service_menu ;;
+            restart-vpn) check_root; restart_vpn ;;
+            logs)        do_node_logs ;;
+            backup)      check_root; do_node_backup ;;
+            update)      do_update ;;
+            tls)         check_root; node_tls_menu ;;
+            uninstall)   do_uninstall; return 0 ;;
+            *)           return 0 ;;
+        esac
+    done
+}
+
+install_cli() {
+    local src="${APP_DIR}/install.sh"
+    [[ -f "$src" ]] || return 0
+    mkdir -p "$BIN_DIR" 2>/dev/null || { warn "Could not create $BIN_DIR"; return 0; }
+    if cp -f "$src" "$BIN_DIR/$CLI_NAME" 2>/dev/null && chmod 0755 "$BIN_DIR/$CLI_NAME"; then
+        ln -sf "$CLI_NAME" "$BIN_DIR/$CLI_ALIAS" 2>/dev/null || true
+        step "Command  ${BIN_DIR}/${CLI_NAME}  (alias: ${CLI_ALIAS})"
+    else
+        warn "Could not install the $CLI_NAME command into $BIN_DIR"
+    fi
+}
+
+remove_cli() {
+    rm -f "$BIN_DIR/$CLI_NAME" "$BIN_DIR/$CLI_ALIAS" 2>/dev/null || true
 }
 
 # ── Preconditions ──────────────────────────────────────────────────────
@@ -1300,16 +1603,25 @@ main() {
         status)    do_status; exit "$EX_OK" ;;
         uninstall) do_uninstall; exit "$EX_OK" ;;
         update)    confirm "Update OVNode now?" || exit "$EX_OK"; do_update; exit "$EX_OK" ;;
+        start|stop|restart) check_root; node_service_action "$ACTION"; exit "$EX_OK" ;;
+        restart-vpn) check_root; restart_vpn; exit "$EX_OK" ;;
+        logs) do_node_logs "$LOGS_ARG"; exit "$EX_OK" ;;
+        backup) check_root; do_node_backup; exit "$EX_OK" ;;
+        tls) check_root; node_tls_menu; exit "$EX_OK" ;;
+        menu)
+            is_tty || { warn "No terminal available — run '$0 help' for the command list."; exit "$EX_USAGE"; }
+            if [[ -d "$APP_DIR" ]]; then installed_menu; exit "$EX_OK"; fi
+            start_menu
+            ;;
     esac
 
     # Validation must precede the already-installed guard, otherwise a caller
     # invoking `install --port abc --json` gets exit 3 (Already installed)
-    # instead of exit 2 + JSON usage error. When CLI flags are present the
-    # inputs are checkable right away, even on an already-provisioned host.
-    if [[ -n "${API_KEY:-}" || -n "${PORT:-}" || -n "${TLS_METHOD:-}" || -n "${VPN_PORTS:-}" ]]; then
+    # instead of exit 2 + JSON usage error. When flags or OVN_* inputs are
+    # present the values are checkable right away, even on an installed host.
+    if [[ "$CLI_FLAGS" -eq 1 || "$ENV_INPUTS" -eq 1 ]]; then
         [[ -n "$PORT" ]]      || PORT="$DEFAULT_PORT"
-        [[ -n "$API_KEY" ]]   || true  # validate_input will require it when needed
-        [[ -n "$TLS_METHOD" ]]|| TLS_METHOD="none"
+        [[ -n "$TLS_METHOD" ]]|| TLS_METHOD="selfsigned"
         [[ -n "$VPN_PORTS" ]] || VPN_PORTS="$DEFAULT_VPN"
         [[ -n "$NODE_NAME" ]] || NODE_NAME="node-1"
         validate_input
@@ -1320,19 +1632,14 @@ main() {
         if [[ "$YES" -eq 1 ]]; then
             die "Already installed ($APP_DIR exists). Run 'update' to refresh or 'uninstall' first." "$EX_ALREADY"
         fi
-        warn "OVNode is already installed"
-        line ""
-        line "  ${GR}1${NC})  Update to latest version"
-        line "  ${YL}2${NC})  Uninstall"
-        line "  ${GY}3${NC})  Quit"
-        line ""
-        local choice; choice="$(ask "Select" "3")"
-        case "${choice:-3}" in
-            1) do_update ;;
-            2) do_uninstall ;;
-            *) exit "$EX_OK" ;;
-        esac
+        installed_menu
         exit "$EX_OK"
+    fi
+
+    # Bare interactive invocation → friendly start menu (fresh installs only). Scripts/flags and
+    # OVN_* env configuration keep the original machine path untouched.
+    if [[ "$CMD_GIVEN" -eq 0 && "$CLI_FLAGS" -eq 0 && "$ENV_INPUTS" -eq 0 && "$YES" -eq 0 && "$JSON" -eq 0 ]] && is_tty; then
+        start_menu
     fi
 
     detect_os
@@ -1342,7 +1649,8 @@ main() {
         : "${PORT:=$(find_free_port "$DEFAULT_PORT")}"
         : "${VPN_PORTS:=$DEFAULT_VPN}"
         : "${NODE_NAME:=node-1}"
-        : "${TLS_METHOD:=none}"
+        : "${TLS_METHOD:=selfsigned}"
+        : "${VPN_PROTO:=udp}"
         [[ -n "$API_KEY" ]] || API_KEY="$(openssl rand -hex 32)"
     fi
     validate_input
@@ -1355,12 +1663,14 @@ main() {
     field "TLS"       "$TLS_METHOD"
     field "Install"   "$APP_DIR"
     field "Data"      "$DATA_BASE/$NODE_NAME"
-    if [[ "$TLS_METHOD" == "none" ]]; then
-        warn "TLS is DISABLED — the API key is a bearer secret sent in plaintext."
-        warn "For internet exposure use --tls letsencrypt/selfsigned; for LAN-only use a private network."
-    fi
     sep
-    confirm "Proceed with installation?" || die "Cancelled."
+    # Express still gets one confirmation: it is the only thing standing
+    # between a menu keypress and a system change.
+    if [[ "$EXPRESS" -eq 1 ]]; then
+        confirm "Proceed with installation (Express)?" || die "Cancelled."
+    else
+        confirm "Proceed with installation?" || die "Cancelled."
+    fi
 
     do_install
 }

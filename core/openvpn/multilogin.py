@@ -20,7 +20,6 @@ when it actually changed something.
 """
 
 import os
-import shutil
 
 from core.logger import logger
 from core.openvpn import store
@@ -71,10 +70,20 @@ def _install_scripts() -> bool:
         if not os.path.exists(src):
             logger.error("multilogin: source script missing: %s", src)
             continue
-        new = open(src).read()
-        old = open(dst).read() if os.path.exists(dst) else None
+        with open(src, encoding="utf-8") as f:
+            new = f.read()
+        old = None
+        if os.path.exists(dst):
+            with open(dst, encoding="utf-8") as f:
+                old = f.read()
         if new != old:
-            shutil.copyfile(src, dst)
+            # Atomic install: OpenVPN executes these on every connect, so a
+            # truncated destination (plain copyfile) could run mid-write.
+            tmp = dst + ".tmp"
+            with open(tmp, "w", encoding="utf-8") as f:
+                f.write(new)
+            os.chmod(tmp, 0o755)
+            os.replace(tmp, dst)
             changed = True
         os.chmod(dst, 0o755)
     return changed

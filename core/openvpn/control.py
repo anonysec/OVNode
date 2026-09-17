@@ -23,6 +23,9 @@ import signal
 import subprocess
 import tempfile
 
+from core.openvpn import dns as dns_policy
+from core.openvpn import ipv6 as ipv6_policy
+from core.openvpn import ports as ports_policy
 from core.openvpn import store
 
 logger = logging.getLogger("ovnode.openvpn")
@@ -184,6 +187,10 @@ def _atomic_write(path: str, content: str) -> None:
         with os.fdopen(fd, "w") as f:
             f.write(content)
             f.flush()
+            # mkstemp creates 0600; both files this helper writes (server.conf,
+            # client-common.txt) are non-secret and must stay readable by the
+            # dropped-privilege OpenVPN user after a SIGHUP reload.
+            os.fchmod(f.fileno(), 0o644)
             os.fsync(f.fileno())
         try:
             if os.path.exists(path):
@@ -199,24 +206,50 @@ def _atomic_write(path: str, content: str) -> None:
             pass
 
 
+def _rollback_changed_files(setting_file: str, template_file: str, tmpl_changed: bool) -> bool:
+    """Restore files from the ``.bak`` copies kept by :func:`_atomic_write`.
+
+    Called when a required restart failed: putting the previous config back
+    lets the retry restart bring the daemon up on known-good settings instead
+    of leaving it down with a config it refused. Returns True when at least
+    one ``.bak`` existed, i.e. a rollback actually happened.
+    """
+    found = False
+    candidates = [setting_file]
+    if tmpl_changed:
+        candidates.append(template_file)
+    for path in candidates:
+        backup = path + ".bak"
+        if not os.path.exists(backup):
+            continue
+        found = True
+        try:
+            shutil.copy2(backup, path)
+            logger.warning("Rolled back %s from %s", path, backup)
+        except OSError as e:
+            logger.error("Could not roll back %s from %s: %s", path, backup, e)
+    return found
+
+
 def change_config(request) -> bool:
     """Apply tunnel address / protocol / port pushed by the panel.
 
-    Rewrites server.conf (port/proto) and rebuilds the client template's
-    full `remote` block — one line per reachable port (primary +
-    OVNODE_EXTRA_PORTS) so clients fail over between ports when an ISP
-    blocks one. Cached .ovpn profiles are invalidated when the template
-    actually changed.
+    Rewrites server.conf (port/proto, panel-managed DNS push lines and
+    IPv6 block) and rebuilds the client template's full `remote` block — one line per
+    reachable port (primary + panel-managed extras, falling back to
+    OVNODE_EXTRA_PORTS on nodes with no ports state) so clients fail over
+    between ports when an ISP blocks one. Cached .ovpn profiles are
+    invalidated when the template actually changed.
 
     Restart policy (tunnels are user traffic — never bounce them idly):
     - nothing changed (same bytes) → return True, no write, no signal.
     - port/proto values changed → full restart (rebind required).
-    - conf normalization only (e.g. `tcp-server` → `tcp`) → SIGHUP reload.
+    - conf normalization only (e.g. `tcp-server` → `tcp`, DNS rewrite) →
+      SIGHUP reload.
     - template-only change (tunnel address) → no daemon signal at all;
       the template is only read when generating .ovpn profiles.
+    - extra-ports change (template + NAT redirects, no rebind) → SIGHUP.
     """
-    from core.config import parse_extra_ports
-
     openvpn_root = os.getenv("OVNODE_OPENVPN_ROOT", "/etc/openvpn")
     setting_file = os.path.join(openvpn_root, "server", "server.conf")
     template_file = os.path.join(openvpn_root, "server", "client-common.txt")
@@ -230,6 +263,39 @@ def change_config(request) -> bool:
     except (TypeError, ValueError) as e:
         logger.error("Invalid OpenVPN port %r: %s", request.ovpn_port, e)
         return False
+
+    # Validate panel-provided DNS servers before touching any file. Omitted
+    # fields (old panels never send them) leave the node's values unchanged.
+    dns1 = getattr(request, "dns1", None)
+    dns2 = getattr(request, "dns2", None)
+    dns_provided = dns1 is not None or dns2 is not None
+    valid_dns1 = dns_policy.validate(dns1)
+    valid_dns2 = dns_policy.validate(dns2)
+    for label, value, normalized in (("dns1", dns1, valid_dns1), ("dns2", dns2, valid_dns2)):
+        if value is not None and normalized is None:
+            logger.error("Invalid DNS address for %s: %r", label, value)
+            return False
+
+    # Validate the panel-managed IPv6 prefix before touching any file. Omitted
+    # fields (old panels never send them) leave the node's setting unchanged.
+    ipv6_enabled = getattr(request, "enable_ipv6", None)
+    ipv6_prefix = getattr(request, "ipv6_prefix", None)
+    valid_ipv6_prefix = ipv6_policy.validate_prefix(ipv6_prefix)
+    if ipv6_prefix is not None and valid_ipv6_prefix is None:
+        logger.error("Invalid IPv6 prefix: %r", ipv6_prefix)
+        return False
+
+    # Validate the panel-managed extra ports before touching any file. Omitted
+    # (old panels never send them) leaves the node's list unchanged; an empty
+    # string clears it.
+    extra_ports_raw = getattr(request, "extra_ports", None)
+    valid_extra_ports: list[int] | None = None
+    if extra_ports_raw is not None:
+        valid_extra_ports = ports_policy.validate(extra_ports_raw, ovpn_port)
+        if valid_extra_ports is None:
+            logger.error("Invalid extra VPN ports: %r", extra_ports_raw)
+            return False
+
     try:
         # Read current proto/port so we can detect whether anything changed.
         with open(setting_file) as file:
@@ -252,9 +318,48 @@ def change_config(request) -> bool:
             new_config,
             flags=re.MULTILINE,
         )
+        # Panel DNS servers: collapse the old push lines into the desired
+        # list (one line per server, no duplicates) and persist the state
+        # file only after server.conf was written.
+        dns_desired: list[str] | None = None
+        if dns_provided:
+            dns_desired = dns_policy.resolve_desired(config, valid_dns1, valid_dns2)
+            new_config, _ = dns_policy.rewrite_push_lines(new_config, dns_desired)
+        # Panel-managed IPv6: collapse the generated directives into the
+        # desired block and persist the state file only after server.conf was
+        # written. A prefix sent without an explicit flag keeps the current
+        # enabled state (and vice versa), so partial pushes never flip the
+        # other field. Enabling/disabling only rewrites the file — never a
+        # rebind, so the SIGHUP path below applies.
+        ipv6_desired: tuple[bool, str] | None = None
+        if ipv6_enabled is not None or valid_ipv6_prefix is not None:
+            current_enabled, current_prefix = ipv6_policy.effective(config)
+            desired_enabled = current_enabled if ipv6_enabled is None else bool(ipv6_enabled)
+            desired_prefix = current_prefix if valid_ipv6_prefix is None else valid_ipv6_prefix
+            ipv6_desired = (desired_enabled, desired_prefix)
+            new_config, _ = ipv6_policy.rewrite_block(new_config, desired_enabled, desired_prefix)
         conf_changed = new_config != config
         if conf_changed:
             _atomic_write(setting_file, new_config)
+        if dns_desired is not None:
+            dns_policy.write_state(dns_desired)
+        if ipv6_desired is not None:
+            ipv6_policy.write_state(*ipv6_desired)
+
+        # Panel-managed extra ports: persist the desired list, rebuild the
+        # client template remote block and re-apply the NAT redirects on
+        # native installs (Docker applies them inside the container). The
+        # module invalidates cached profiles when the template changed; an
+        # unchanged list is a total no-op.
+        extras_changed = False
+        if valid_extra_ports is not None:
+            before_extras = ports_policy.effective(ovpn_port)
+            applied, ports_msg = ports_policy.set_extra_ports(ovpn_port, extra_ports_raw)
+            if not applied:
+                logger.error("Extra VPN ports rejected: %s", ports_msg)
+                return False
+            extras_changed = ports_policy.effective(ovpn_port) != before_extras
+            logger.info("Extra VPN ports: %s", ports_msg)
 
         # Update the client template
         with open(template_file) as file:
@@ -269,30 +374,11 @@ def change_config(request) -> bool:
 
         # Rebuild the full `remote` block. Without a new tunnel address,
         # keep the one from the first existing remote line.
-        extra_ports = parse_extra_ports(os.getenv("OVNODE_EXTRA_PORTS", ""), ovpn_port)
-        remote_re = re.compile(r"^remote\s+(\S+)\s+\d+\s*$")
-        lines = template.splitlines()
         if not tunnel_addr:
-            tunnel_addr = next(
-                (m.group(1) for ln in lines if (m := remote_re.match(ln))),
-                "UPDATE_VIA_PANEL",
-            )
-        remote_block = [f"remote {tunnel_addr} {p}" for p in (ovpn_port, *extra_ports)]
-
-        rebuilt: list[str] = []
-        inserted = False
-        for ln in lines:
-            if remote_re.match(ln):
-                if not inserted:
-                    rebuilt.extend(remote_block)
-                    inserted = True
-                continue
-            rebuilt.append(ln)
-        if not inserted:
-            # Template had no remote line at all — insert after `client`.
-            idx = next((i for i, ln in enumerate(rebuilt) if ln.strip() == "client"), -1)
-            rebuilt[idx + 1 : idx + 1] = remote_block
-        template = "\n".join(rebuilt) + "\n"
+            tunnel_addr = ports_policy.remote_address(template) or "UPDATE_VIA_PANEL"
+        template, _ = ports_policy.rewrite_remote_lines(
+            template, tunnel_addr, ovpn_port, ports_policy.effective(ovpn_port)
+        )
 
         template = re.sub(r"^proto\s+\S+", f"proto {proto}", template, flags=re.MULTILINE)
         tmpl_changed = template != original_template
@@ -301,7 +387,7 @@ def change_config(request) -> bool:
 
         # No-op push (panel re-sent identical settings): touch nothing so the
         # entrypoint mtime watcher and multilogin stay quiet — zero restarts.
-        if not conf_changed and not tmpl_changed:
+        if not conf_changed and not tmpl_changed and not extras_changed:
             logger.info("OpenVPN settings already match; no write, no restart.")
             return True
 
@@ -311,17 +397,33 @@ def change_config(request) -> bool:
         if changed or tmpl_changed:
             _invalidate_cached_ovpn()
 
+        restart_failed = False
         if changed:
             # Port/proto rebind requires a full restart.
             if not restart_openvpn():
-                # The config is already persisted on disk; a restart failure
-                # only means it activates on the next OpenVPN start. Don't
-                # report the change as failed — the write succeeded.
-                logger.warning(
-                    "OpenVPN restart failed; new settings are saved and will "
-                    "activate on the next OpenVPN (re)start"
-                )
-        elif conf_changed:
+                restart_failed = True
+                # Restore the previous config (when one exists) and retry:
+                # the daemon would otherwise stay down with a config it
+                # refused. Callers must see failure either way.
+                if _rollback_changed_files(setting_file, template_file, tmpl_changed):
+                    if restart_openvpn():
+                        logger.warning(
+                            "OpenVPN restart failed; rolled back to the previous "
+                            "config and the rollback restart succeeded."
+                        )
+                    else:
+                        logger.error(
+                            "OpenVPN restart failed; rolled back to the previous "
+                            "config but the rollback restart also failed — OpenVPN "
+                            "may be down."
+                        )
+                else:
+                    logger.error(
+                        "OpenVPN restart failed and no previous config exists to "
+                        "roll back to (first write); the new config stays and will "
+                        "activate on the next OpenVPN (re)start."
+                    )
+        elif conf_changed or extras_changed:
             # Normalization only (no rebind): reload without teardown.
             _sighup_fallback()
 
@@ -332,6 +434,9 @@ def change_config(request) -> bool:
             ensure_multilogin_setup()
         except Exception as e:
             logger.error("Failed to re-apply multi-login after config change: %s", e)
+
+        if restart_failed:
+            return False
 
         logger.info(
             "OpenVPN port changed to %s, protocol to %s, and tunnel address to %s",

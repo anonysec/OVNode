@@ -427,3 +427,50 @@ def test_ovpn_identity_resolution():
     assert r.status_code == 200
     assert r.json()["success"] is False
     assert r.json()["msg"] == "Invalid user id (must be UUID or simple id)"
+
+
+def test_status_update_without_max_logins_preserves_stored_limit(monkeypatch):
+    """PUT /sync/user without max_logins must not reset the stored limit.
+
+    Regression: the schema defaulted max_logins to 1, so a status-only push
+    silently downgraded every unlimited/multi-device user to single-login.
+    """
+    c, headers = _client()
+    calls = []
+
+    def _fake_set_limit(uid, limit):
+        calls.append((uid, limit))
+        return True
+
+    monkeypatch.setattr("core.api.routes.set_user_limit", _fake_set_limit)
+    monkeypatch.setattr("core.api.routes.change_user_status_on_server", lambda uid, status: True)
+    r = c.put("/sync/user", headers=headers, json={"id": "990001", "status": "activate"})
+    assert r.status_code == 200
+    assert r.json()["success"] is True
+    assert calls == [], "omitted max_logins must leave the stored limit alone"
+
+    r = c.put(
+        "/sync/user",
+        headers=headers,
+        json={"id": "990001", "status": "activate", "max_logins": 3},
+    )
+    assert r.status_code == 200
+    assert calls == [("990001", 3)], "an explicit limit must still be applied"
+
+
+def test_non_ascii_api_key_is_401_not_500():
+    """Raw HTTP can send latin-1 bytes in the key header; that must not crash
+    hmac.compare_digest (TypeError -> 500). TestClient refuses to build such a
+    header, so the dependency is called directly."""
+    import asyncio
+
+    import pytest
+    from fastapi import HTTPException
+
+    from core.api.auth import check_api_key
+    from core.config import settings
+
+    with pytest.raises(HTTPException) as excinfo:
+        asyncio.run(check_api_key(key="abc\u00e9\u00ff", request=None))
+    assert excinfo.value.status_code == 401
+    assert asyncio.run(check_api_key(key=settings.api_key, request=None)) == settings.api_key

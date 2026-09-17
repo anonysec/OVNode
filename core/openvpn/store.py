@@ -315,12 +315,35 @@ def all_accumulated_usage() -> dict[str, int]:
 
 
 def reset_usage(cn: str) -> None:
+    """Delete a user's banked usage under the hook's usage lock.
+
+    The disconnect hook does read-modify-rename under ``flock`` on
+    ``usage/.lock.<cn>``; removing the file without that lock lets a
+    concurrent hook write the pre-reset total back, silently undoing the
+    reset. Locking here makes the reset durable.
+    """
     global _usage_cache
     _usage_cache = None
+    safe = _safe_cn(cn)
+    usage_file = os.path.join(USAGE_DIR, safe)
+    lock_path = os.path.join(USAGE_DIR, f".lock.{safe}")
     try:
-        os.remove(os.path.join(USAGE_DIR, _safe_cn(cn)))
+        import fcntl
+
+        with open(lock_path, "a") as lock_fh:
+            fcntl.flock(lock_fh.fileno(), fcntl.LOCK_EX)
+            try:
+                os.remove(usage_file)
+            finally:
+                fcntl.flock(lock_fh.fileno(), fcntl.LOCK_UN)
     except FileNotFoundError:
         pass
+    except OSError as e:
+        logger.warning("Could not reset usage for %s under lock (%s); unlinking directly", safe, e)
+        try:
+            os.remove(usage_file)
+        except FileNotFoundError:
+            pass
 
 
 # ── layout / migration ───────────────────────────────────────────────

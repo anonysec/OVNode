@@ -70,7 +70,11 @@ async def lifespan(app: FastAPI):
 
 api = FastAPI(
     title="OV Node",
+    # Docs are opt-in: when disabled, hide every interactive surface
+    # (doc, redoc, openapi.json) instead of leaving two of them public.
     docs_url="/doc" if settings.doc else None,
+    redoc_url="/redoc" if settings.doc else None,
+    openapi_url="/openapi.json" if settings.doc else None,
     lifespan=lifespan,
 )
 

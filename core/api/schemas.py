@@ -10,7 +10,8 @@ These models mirror the payloads built by OVManager's
 * ``change_user_status`` → PUT  /sync/user      {"name", "status", "id"?, "max_logins"?}
 * ``set_user_limit``     → PUT  /sync/user/limit {"id", "max_logins"}
 * ``update_config``      → POST /sync/config    {"tunnel_address", "protocol",
-                                                 "ovpn_port", "set_new_setting"}
+                                                 "ovpn_port", "set_new_setting",
+                                                 "dns1"?, "dns2"?}
 
 Every response is wrapped in ``ResponseModel`` — the panel's ``_request()``
 helper requires HTTP 200 **and** ``success: true`` to treat a call as OK.
@@ -35,8 +36,10 @@ class User(BaseModel):
     status: Literal["activate", "deactivate"] = "activate"
     # Max simultaneous logins/devices: 1 = single login (takeover),
     # 0 = unlimited, N>1 = strict cap. Mirrors the panel's user.max_logins.
-    # Ranged: a negative value previously coerced to 0 (unlimited) silently.
-    max_logins: int | None = Field(default=1, ge=0, le=1000)
+    # Default None: an omitted field means "leave the stored limit alone" —
+    # defaulting to 1 silently downgraded unlimited users on status-only
+    # updates. Ranged too: a negative value previously coerced to 0 (unlimited).
+    max_logins: int | None = Field(default=None, ge=0, le=1000)
 
 
 class UserLimit(BaseModel):
@@ -60,6 +63,19 @@ class SetSettingsModel(BaseModel):
     protocol: Literal["tcp", "udp"]
     ovpn_port: int = Field(ge=1, le=65535)
     set_new_setting: bool
+    # Panel-managed DNS servers (PUT /api/nodes/{id}/dns → POST /sync/config).
+    # Optional: omitted means "leave the node's current values alone", so old
+    # panels keep working and only the sent field is changed.
+    dns1: str | None = None
+    dns2: str | None = None
+    # Panel-managed IPv6 (PUT /api/nodes/{id}/ipv6 → POST /sync/config).
+    # Optional like dns1/dns2: omitted = unchanged, so old panels keep working.
+    enable_ipv6: bool | None = None
+    ipv6_prefix: str | None = None
+    # Panel-managed extra VPN ports (PUT /api/nodes/{id}/ports → POST
+    # /sync/config). Comma-separated; omitted = unchanged, empty string =
+    # clear. Optional so old panels keep working.
+    extra_ports: str | None = None
 
 
 class UsersUsage(BaseModel):
