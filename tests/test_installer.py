@@ -317,3 +317,82 @@ def test_no_function_ends_with_a_failing_test():
         else:
             body.append(line)
     assert not offenders, offenders
+
+
+def sh_stdin(script: str, data: str):
+    return subprocess.run(
+        ["bash", "-c", script],
+        input=data,
+        capture_output=True,
+        text=True,
+        timeout=30,
+    )
+
+
+def _extract_function(name: str) -> str:
+    lines = open(INSTALLER, encoding="utf-8").readlines()
+    start = next(i for i, ln in enumerate(lines) if ln.startswith(f"{name}()"))
+    end = start
+    while lines[end].rstrip("\n") != "}":
+        end += 1
+    return "".join(lines[start : end + 1])
+
+
+def test_masked_password_echoes_stars_and_handles_backspace():
+    harness = "set -Eeuo pipefail\n" + _extract_function("_masked_read") + "\n_masked_read\n"
+    r = sh_stdin(harness, "ab\x7fc\n")
+    assert r.returncode == 0, r.stderr
+    assert r.stdout == "ac"
+    assert r.stderr.count("*") == 3
+    assert "\b \b" in r.stderr
+
+
+def test_confirm_no_is_safe_by_default():
+    # Harness: confirm_no only needs is_tty + YES; the answer is inlined.
+    cases = [
+        ("0", "0", "y", 0),
+        ("0", "0", "Y", 0),
+        ("0", "0", "", 1),
+        ("0", "0", "n", 1),
+        ("1", "0", "y", 1),
+    ]
+    for tty, yes, reply, expected in cases:
+        harness = f"""set -Eeuo pipefail
+GR=''; NC=''
+is_tty() {{ return {tty}; }}
+YES={yes}
+confirm_no() {{
+    [[ "$YES" -eq 1 ]] && return 1
+    is_tty || return 1
+    local c='{reply}'
+    [[ "$c" =~ ^[Yy]$ ]]
+}}
+confirm_no "Delete data?"
+"""
+        r = subprocess.run(["bash", "-c", harness], capture_output=True, text=True, timeout=30)
+        assert r.returncode == expected, (tty, yes, reply, r.returncode, r.stderr)
+
+
+def test_uninstall_asks_about_data():
+    with open(INSTALLER, encoding="utf-8") as f:
+        content = f.read()
+    assert 'confirm_no "Also delete data and backups?" && PURGE=1' in content
+
+
+def test_auto_backup_host_timer_wiring():
+    with open(INSTALLER, encoding="utf-8") as f:
+        content = f.read()
+    assert "ovnode-backup.timer" in content
+    assert "ovnode-backup.service" in content
+    assert "backup --keep ${keep}" in content
+    assert "auto-backup on|off|status" in content
+    assert "prune_backups" in content
+
+
+def test_default_node_name_is_ovnode():
+    with open(INSTALLER, encoding="utf-8") as f:
+        content = f.read()
+    assert "node-1" not in content
+    assert ': "${NODE_NAME:=ovnode}"' in content
+    assert '"${NODE_NAME:-ovnode}"' in content
+    assert "OVN_NAME, ovnode]" in content

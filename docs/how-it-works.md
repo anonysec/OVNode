@@ -96,5 +96,7 @@ start/stop/restart, restart-VPN, logs and backup — all scriptable commands.
 ## Backup and restore
 
 `ovnode backup` saves the agent's state (`ovnode/`) and the PKI as two tar
-archives in `/var/backups`. Restore is copying those two paths back; the agent
+archives in `/var/backups` (newest 14 kept; `--keep N` changes that, and
+`ovnode auto-backup on` adds a daily systemd timer). Restore is copying those
+two paths back; the agent
 migrates an older layout on start. Uninstall keeps data unless `--purge`.
