@@ -396,3 +396,25 @@ def test_default_node_name_is_ovnode():
     assert ': "${NODE_NAME:=ovnode}"' in content
     assert '"${NODE_NAME:-ovnode}"' in content
     assert "OVN_NAME, ovnode]" in content
+
+
+def test_detect_os_preserves_app_version(tmp_path):
+    """Regression: sourcing /etc/os-release must not clobber the app
+    VERSION (os-release defines its own VERSION=...)."""
+    fn = subprocess.run(
+        ["sed", "-n", "/^detect_os() {/,/^}/p", INSTALLER],
+        capture_output=True, text=True, timeout=30,
+    ).stdout
+    assert fn, "detect_os not found"
+    probe = tmp_path / "probe.sh"
+    probe.write_text(
+        "set -u\n"
+        'VERSION="9.9.9-probe"\n'
+        'die() { echo "DIE: $1" >&2; exit 1; }\n'
+        + fn
+        + "\ndetect_os\n"
+        'echo "VERSION=$VERSION"\n',
+    )
+    r = subprocess.run(["bash", str(probe)], capture_output=True, text=True, timeout=30)
+    assert r.returncode == 0, r.stderr
+    assert "VERSION=9.9.9-probe" in r.stdout

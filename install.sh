@@ -229,8 +229,11 @@ OS_ID="" OS_NAME="" PKG_INSTALL="" PKG_UPDATE=""
 
 detect_os() {
     [[ -f /etc/os-release ]] || die "Unsupported OS — no /etc/os-release found."
+    # /etc/os-release defines its own VERSION — keep the app version.
+    local _app_version="$VERSION"
     # shellcheck disable=SC1091
     . /etc/os-release
+    VERSION="$_app_version"
     OS_ID="${ID:-}"; OS_NAME="${PRETTY_NAME:-$OS_ID}"
     case "$OS_ID" in
         debian|ubuntu)      PKG_UPDATE="apt-get update -qq";  PKG_INSTALL="apt-get install -y -qq" ;;
