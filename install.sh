@@ -37,6 +37,10 @@ set -Eeuo pipefail
 VERSION="1.1.0"
 # Forks: point source downloads (and update pulls) at your own repo.
 REPO="${OVN_REPO:-anonysec/OVNode}"
+# Where the code comes from: "release" (default) downloads the versioned
+# tarball from GitHub Releases (verified checksum, no git needed);
+# "source" clones/pulls git (developers).
+SRC="${OVN_SRC:-release}"
 # OVN_APP_DIR override exists for hermetic tests: status/uninstall probes
 # below must be runnable on machines that already host a node (like CI
 # sandboxes and dev boxes) without seeing the real install.
@@ -89,7 +93,7 @@ AUTO_BACKUP_ACTION="" BACKUP_TIME="" BACKUP_KEEP=""
 # Any OVN_* input present (mirrors CLI flags for early validation / no menu).
 ENV_INPUTS=0
 for _ovn_var in OVN_PORT OVN_API_KEY OVN_VPN_PORTS OVN_PROTO OVN_NAME OVN_TLS \
-                OVN_TLS_DOMAIN OVN_TLS_KEY OVN_TLS_CERT OVN_DOCKER OVN_IPV6 OVN_NO_NAT; do
+                OVN_TLS_DOMAIN OVN_TLS_KEY OVN_TLS_CERT OVN_DOCKER OVN_IPV6 OVN_NO_NAT OVN_SRC; do
     if [[ -n "${!_ovn_var:-}" ]]; then ENV_INPUTS=1; fi
 done
 unset _ovn_var
@@ -264,7 +268,7 @@ show_help() {
 
   Commands:
     install             Install OVNode (default when omitted)
-    update              Pull latest source and restart (with backup)
+    update              Fetch release (or pull) and restart (with backup)
     status              Report install state (respects --json)
     start | stop | restart   Control the node agent service
     restart-vpn         Restart/reload OpenVPN
@@ -298,6 +302,10 @@ show_help() {
     --tls-cert FILE     Certificate (--tls custom)       [OVN_TLS_CERT]
     --docker            Deploy in Docker (container runs agent + OpenVPN,
                         host networking)                 [OVN_DOCKER=1]
+    --from-release      Download the versioned release file [default]
+                        (verified checksum)              [OVN_SRC=release]
+    --from-source, --dev
+                        Clone/pull git instead (developers) [OVN_SRC=source]
     --ipv6              Enable IPv6 on the VPN           [OVN_IPV6=1]
     --no-nat            Skip forwarding/NAT/redirects    [OVN_NO_NAT=1]
     --purge             With uninstall: remove data too  [OVN_PURGE=1]
@@ -339,6 +347,8 @@ parse_args() {
             --tls-key)    eval "$need2"; TLS_KEY="$2"; CLI_FLAGS=1; shift 2 ;;
             --tls-cert)   eval "$need2"; TLS_CERT="$2"; CLI_FLAGS=1; shift 2 ;;
             --docker)     DOCKER=1; CLI_FLAGS=1; shift ;;
+            --from-release) SRC="release"; CLI_FLAGS=1; shift ;;
+            --from-source|--dev) SRC="source"; CLI_FLAGS=1; shift ;;
             --ipv6)       IPV6=1; CLI_FLAGS=1; shift ;;
             --no-nat)     NO_NAT=1; CLI_FLAGS=1; shift ;;
             --yes|-y)     YES=1; CLI_FLAGS=1; shift ;;
@@ -888,7 +898,41 @@ wait_health() {
 }
 
 # ── Source / environment ───────────────────────────────────────────────
+release_base() { printf 'ovnode-%s' "$VERSION"; }
+
+release_url() {
+    printf 'https://github.com/%s/releases/download/v%s/%s.tar.gz' \
+        "$REPO" "$VERSION" "$(release_base)"
+}
+
+# Download the versioned release file into $1 (an existing directory).
+# The .sha256 sidecar is verified when published; a missing sidecar only
+# warns (older releases).
+fetch_release() {
+    local dest="$1" work base
+    base="$(release_base)"
+    work="$(mktemp -d /tmp/ovn.XXXXXX)"
+    run "Downloading release v${VERSION}" \
+        curl -fsSLo "$work/$base.tar.gz" "$(release_url)" \
+        || { rm -rf "$work"; die "No release file for v${VERSION} — try --from-source" "$EX_ERROR"; }
+    if curl -fsSLo "$work/$base.sha256" "$(release_url).sha256" 2>/dev/null; then
+        ( cd "$work" && sha256sum -c "$base.sha256" >/dev/null ) \
+            || { rm -rf "$work"; die "Release checksum mismatch for v${VERSION}" "$EX_ERROR"; }
+        step "Checksum ok"
+    else
+        warn "No checksum file — skipping verification"
+    fi
+    mkdir -p "$dest"
+    tar -xzf "$work/$base.tar.gz" -C "$dest" >/dev/null 2>&1 || { rm -rf "$work"; die "Extract failed" "$EX_ERROR"; }
+    rm -rf "$work"
+    step "Release extracted"
+}
+
 fetch_source() {
+    if [[ "$SRC" == "release" ]]; then
+        fetch_release "$APP_DIR"
+        return
+    fi
     if command -v git >/dev/null 2>&1; then
         run "Cloning repository ($BRANCH)" \
             git clone --depth 1 --branch "$BRANCH" "https://github.com/${REPO}.git" "$APP_DIR"
@@ -1169,7 +1213,11 @@ do_update() {
     backup_dir "$OPENVPN_ROOT/server/pki" "node-pki"
 
     cd "$APP_DIR"
-    if [[ -d .git ]]; then
+    if [[ "$SRC" == "release" ]]; then
+        # .env is never in the tarball (uncommitted), so extracting over the
+        # install keeps it.
+        fetch_release "$APP_DIR"
+    elif [[ -d .git ]]; then
         git stash --quiet 2>/dev/null || true
         run "Pulling latest changes" git pull --rebase origin "$BRANCH"
         git stash pop --quiet 2>/dev/null || true
@@ -1753,6 +1801,10 @@ check_deps() {
 # ── Main ───────────────────────────────────────────────────────────────
 main() {
     parse_args "$@"
+    case "$SRC" in
+        release|source) ;;
+        *) die "Invalid source '$SRC' (use release or source)" "$EX_USAGE" ;;
+    esac
     if fancy; then command clear >/dev/null 2>&1 || true; fi
     line ""
     line "  ${B}OVNode${NC} — OpenVPN Node Agent Installer ${GY}v${VERSION}${NC}"
