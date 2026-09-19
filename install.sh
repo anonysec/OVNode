@@ -908,6 +908,11 @@ release_url() {
         "$REPO" "$VERSION" "$(release_base)"
 }
 
+release_checksum_url() {
+    printf 'https://github.com/%s/releases/download/v%s/%s.sha256' \
+        "$REPO" "$VERSION" "$(release_base)"
+}
+
 # Download the versioned release file into $1 (an existing directory).
 # The .sha256 sidecar is verified when published; a missing sidecar only
 # warns (older releases).
@@ -918,7 +923,7 @@ fetch_release() {
     run "Downloading release v${VERSION}" \
         curl -fsSLo "$work/$base.tar.gz" "$(release_url)" \
         || { rm -rf "$work"; die "No release file for v${VERSION} — try --from-source" "$EX_ERROR"; }
-    if curl -fsSLo "$work/$base.sha256" "$(release_url).sha256" 2>/dev/null; then
+    if curl -fsSLo "$work/$base.sha256" "$(release_checksum_url)" 2>/dev/null; then
         ( cd "$work" && sha256sum -c "$base.sha256" >/dev/null ) \
             || { rm -rf "$work"; die "Release checksum mismatch for v${VERSION}" "$EX_ERROR"; }
         step "Checksum ok"
