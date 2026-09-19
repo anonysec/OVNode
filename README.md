@@ -2,14 +2,14 @@
 
 [![CI](https://github.com/anonysec/OVNode/actions/workflows/ci.yml/badge.svg)](https://github.com/anonysec/OVNode/actions/workflows/ci.yml)
 [![License: MIT](https://img.shields.io/badge/License-MIT-green.svg)](LICENSE)
-[![Version](https://img.shields.io/badge/version-2.1.2-blue)](CHANGELOG.md)
+[![Version](https://img.shields.io/badge/version-1.1.0-blue)](CHANGELOG.md)
 
 OpenVPN node agent for [OVManager](https://github.com/anonysec/OVManager). Manages the OpenVPN server, PKI, per-user configs, traffic accounting, and multi-login enforcement — implementing exactly the sync API OVManager's panel expects.
 
 | Node | Panel | Status |
 | ---- | ----- | ------ |
-| 2.x  | ≥ 2.0 | supported (sync API contract) |
-| 1.x  | 1.x   | legacy, upgrade both together |
+| 1.1.x | 1.2.x | supported (sync API contract) |
+| 2.x  | ≥ 2.0 | retired |
 
 ## OVManager ⇄ OVNode API
 

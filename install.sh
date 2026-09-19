@@ -34,7 +34,7 @@
 set -Eeuo pipefail
 
 # ── Constants ──────────────────────────────────────────────────────────
-VERSION="2.1.2"
+VERSION="1.1.0"
 # Forks: point source downloads (and update pulls) at your own repo.
 REPO="${OVN_REPO:-anonysec/OVNode}"
 # OVN_APP_DIR override exists for hermetic tests: status/uninstall probes
