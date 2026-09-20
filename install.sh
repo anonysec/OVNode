@@ -34,7 +34,7 @@
 set -Eeuo pipefail
 
 # ── Constants ──────────────────────────────────────────────────────────
-VERSION="1.1.0"
+VERSION="1.1.1"
 # Forks: point source downloads (and update pulls) at your own repo.
 REPO="${OVN_REPO:-anonysec/OVNode}"
 # Where the code comes from: "release" (default) downloads the versioned
@@ -148,7 +148,8 @@ spinner() {
     done
     wait "$pid" 2>/dev/null || rc=$?
     printf "\r\033[K" >&2
-    [[ $rc -eq 0 ]] && step "$msg" || { line "${RD}  ✗${NC} $msg"; return $rc; }
+    if [[ $rc -eq 0 ]]; then step "$msg"; else line "${RD}  ✗${NC} $msg"; fi
+    return $rc
 }
 
 # run <label> <cmd...> — required step: spinner on a TTY, plain log lines
@@ -265,50 +266,41 @@ show_help() {
   Usage:
     bash <(curl -Ls URL) [command] [flags]
 
-  No command? An interactive menu opens: Express / Custom / Update / Uninstall.
+  No command? An interactive menu opens: Express / Custom.
   Express installs with safe defaults (ovnode, UDP, self-signed TLS, generated
   API key). Custom asks every question. Plain HTTP is not offered.
 
-  Commands:
-    install             Install OVNode (default when omitted)
+  Commands: (default: install)
     update              Fetch release (or pull) and restart (with backup)
-    status              Report install state (respects --json)
-    start | stop | restart   Control the node agent service
-    restart-vpn         Restart/reload OpenVPN
-    logs [N|-f]         Last N log lines (default 100), or follow with -f
-    backup [--keep N]   Save state + PKI backups now (/var/backups, newest N)
-    auto-backup on|off|status   Host timer: daily backup at 03:30 (default)
-                        Options for on: --time HH:MM --keep N
-    tls                 Show/replace the cert (self-signed, LE, custom)
-    menu                Open the interactive menu
-    uninstall           Remove OVNode (data kept unless --purge)
+    uninstall [--purge] Remove OVNode (data kept unless --purge)
     help                This help
 
-  Installed commands: ovnode (alias ovn) — same subcommands, plus a menu.
+  Everything else (status, logs, backup, TLS) lives in the
+  manager: ovn  (installed as ovnode/ovn).
+
+  Installed commands: ovnode (alias ovn) — day-to-day operations, plus a menu.
 
   Flags (every flag has an OVN_* env equivalent; CLI wins):
-    --port PORT         Sync API port                    [OVN_PORT, 2083]
     --api-key KEY       API key, min 16 chars            [OVN_API_KEY, generated]
+    --name NAME         Node name                        [OVN_NAME, ovnode]
+    --port PORT         Sync API port                    [OVN_PORT, 2083]
     --vpn-ports LIST    OpenVPN ports, comma separated   [OVN_VPN_PORTS, 1194]
                         First = listener; the rest are redirected to it and
                         included in every .ovpn (client failover).
-    --vpn-port PORT     Shorthand for a single port
     --proto PROTO       VPN transport: udp (default, faster) or tcp
                         (fallback where UDP is blocked)  [OVN_PROTO]
-    --name NAME         Node name                        [OVN_NAME, ovnode]
-    --branch BRANCH     Source branch                    [OVN_BRANCH, main]
-    --tls METHOD        selfsigned (default) | letsencrypt | letsencrypt-ip |
-                        custom                           [OVN_TLS]
+    --tls 1|2|3|4       1 selfsigned (default), 2 letsencrypt,
+                        3 letsencrypt-ip, 4 custom       [OVN_TLS]
                         Plain HTTP ("none") is rejected.
     --tls-domain DOM    Domain/IP for Let's Encrypt      [OVN_TLS_DOMAIN]
-    --tls-key  FILE     Private key (--tls custom)       [OVN_TLS_KEY]
-    --tls-cert FILE     Certificate (--tls custom)       [OVN_TLS_CERT]
+    --tls-key  FILE     Private key (--tls 4)            [OVN_TLS_KEY]
+    --tls-cert FILE     Certificate (--tls 4)            [OVN_TLS_CERT]
     --docker            Deploy in Docker (container runs agent + OpenVPN,
                         host networking)                 [OVN_DOCKER=1]
     --from-release      Download the versioned release file [default]
                         (verified checksum)              [OVN_SRC=release]
-    --from-source, --dev
-                        Clone/pull git instead (developers) [OVN_SRC=source]
+    --from-source       Clone/pull git instead (developers) [OVN_SRC=source]
+    --branch BRANCH     Source branch                    [OVN_BRANCH, main]
     --ipv6              Enable IPv6 on the VPN           [OVN_IPV6=1]
     --no-nat            Skip forwarding/NAT/redirects    [OVN_NO_NAT=1]
     --purge             With uninstall: remove data too  [OVN_PURGE=1]
@@ -323,7 +315,7 @@ show_help() {
     4 not installed
 
   Automation example (safe to parse):
-    RESULT=$(bash install.sh install --json --tls selfsigned) || exit
+    RESULT=$(bash install.sh --json --tls 1) || exit
     KEY=$(echo "$RESULT" | jq -r .api_key)
     BUNDLE=$(echo "$RESULT" | jq -r .bundle)  # paste into panel: Nodes → Add Node
 EOF
@@ -334,10 +326,8 @@ parse_args() {
     local need2='[[ $# -ge 2 ]] || die "$1 needs a value" "$EX_USAGE"'
     while [[ $# -gt 0 ]]; do
         case "$1" in
-            install)      ACTION="install"; CMD_GIVEN=1; shift ;;
             update)       ACTION="update"; CMD_GIVEN=1; shift ;;
-            uninstall|--uninstall) ACTION="uninstall"; CMD_GIVEN=1; shift ;;
-            status)       ACTION="status"; CMD_GIVEN=1; shift ;;
+            uninstall) ACTION="uninstall"; CMD_GIVEN=1; shift ;;
             help|--help|-h) show_help ;;
             --port)       eval "$need2"; PORT="$2"; CLI_FLAGS=1; shift 2 ;;
             --api-key)    eval "$need2"; API_KEY="$2"; CLI_FLAGS=1; shift 2 ;;
@@ -345,36 +335,29 @@ parse_args() {
             --proto) eval "$need2"; VPN_PROTO="$2"; CLI_FLAGS=1; shift 2 ;;
             --name)       eval "$need2"; NODE_NAME="$2"; CLI_FLAGS=1; shift 2 ;;
             --branch)     eval "$need2"; BRANCH="$2"; CLI_FLAGS=1; shift 2 ;;
-            --tls)        eval "$need2"; TLS_METHOD="$2"; CLI_FLAGS=1; shift 2 ;;
+            --tls)        eval "$need2"; CLI_FLAGS=1
+                          case "$2" in
+                              1|selfsigned) TLS_METHOD="selfsigned" ;;
+                              2|letsencrypt) TLS_METHOD="letsencrypt" ;;
+                              3|letsencrypt-ip) TLS_METHOD="letsencrypt-ip" ;;
+                              4|custom) TLS_METHOD="custom" ;;
+                              *) die "Invalid --tls '$2' (use 1, 2, 3 or 4)" "$EX_USAGE" ;;
+                          esac
+                          shift 2 ;;
             --tls-domain) eval "$need2"; TLS_DOMAIN="$2"; CLI_FLAGS=1; shift 2 ;;
             --tls-key)    eval "$need2"; TLS_KEY="$2"; CLI_FLAGS=1; shift 2 ;;
             --tls-cert)   eval "$need2"; TLS_CERT="$2"; CLI_FLAGS=1; shift 2 ;;
             --docker)     DOCKER=1; CLI_FLAGS=1; shift ;;
             --from-release) SRC="release"; CLI_FLAGS=1; shift ;;
-            --from-source|--dev) SRC="source"; CLI_FLAGS=1; shift ;;
+            --from-source) SRC="source"; CLI_FLAGS=1; shift ;;
             --ipv6)       IPV6=1; CLI_FLAGS=1; shift ;;
             --no-nat)     NO_NAT=1; CLI_FLAGS=1; shift ;;
             --yes|-y)     YES=1; CLI_FLAGS=1; shift ;;
             --purge)      PURGE=1; CLI_FLAGS=1; shift ;;
             --json)       JSON=1; YES=1; CLI_FLAGS=1; shift ;;
             --quiet|-q)   QUIET=1; shift ;;
-            start)        ACTION="start"; CMD_GIVEN=1; shift ;;
-            stop)         ACTION="stop"; CMD_GIVEN=1; shift ;;
-            restart)      ACTION="restart"; CMD_GIVEN=1; shift ;;
-            restart-vpn)  ACTION="restart-vpn"; CMD_GIVEN=1; shift ;;
-            backup)       ACTION="backup"; CMD_GIVEN=1; shift ;;
-            auto-backup)  ACTION="auto-backup"; CMD_GIVEN=1; shift
-                          if [[ $# -ge 1 && "$1" != -* ]]; then AUTO_BACKUP_ACTION="$1"; shift; fi ;;
-            --keep)       eval "$need2"; BACKUP_KEEP="$2"; shift 2 ;;
-            --time)       eval "$need2"; BACKUP_TIME="$2"; shift 2 ;;
-            tls)          ACTION="tls"; CMD_GIVEN=1; shift ;;
-            menu)         ACTION="menu"; CMD_GIVEN=1; shift ;;
-            logs)         ACTION="logs"; CMD_GIVEN=1
-                          if [[ $# -ge 2 && ( "$2" == "-f" || "$2" =~ ^[0-9]+$ ) ]]; then
-                              LOGS_ARG="$2"; shift 2
-                          else
-                              shift
-                          fi ;;
+            status|start|stop|restart|restart-vpn|logs|backup|auto-backup|tls|menu|install)
+                          die "'$1' moved to the manager — use: ovn $1" "$EX_USAGE" ;;
             *)            die "Unknown option: $1 (--help for usage)" "$EX_USAGE" ;;
         esac
     done
@@ -1315,70 +1298,6 @@ do_uninstall() {
 }
 
 # ── Status ─────────────────────────────────────────────────────────────
-do_status() {
-    local installed=false mode="none" node="" port="" tls="none"
-    local agent="unknown" health="unknown" openvpn="unknown" agent_version=""
-
-    if [[ -f "$APP_DIR/.env" ]]; then
-        installed=true
-        local env_get; env_get() { grep -E "^$1=" "$APP_DIR/.env" 2>/dev/null | head -1 | cut -d= -f2- | tr -d '"' || true; }
-        node="$(env_get NODE_NAME)"; : "${node:=ovnode}"
-        port="$(env_get SERVICE_PORT)"; : "${port:=$DEFAULT_PORT}"
-        tls="$(env_get TLS_METHOD)"; : "${tls:=selfsigned}"
-        mode="native"
-        [[ -f "$DATA_BASE/$node/docker-compose.yml" ]] && mode="docker"
-
-        agent_version="$(grep -Eo '"[0-9]+\.[0-9]+\.[0-9]+"' "$APP_DIR/core/version.py" 2>/dev/null | head -1 | tr -d '"' || true)"
-
-        if [[ "$mode" == "docker" ]]; then
-            if command -v docker >/dev/null 2>&1 \
-                && docker ps --format '{{.Names}}' 2>/dev/null | grep -qx "ovnode-$node"; then
-                agent="running"
-            else
-                agent="stopped"
-            fi
-            openvpn="in-container"
-        else
-            if has_systemd; then
-                agent="$(systemctl is-active "$SYSTEMD_SERVICE" 2>/dev/null || true)"
-                openvpn="$(systemctl is-active openvpn-server@server 2>/dev/null || true)"
-            fi
-        fi
-
-        local scheme="http"
-        [[ "$tls" != "none" ]] && scheme="https"
-        if wait_health "${scheme}://127.0.0.1:${port}/sync/health" 2; then
-            health="ok"
-        else
-            health="unreachable"
-        fi
-    fi
-
-    field "Installed" "$installed"
-    if [[ "$installed" == "true" ]]; then
-        field "Mode"      "$mode"
-        field "Node"      "$node"
-        field "Version"   "${agent_version:-unknown}"
-        field "Agent"     "$agent"
-        field "OpenVPN"   "$openvpn"
-        field "API port"  "$port"
-        field "TLS"       "$tls"
-        field "Health"    "$health"
-    fi
-
-    emit_result true status \
-        installed "$installed" \
-        mode "$mode" \
-        node "$node" \
-        agent_version "${agent_version:-}" \
-        agent "$agent" \
-        openvpn "$openvpn" \
-        service_port "${port:-0}" \
-        tls "$tls" \
-        health "$health"
-
-    [[ "$installed" == "true" ]] || exit "$EX_NOTINSTALLED"
-}
 
 # ── Interactive setup (humans on a TTY) ────────────────────────────────
 interactive_setup() {
@@ -1445,16 +1364,12 @@ start_menu() {
     line ""
     line "  ${GR}1${NC})  Express    Install with safe defaults (recommended)"
     line "  ${WH}2${NC})  Custom     Choose every option yourself"
-    line "  ${CY}3${NC})  Update     Update to the latest version"
-    line "  ${YL}4${NC})  Uninstall  Remove OVNode (data kept by default)"
     line ""
     local choice
     choice="$(ask "Select" "1")"
     case "${choice:-1}" in
         1) apply_express_defaults ;;
         2) EXPRESS=0 ;;
-        3) confirm "Update OVNode now?" && do_update; exit "$EX_OK" ;;
-        4) do_uninstall; exit "$EX_OK" ;;
         *) apply_express_defaults ;;
     esac
     line ""
@@ -1490,10 +1405,6 @@ env_set() {  # env_set FILE KEY VALUE — rewrite one line, atomically
     mv -f "$tmp" "$file"
 }
 
-node_name_from_env() {
-    local name; name="$(env_get "$APP_DIR/.env" NODE_NAME)"
-    printf '%s' "${name:-ovnode}"
-}
 
 is_docker_node() { [[ -f "$(compose_file)" ]]; }
 
@@ -1519,196 +1430,17 @@ systemctl_bounded() {  # systemctl_bounded stop|restart <unit>
     return 0
 }
 
-node_service_action() {  # start|stop|restart
-    if is_docker_node; then
-        command -v docker >/dev/null 2>&1 || die "Docker not found on this host"
-        ( cd "$APP_DIR" && docker compose -f "$(compose_file)" "$1" ) || die "docker compose $1 failed"
-    else
-        systemctl "$1" "$SYSTEMD_SERVICE" || die "systemctl $1 $SYSTEMD_SERVICE failed"
-    fi
-    step "Node agent $1: done"
-}
 
-restart_vpn() {
-    if timeout "$STOP_TIMEOUT" systemctl restart openvpn-server@server 2>/dev/null; then
-        step "OpenVPN restarted (systemd)"
-        return 0
-    fi
-    local pidfile pid found=0
-    for pidfile in "$OPENVPN_ROOT/server/ovnode.pid" /run/openvpn-server/*.pid; do
-        [[ -f "$pidfile" ]] || continue
-        pid="$(cat "$pidfile" 2>/dev/null || true)"
-        if [[ -n "$pid" ]] && kill -HUP "$pid" 2>/dev/null; then found=1; fi
-    done
-    if [[ "$found" -eq 0 ]]; then
-        for pid in $(pgrep -x openvpn 2>/dev/null || true); do
-            kill -HUP "$pid" 2>/dev/null && found=1
-        done
-    fi
-    if [[ "$found" -eq 1 ]]; then
-        step "OpenVPN reloaded (SIGHUP)"
-    else
-        warn "No running OpenVPN process found — it starts with the agent"
-    fi
-}
 
-do_node_logs() {
-    local arg="${1:-100}" name
-    name="$(node_name_from_env)"
-    if is_docker_node; then
-        if [[ "$arg" == "-f" ]]; then docker logs -f --tail 100 "ovnode-$name"; else docker logs --tail "$arg" "ovnode-$name"; fi \
-            || warn "Could not read container logs"
-    elif [[ "$arg" == "-f" ]]; then
-        journalctl -u "$SYSTEMD_SERVICE" -n 100 -f || warn "Could not read logs"
-    else
-        journalctl -u "$SYSTEMD_SERVICE" -n "$arg" --no-pager || warn "Could not read logs"
-    fi
-}
 
-do_node_backup() {
-    backup_dir "$DATA_BASE" "node"
-    backup_dir "$OPENVPN_ROOT/server/pki" "node-pki"
-    prune_backups "${BACKUP_KEEP:-14}"
-}
 
 # Keep only the newest N tarballs this installer writes (/var/backups).
-prune_backups() {
-    local keep="${1:-14}" i=0 f
-    [[ "$keep" =~ ^[0-9]+$ ]] || keep=14
-    shopt -s nullglob
-    local files=(/var/backups/node-*.tar.gz /var/backups/node-pki-*.tar.gz)
-    shopt -u nullglob
-    ((${#files[@]} > keep)) || return 0
-    while IFS= read -r f; do
-        i=$((i + 1))
-        if ((i > keep)); then rm -f "$f"; fi
-    done < <(ls -1t "${files[@]}" 2>/dev/null)
-    return 0
-}
 
 # Host-level daily backup: a systemd timer running `ovnode backup`.
-auto_backup_units_write() {
-    local time="$1" keep="$2"
-    local service="/etc/systemd/system/ovnode-backup.service"
-    local timer="/etc/systemd/system/ovnode-backup.timer"
-    cat > "$service" << EOF
-[Unit]
-Description=OVNode automatic backup
 
-[Service]
-Type=oneshot
-ExecStart=${BIN_DIR}/${CLI_NAME} backup --keep ${keep}
-EOF
-    cat > "$timer" << EOF
-[Unit]
-Description=Daily OVNode backup
 
-[Timer]
-OnCalendar=*-*-* ${time}:00
-Persistent=true
 
-[Install]
-WantedBy=timers.target
-EOF
-}
 
-auto_backup_cli() {
-    local action="${1:-status}" service timer time keep
-    service="/etc/systemd/system/ovnode-backup.service"
-    timer="/etc/systemd/system/ovnode-backup.timer"
-    time="${BACKUP_TIME:-03:30}"
-    keep="${BACKUP_KEEP:-14}"
-    case "$action" in
-        on)
-            [[ "$time" =~ ^([01][0-9]|2[0-3]):[0-5][0-9]$ ]] || die "Invalid time '$time' (use HH:MM)" "$EX_USAGE"
-            [[ "$keep" =~ ^[0-9]+$ ]] && ((keep >= 1 && keep <= 500)) || die "Invalid --keep '$keep' (1-500)" "$EX_USAGE"
-            command -v systemctl >/dev/null 2>&1 || die "systemd not found — the auto-backup timer needs it"
-            auto_backup_units_write "$time" "$keep"
-            systemctl daemon-reload
-            systemctl enable --now ovnode-backup.timer >/dev/null 2>&1 \
-                || die "Could not enable the backup timer (systemd available?)"
-            step "Auto backup enabled: daily at ${time}, keeping ${keep} tarballs"
-            ;;
-        off)
-            systemctl disable --now ovnode-backup.timer >/dev/null 2>&1 || true
-            rm -f "$timer" "$service"
-            systemctl daemon-reload >/dev/null 2>&1 || true
-            step "Auto backup disabled (host timer removed)"
-            ;;
-        status|"")
-            if [[ -f "$timer" ]]; then
-                info "Host timer: enabled ($(systemctl is-active ovnode-backup.timer 2>/dev/null || echo unknown))"
-                systemctl list-timers ovnode-backup.timer --no-pager 2>/dev/null | sed -n '2p' || true
-            else
-                info "Host timer: disabled  (enable: ${CLI_NAME} auto-backup on)"
-            fi
-            ;;
-        *)
-            die "Usage: $CLI_NAME auto-backup on [--time HH:MM] [--keep N] | off | status" "$EX_USAGE" ;;
-    esac
-}
-
-auto_backup_menu() {
-    local tag
-    tag="$(tui_select "Auto backup (host timer)" \
-        status  "Status" \
-        enable  "Enable daily backup" \
-        disable "Disable" \
-        back    "Back")"
-    case "$tag" in
-        status)  auto_backup_cli status ;;
-        enable)  auto_backup_cli on ;;
-        disable) auto_backup_cli off ;;
-        *)       return 0 ;;
-    esac
-}
-
-node_service_menu() {
-    local tag
-    tag="$(tui_select "Node service" start "Start" stop "Stop" restart "Restart" back "Back")"
-    case "$tag" in
-        start|stop|restart) check_root; node_service_action "$tag" ;;
-        *) return 0 ;;
-    esac
-}
-
-node_tls_menu() {
-    local envfile="$APP_DIR/.env"
-    [[ -f "$envfile" ]] || die "Not installed ($envfile missing)"
-    local method keyfile certfile expiry
-    method="$(env_get "$envfile" TLS_METHOD)"; : "${method:=selfsigned}"
-    keyfile="$(env_get "$envfile" SSL_KEYFILE)"
-    certfile="$(env_get "$envfile" SSL_CERTFILE)"
-    expiry="$(openssl x509 -enddate -noout -in "$certfile" 2>/dev/null | cut -d= -f2 || true)"
-    line ""
-    line "${B}TLS certificate — panel ↔ node API${NC}"
-    kv "Mode"    "$method"
-    kv "Key file"  "${keyfile:-<none>}"
-    kv "Cert file" "${certfile:-<none>}"
-    [[ -n "$expiry" ]] && kv "Expires" "$expiry"
-    line ""
-    line "  1) Self-signed (regenerate)"
-    line "  2) Let's Encrypt for a domain"
-    line "  3) Let's Encrypt for this IP"
-    line "  4) Custom key + cert paths"
-    line "  0) Back"
-    local c; c="$(ask "Select" "0")"
-    case "${c:-0}" in
-        1) TLS_METHOD="selfsigned" ;;
-        2) TLS_METHOD="letsencrypt"; TLS_DOMAIN="$(ask "Domain" "")"
-           [[ -n "$TLS_DOMAIN" ]] || { warn "Domain required"; return 0; } ;;
-        3) TLS_METHOD="letsencrypt-ip"; TLS_DOMAIN="$(primary_ip)" ;;
-        4) TLS_METHOD="custom"; TLS_KEY="$(ask "Key file" "")"; TLS_CERT="$(ask "Cert file" "")"
-           [[ -f "$TLS_KEY" && -f "$TLS_CERT" ]] || { warn "Key/cert files not found"; return 0; } ;;
-        0|*) return 0 ;;
-    esac
-    setup_tls || return 0
-    env_set "$envfile" TLS_METHOD "$TLS_METHOD"
-    env_set "$envfile" SSL_KEYFILE "$TLS_KEY"
-    env_set "$envfile" SSL_CERTFILE "$TLS_CERT"
-    step "Certificate updated — restarting the node agent"
-    node_service_action restart
-}
 
 # Boxed menu when whiptail is already installed; colored menu otherwise.
 tui_select() {  # tui_select "Title" tag label [tag label ...] → prints the tag
@@ -1738,28 +1470,15 @@ tui_select() {  # tui_select "Title" tag label [tag label ...] → prints the ta
 
 installed_menu() {
     warn "OVNode is already installed"
+    info "Manage the node with: ovn  (status, logs, backup, TLS)"
     while true; do
         local tag
-        tag="$(tui_select "OVNode — node" \
-            status      "Status — agent, VPN, version" \
-            service     "Start / Stop / Restart agent" \
-            restart-vpn "Restart VPN (OpenVPN reload)" \
-            logs        "Logs" \
-            backup      "Backup (state + PKI)" \
-            auto        "Auto backup (host timer)" \
+        tag="$(tui_select "OVNode — installer" \
             update      "Update" \
-            tls         "TLS certificate" \
             uninstall   "Uninstall" \
             quit        "Quit")"
         case "$tag" in
-            status)      do_status || warn "Status failed" ;;
-            service)     node_service_menu || warn "Service action failed" ;;
-            restart-vpn) check_root; restart_vpn || warn "VPN restart failed" ;;
-            logs)        do_node_logs || warn "Could not read logs" ;;
-            backup)      check_root; do_node_backup || warn "Backup failed" ;;
-            auto)        check_root; auto_backup_menu || warn "Auto-backup action failed" ;;
             update)      do_update || warn "Update failed" ;;
-            tls)         check_root; node_tls_menu || warn "TLS action failed" ;;
             uninstall)
                 confirm_no "Also delete data and backups?" && PURGE=1
                 do_uninstall
@@ -1770,7 +1489,9 @@ installed_menu() {
 }
 
 install_cli() {
-    local src="${APP_DIR}/install.sh"
+    # The manager is the day-to-day command (ovnode/ovn). Refreshed on
+    # every update, which auto-swaps boxes whose ovn is an old installer copy.
+    local src="${APP_DIR}/manager.sh"
     [[ -f "$src" ]] || return 0
     mkdir -p "$BIN_DIR" 2>/dev/null || { warn "Could not create $BIN_DIR"; return 0; }
     if cp -f "$src" "$BIN_DIR/$CLI_NAME" 2>/dev/null && chmod 0755 "$BIN_DIR/$CLI_NAME"; then
@@ -1819,20 +1540,8 @@ main() {
     sep; line ""
 
     case "$ACTION" in
-        status)    do_status; exit "$EX_OK" ;;
         uninstall) do_uninstall; exit "$EX_OK" ;;
         update)    confirm "Update OVNode now?" || exit "$EX_OK"; do_update; exit "$EX_OK" ;;
-        start|stop|restart) check_root; node_service_action "$ACTION"; exit "$EX_OK" ;;
-        restart-vpn) check_root; restart_vpn; exit "$EX_OK" ;;
-        logs) do_node_logs "$LOGS_ARG"; exit "$EX_OK" ;;
-        backup) check_root; do_node_backup; exit "$EX_OK" ;;
-        auto-backup) check_root; auto_backup_cli "$AUTO_BACKUP_ACTION"; exit "$EX_OK" ;;
-        tls) check_root; node_tls_menu; exit "$EX_OK" ;;
-        menu)
-            is_tty || { warn "No terminal available — run '$0 help' for the command list."; exit "$EX_USAGE"; }
-            if [[ -d "$APP_DIR" ]]; then installed_menu; exit "$EX_OK"; fi
-            start_menu
-            ;;
     esac
 
     # Validation must precede the already-installed guard, otherwise a caller
