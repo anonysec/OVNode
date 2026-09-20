@@ -40,11 +40,14 @@ def test_help_documents_the_machine_interface():
 
 def test_manager_ops_redirect_to_ovn():
     """status/logs/etc. are no longer installer commands — point at ovn."""
-    for cmd in ("status", "logs", "backup", "tls", "menu", "install"):
+    for cmd in ("status", "logs", "backup", "tls", "menu"):
         r = sh(cmd)
         assert r.returncode == 2, cmd
         assert "moved to the manager" in r.stderr, cmd
         assert "ovn" in r.stderr, cmd
+    r = sh("install")
+    assert r.returncode == 2
+    assert "is the default" in r.stderr
 
 
 def test_usage_errors_exit_2_with_json():
