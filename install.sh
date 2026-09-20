@@ -356,8 +356,9 @@ parse_args() {
             --purge)      PURGE=1; CLI_FLAGS=1; shift ;;
             --json)       JSON=1; YES=1; CLI_FLAGS=1; shift ;;
             --quiet|-q)   QUIET=1; shift ;;
-            status|start|stop|restart|restart-vpn|logs|backup|auto-backup|tls|menu|install)
+            status|start|stop|restart|restart-vpn|logs|backup|auto-backup|tls|menu)
                           die "'$1' moved to the manager — use: ovn $1" "$EX_USAGE" ;;
+            install)      die "'install' is the default — just drop the word" "$EX_USAGE" ;;
             *)            die "Unknown option: $1 (--help for usage)" "$EX_USAGE" ;;
         esac
     done
