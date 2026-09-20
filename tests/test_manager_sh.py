@@ -213,3 +213,13 @@ def test_rollback_restores_newest_snapshot():
     assert "do_rollback()" in content
     assert "latest_snapshot node" in content
     assert "Rolled back and healthy" in content
+
+
+def test_doctor_and_rollback_dispatch_past_parse(tmp_path):
+    """Regression: every main-branch verb must exist in parse_args too
+    (doctor/rollback once died as 'Unknown option' in parse)."""
+    env = {**os.environ, "OVN_APP_DIR": str(tmp_path / "missing")}
+    for cmd in ("doctor", "rollback"):
+        r = mgr(cmd, env=env)
+        assert "Unknown option" not in r.stderr, cmd
+        assert "Not installed" in r.stderr, (cmd, r.stderr)
