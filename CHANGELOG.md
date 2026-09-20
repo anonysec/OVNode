@@ -1,5 +1,10 @@
 # Changelog
 
+## 1.1.4 — 2026-09-20
+
+Follow-up fixes: release downloads follow redirects (`curl -L`),
+entry-point executable bits pinned by tests. Pages auto-deploy off.
+
 ## 1.1.3 — 2026-09-20
 
 Critical fixes over 1.1.2: `doctor`/`rollback` were rejected by `parse_args`
