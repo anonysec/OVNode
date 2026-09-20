@@ -3,23 +3,24 @@
 # SPDX-License-Identifier: MIT
 #
 # ══════════════════════════════════════════════════════════════════════
-#  OVNode — OpenVPN Node Agent Installer v4
+#  OVNode — OpenVPN Node Agent Installer
 #
 #  One installer, four ways to run it:
 #
-#    humans, interactive :  bash <(curl -Ls URL)
-#    humans, one-liner   :  bash <(curl -Ls URL) install -y --tls selfsigned
-#    automation / AI     :  bash <(curl -Ls URL) install -y --json \
-#                               --api-key "$KEY" --vpn-ports 1194,443
-#    config via env      :  OVN_API_KEY=$KEY OVN_TLS=selfsigned \
-#                               bash <(curl -Ls URL) install -y --json
+#    humans, zero-question:  bash <(curl -Ls URL)
+#    humans, wizard        :  bash <(curl -Ls URL) interactive
+#    automation / AI       :  bash <(curl -Ls URL) -- -y -j \
+#                               -p "$KEY" --vpn-ports 1194,443
+#    config via env        :  OVN_KEY=$KEY OVN_TLS=selfsigned \
+#                               bash <(curl -Ls URL) -- -y -j
 #
-#  Commands : install (default) | update | uninstall | status | help
+#  Commands : install (default) | update | uninstall | interactive | help
+#  Day-to-day ops (status, logs, backup, TLS) live in the manager: ovn.
 #  Modes    : native (systemd, default) | --docker (container runs the
 #             agent AND OpenVPN, supervised — see docker/entrypoint.sh)
 #
 #  Machine interface (for scripts and AI agents):
-#    --json        exactly one JSON object on stdout, all logs on stderr
+#    -j / --json   exactly one JSON object on stdout, all logs on stderr
 #    -y / --yes    never prompts (also implied by --json or no TTY)
 #    env overrides OVN_* mirror every flag (CLI wins over env)
 #    exit codes    0 ok · 1 error · 2 usage · 3 already installed ·
@@ -34,7 +35,7 @@
 set -Eeuo pipefail
 
 # ── Constants ──────────────────────────────────────────────────────────
-VERSION="1.1.1"
+VERSION="1.1.2"
 # Forks: point source downloads (and update pulls) at your own repo.
 REPO="${OVN_REPO:-anonysec/OVNode}"
 # Where the code comes from: "release" (default) downloads the versioned
@@ -66,7 +67,7 @@ EX_OK=0 EX_ERROR=1 EX_USAGE=2 EX_ALREADY=3 EX_NOTINSTALLED=4
 # ── Settings (env defaults OVN_*, overridden by CLI flags) ─────────────
 ACTION="install"
 PORT="${OVN_PORT:-}"
-API_KEY="${OVN_API_KEY:-}"
+API_KEY="${OVN_KEY:-}"
 VPN_PORTS="${OVN_VPN_PORTS:-}"
 VPN_PROTO="${OVN_PROTO:-}"
 NODE_NAME="${OVN_NAME:-}"
@@ -82,17 +83,19 @@ YES="${OVN_YES:-0}"
 PURGE="${OVN_PURGE:-0}"
 JSON="${OVN_JSON:-0}"
 QUIET="${OVN_QUIET:-0}"
+PIN=""
 # True when the caller passed a CLI flag (as opposed to env defaults): used to
 # decide whether early validation / the start menu should run.
 CLI_FLAGS=0
 CMD_GIVEN=0
+INTERACTIVE=0
 # Set by the start menu: 1 = Express (no further questions).
 EXPRESS=0
 LOGS_ARG=""
 AUTO_BACKUP_ACTION="" BACKUP_TIME="" BACKUP_KEEP=""
 # Any OVN_* input present (mirrors CLI flags for early validation / no menu).
 ENV_INPUTS=0
-for _ovn_var in OVN_PORT OVN_API_KEY OVN_VPN_PORTS OVN_PROTO OVN_NAME OVN_TLS \
+for _ovn_var in OVN_PORT OVN_KEY OVN_VPN_PORTS OVN_PROTO OVN_NAME OVN_TLS \
                 OVN_TLS_DOMAIN OVN_TLS_KEY OVN_TLS_CERT OVN_DOCKER OVN_IPV6 OVN_NO_NAT OVN_SRC; do
     if [[ -n "${!_ovn_var:-}" ]]; then ENV_INPUTS=1; fi
 done
@@ -266,13 +269,16 @@ show_help() {
   Usage:
     bash <(curl -Ls URL) [command] [flags]
 
-  No command? An interactive menu opens: Express / Custom.
-  Express installs with safe defaults (ovnode, UDP, self-signed TLS, generated
-  API key). Custom asks every question. Plain HTTP is not offered.
+  No command? Zero-question install with safe generated values.
+  The `interactive` command opens the numbered wizard instead:
+  Express installs with safe defaults (ovnode, UDP, self-signed TLS,
+  generated API key). Custom asks every question. Plain HTTP is not offered.
 
   Commands: (default: install)
-    update              Fetch release (or pull) and restart (with backup)
+    update [-v vX.Y.Z]    Fetch release (or pull) and restart (data backup
+                          + code snapshot first, auto-rollback on failure)
     uninstall [--purge] Remove OVNode (data kept unless --purge)
+    interactive, -i       Numbered install wizard (Enter = default)
     help                This help
 
   Everything else (status, logs, backup, TLS) lives in the
@@ -281,7 +287,8 @@ show_help() {
   Installed commands: ovnode (alias ovn) — day-to-day operations, plus a menu.
 
   Flags (every flag has an OVN_* env equivalent; CLI wins):
-    --api-key KEY       API key, min 16 chars            [OVN_API_KEY, generated]
+    -p, --key KEY       API key, min 16 chars (generated if omitted)
+                                              [OVN_KEY]
     --name NAME         Node name                        [OVN_NAME, ovnode]
     --port PORT         Sync API port                    [OVN_PORT, 2083]
     --vpn-ports LIST    OpenVPN ports, comma separated   [OVN_VPN_PORTS, 1194]
@@ -301,11 +308,12 @@ show_help() {
                         (verified checksum)              [OVN_SRC=release]
     --from-source       Clone/pull git instead (developers) [OVN_SRC=source]
     --branch BRANCH     Source branch                    [OVN_BRANCH, main]
+    -v, --version vX.Y.Z  Install/update this release instead of v1.1.2
     --ipv6              Enable IPv6 on the VPN           [OVN_IPV6=1]
     --no-nat            Skip forwarding/NAT/redirects    [OVN_NO_NAT=1]
     --purge             With uninstall: remove data too  [OVN_PURGE=1]
     --yes | -y          Never prompt, accept defaults    [OVN_YES=1]
-    --json              Machine output: one JSON object on stdout, logs on
+    --json | -j         Machine output: one JSON object on stdout, logs on
                         stderr; implies --yes            [OVN_JSON=1]
     --quiet | -q        Suppress progress logs (errors still shown)
     --help | -h         This help
@@ -315,7 +323,7 @@ show_help() {
     4 not installed
 
   Automation example (safe to parse):
-    RESULT=$(bash install.sh --json --tls 1) || exit
+    RESULT=$(bash install.sh -j --tls 1) || exit
     KEY=$(echo "$RESULT" | jq -r .api_key)
     BUNDLE=$(echo "$RESULT" | jq -r .bundle)  # paste into panel: Nodes → Add Node
 EOF
@@ -330,7 +338,9 @@ parse_args() {
             uninstall) ACTION="uninstall"; CMD_GIVEN=1; shift ;;
             help|--help|-h) show_help ;;
             --port)       eval "$need2"; PORT="$2"; CLI_FLAGS=1; shift 2 ;;
-            --api-key)    eval "$need2"; API_KEY="$2"; CLI_FLAGS=1; shift 2 ;;
+            -p|--key)       eval "$need2"; API_KEY="$2"; CLI_FLAGS=1; shift 2 ;;
+            -v|--version)   eval "$need2"; PIN="$2"; CLI_FLAGS=1; shift 2 ;;
+            -i)             ACTION="interactive"; CMD_GIVEN=1; shift ;;
             --vpn-ports|--vpn-port) eval "$need2"; VPN_PORTS="$2"; CLI_FLAGS=1; shift 2 ;;
             --proto) eval "$need2"; VPN_PROTO="$2"; CLI_FLAGS=1; shift 2 ;;
             --name)       eval "$need2"; NODE_NAME="$2"; CLI_FLAGS=1; shift 2 ;;
@@ -354,11 +364,12 @@ parse_args() {
             --no-nat)     NO_NAT=1; CLI_FLAGS=1; shift ;;
             --yes|-y)     YES=1; CLI_FLAGS=1; shift ;;
             --purge)      PURGE=1; CLI_FLAGS=1; shift ;;
-            --json)       JSON=1; YES=1; CLI_FLAGS=1; shift ;;
+            --json|-j)    JSON=1; YES=1; CLI_FLAGS=1; shift ;;
             --quiet|-q)   QUIET=1; shift ;;
             status|start|stop|restart|restart-vpn|logs|backup|auto-backup|tls|menu)
                           die "'$1' moved to the manager — use: ovn $1" "$EX_USAGE" ;;
             install)      die "'install' is the default — just drop the word" "$EX_USAGE" ;;
+            interactive)  ACTION="interactive"; CMD_GIVEN=1; shift ;;
             *)            die "Unknown option: $1 (--help for usage)" "$EX_USAGE" ;;
         esac
     done
@@ -402,7 +413,7 @@ validate_input() {
     esac
     [[ -n "$NODE_NAME" ]] || NODE_NAME="ovnode"
     [[ "$NODE_NAME" =~ ^[A-Za-z0-9_-]{1,64}$ ]] || die "Invalid node name" "$EX_USAGE"
-    [[ -n "$API_KEY" ]] || die "API key is required (--api-key / OVN_API_KEY; interactive installs generate one)" "$EX_USAGE"
+    [[ -n "$API_KEY" ]] || API_KEY="$(openssl rand -hex 32)"
     [[ ${#API_KEY} -ge 16 ]] || die "API key must be at least 16 characters (openssl rand -hex 32)" "$EX_USAGE"
     case "$TLS_METHOD" in
         letsencrypt|letsencrypt-ip|selfsigned|custom) ;;
@@ -479,6 +490,32 @@ backup_dir() {
         umask "$old_umask"
         warn "Backup failed for $src — continuing anyway"
     fi
+}
+
+# Code-tree snapshots for update failover: keep the newest $keep.
+# SYNC: mirrors lib/common.sh (curl-pipe installs run standalone).
+snapshot_code() {  # snapshot_code <dir> <label> [keep=2] → prints the file
+    local dir="$1" label="$2" keep="${3:-2}"
+    [[ -d "$dir" ]] || die "Not installed ($dir missing)" "$EX_ERROR"
+    mkdir -p /var/backups
+    local stamp base file
+    stamp="$(date +%Y%m%d-%H%M%S)"
+    base="$(basename "$dir")"
+    file="/var/backups/${label}-code-${base}-${stamp}.tar.gz"
+    tar -czf "$file" -C "$(dirname "$dir")" "$base" 2>/dev/null \
+        || die "Could not snapshot $dir" "$EX_ERROR"
+    step "Snapshot  $file"
+    local old
+    old="$(ls -t /var/backups/${label}-code-*.tar.gz 2>/dev/null | tail -n +$((keep + 1)) || true)"
+    if [[ -n "$old" ]]; then
+        # shellcheck disable=SC2086
+        rm -f $old
+    fi
+    printf '%s' "$file"
+}
+
+latest_snapshot() {  # latest_snapshot <label> → prints newest code snapshot or empty
+    ls -t /var/backups/"$1"-code-*.tar.gz 2>/dev/null | head -1 || true
 }
 
 # ── TLS ────────────────────────────────────────────────────────────────
@@ -1203,6 +1240,8 @@ do_update() {
     fi
     backup_dir "$DATA_BASE" "node"
     backup_dir "$OPENVPN_ROOT/server/pki" "node-pki"
+    local snapshot
+    snapshot="$(snapshot_code "$APP_DIR" "node" 2)"
 
     cd "$APP_DIR"
     if [[ "$SRC" == "release" ]]; then
@@ -1241,8 +1280,15 @@ do_update() {
 
     local health="ok"
     if ! wait_health "${scheme}://127.0.0.1:${PORT}/sync/health" 45; then
-        health="unreachable"
-        warn "Agent did not answer /sync/health after update — check: journalctl -u $SYSTEMD_SERVICE -n 50"
+        warn "Agent did not answer /sync/health after update — rolling back to the snapshot"
+        systemctl_bounded stop "$SYSTEMD_SERVICE" >/dev/null 2>&1 || true
+        tar -xzf "$snapshot" -C "$(dirname "$APP_DIR")" >/dev/null 2>&1 \
+            || die "Rollback extract failed — restore manually from $snapshot and /var/backups" "$EX_ERROR"
+        run "Restarting node agent" systemctl_bounded restart "$SYSTEMD_SERVICE"
+        if wait_health "${scheme}://127.0.0.1:${PORT}/sync/health" 45; then
+            die "Rolled back to the pre-update tree (snapshot kept at $snapshot). Update aborted — check: journalctl -u $SYSTEMD_SERVICE -n 50" "$EX_ERROR"
+        fi
+        die "Rollback did not restore health either — snapshot at $snapshot, data backups in /var/backups." "$EX_ERROR"
     fi
     [[ "$DOCKER" -eq 1 ]] && check_container_openvpn
     install_cli
@@ -1535,6 +1581,10 @@ main() {
         release|source) ;;
         *) die "Invalid source '$SRC' (use release or source)" "$EX_USAGE" ;;
     esac
+    if [[ -n "$PIN" ]]; then
+        [[ "$PIN" =~ ^v?[0-9]+\.[0-9]+\.[0-9]+$ ]] || die "Bad --version '$PIN' (use vX.Y.Z)" "$EX_USAGE"
+        VERSION="${PIN#v}"
+    fi
     if fancy; then command clear >/dev/null 2>&1 || true; fi
     line ""
     line "  ${B}OVNode${NC} — OpenVPN Node Agent Installer ${GY}v${VERSION}${NC}"
@@ -1543,6 +1593,7 @@ main() {
     case "$ACTION" in
         uninstall) do_uninstall; exit "$EX_OK" ;;
         update)    confirm "Update OVNode now?" || exit "$EX_OK"; do_update; exit "$EX_OK" ;;
+        interactive) INTERACTIVE=1 ;;
     esac
 
     # Validation must precede the already-installed guard, otherwise a caller
@@ -1573,7 +1624,7 @@ main() {
     fi
 
     detect_os
-    if [[ "$YES" -eq 0 ]] && is_tty && [[ -z "$PORT" || -z "$API_KEY" ]]; then
+    if [[ "${INTERACTIVE:-0}" -eq 1 ]] || { [[ "$YES" -eq 0 ]] && is_tty && [[ -z "$PORT" || -z "$API_KEY" ]]; }; then
         interactive_setup
     else
         : "${PORT:=$(find_free_port "$DEFAULT_PORT")}"
@@ -1586,6 +1637,7 @@ main() {
     validate_input
 
     field "OS"        "$OS_NAME"
+    field "Version"   "v$VERSION ($SRC)"
     field "Mode"      "$([ "$DOCKER" -eq 1 ] && echo Docker || echo Native)"
     field "Node"      "$NODE_NAME"
     field "Service"   "$PORT"
