@@ -9,7 +9,7 @@ You need: a Linux server (Debian/Ubuntu recommended), `sudo` access.
 ## 1. Install
 
 ```bash
-bash <(curl -sSL https://anonysec.github.io/OVNode/install.sh)
+bash <(curl -sSL https://raw.githubusercontent.com/anonysec/OVNode/main/install.sh)
 ```
 
 Pick **Express** (recommended: `ovnode`, port `2083`, UDP, self-signed TLS,
@@ -30,7 +30,7 @@ Keep the key — it is shown once.
 One-liner for scripts (same result, no questions):
 
 ```bash
-curl -sSL https://anonysec.github.io/OVNode/install.sh \
+curl -sSL https://raw.githubusercontent.com/anonysec/OVNode/main/install.sh \
   | sudo bash -s -- install -y --name ovnode --tls selfsigned \
     --api-key "$(openssl rand -hex 32)"
 ```
@@ -57,8 +57,8 @@ extra VPN ports) from everywhere, `2083`/TCP only from the panel.
 ## Upkeep
 
 ```bash
-bash <(curl -sSL https://anonysec.github.io/OVNode/install.sh) status    # health, TLS cert expiry
-bash <(curl -sSL https://anonysec.github.io/OVNode/install.sh) update    # backs up /etc/openvpn first
+bash <(curl -sSL https://raw.githubusercontent.com/anonysec/OVNode/main/install.sh) status    # health, TLS cert expiry
+bash <(curl -sSL https://raw.githubusercontent.com/anonysec/OVNode/main/install.sh) update    # backs up /etc/openvpn first
 ```
 
 Stuck? See [troubleshooting](troubleshooting.md).

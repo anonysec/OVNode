@@ -35,7 +35,7 @@
 set -Eeuo pipefail
 
 # ── Constants ──────────────────────────────────────────────────────────
-VERSION="1.1.4"
+VERSION="1.1.5"
 # Forks: point source downloads (and update pulls) at your own repo.
 REPO="${OVN_REPO:-anonysec/OVNode}"
 # Where the code comes from: "release" (default) downloads the versioned
@@ -934,6 +934,10 @@ release_checksum_url() {
         "$REPO" "$VERSION" "$(release_base)"
 }
 
+# A broken download (redirect stub, proxy block page) must fail here with
+# a clear message — never as a checksum mismatch further down.
+is_release_archive() { tar -tzf "$1" >/dev/null 2>&1; }
+
 # Download the versioned release file into $1 (an existing directory).
 # The .sha256 sidecar is verified when published; a missing sidecar only
 # warns (older releases).
@@ -944,6 +948,8 @@ fetch_release() {
     run "Downloading release v${VERSION}" \
         curl -fsSL -o "$work/$base.tar.gz" "$(release_url)" \
         || { rm -rf "$work"; die "No release file for v${VERSION} — try --from-source" "$EX_ERROR"; }
+    is_release_archive "$work/$base.tar.gz" \
+        || { rm -rf "$work"; die "Download for v${VERSION} is not a release archive (stale installer or blocked download?). Re-bootstrap with the latest installer:  bash <(curl -sSL https://raw.githubusercontent.com/${REPO}/main/install.sh)  — or retry with --from-source" "$EX_ERROR"; }
     if curl -fsSL -o "$work/$base.sha256" "$(release_checksum_url)" 2>/dev/null; then
         ( cd "$work" && sha256sum -c "$base.sha256" >/dev/null ) \
             || { rm -rf "$work"; die "Release checksum mismatch for v${VERSION}" "$EX_ERROR"; }
@@ -1350,6 +1356,7 @@ do_uninstall() {
 interactive_setup() {
     local api_default
     api_default="$(openssl rand -hex 32)"
+    line "${B}Step 1/4 — Node identity${NC}"
     NODE_NAME="$(ask "Node name" "${NODE_NAME:-ovnode}")"
     PORT="$(ask "Service port" "${PORT:-$(find_free_port "$DEFAULT_PORT")}")"
     VPN_PORTS="$(ask "OpenVPN port(s), comma sep." "${VPN_PORTS:-$DEFAULT_VPN}")"
@@ -1360,7 +1367,8 @@ interactive_setup() {
     # installs stay on TCP (previous behavior, zero surprise).
     if [[ -z "$VPN_PROTO" ]]; then
         if is_tty && [[ "$YES" -eq 0 ]]; then
-            sep; line "  VPN transport:"
+            line ""
+            line "${B}Step 2/4 — VPN transport${NC}"
             line "  ${WH}1${NC})  UDP — faster, recommended"
             line "  ${WH}2${NC})  TCP — only where UDP is blocked"
             local proto_choice; proto_choice="$(ask "Transport" "1")"
@@ -1371,18 +1379,20 @@ interactive_setup() {
     fi
 
     if [[ "$DOCKER" -eq 0 ]]; then
-        sep; line "  Deployment:"
+        line ""
+        line "${B}Step 3/4 — Deployment${NC}"
         line "  ${WH}1${NC})  Native — systemd services (recommended)"
         line "  ${WH}2${NC})  Docker — agent + OpenVPN in one container"
         local dep; dep="$(ask "Mode" "1")"
         [[ "$dep" == "2" ]] && DOCKER=1
     fi
 
-    sep; line "  TLS (encrypts the panel ↔ node API — always on):"
+    line ""
+    line "${B}Step 4/4 — Certificate (always encrypted)${NC}"
     line "  ${WH}1${NC})  Self-signed (default)     encrypted; turn TLS *on* in the panel"
     line "  ${WH}2${NC})  Let's Encrypt (domain)    needs a domain pointed here + free port 80"
-    line "  ${WH}3${NC})  Let's Encrypt (this IP)  short-lived cert, no domain needed"
-    line "  ${WH}4${NC})  Custom cert path          you already have key + cert files"
+    line "  ${WH}3${NC})  Let's Encrypt (this IP)   short-lived cert, no domain needed"
+    line "  ${WH}4${NC})  Custom cert path          bring your own key + cert files"
     local tls_choice
     tls_choice="$(ask "TLS mode" "1")"
     case "${tls_choice:-1}" in
@@ -1407,10 +1417,10 @@ apply_express_defaults() {
 
 # Friendly front door: shown only for a bare interactive invocation.
 start_menu() {
-    line "  What do you want to do?"
+    line "  ${B}How do you want to install?${NC}"
     line ""
-    line "  ${GR}1${NC})  Express    Install with safe defaults (recommended)"
-    line "  ${WH}2${NC})  Custom     Choose every option yourself"
+    line "  ${GR}1${NC})  Express    Recommended — working node, no questions"
+    line "  ${WH}2${NC})  Custom     Answer a few questions (ports, key, certificate)"
     line ""
     local choice
     choice="$(ask "Select" "1")"

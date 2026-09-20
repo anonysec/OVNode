@@ -462,3 +462,42 @@ def test_entry_points_are_executable():
     for name in ("install.sh", "manager.sh"):
         path = pathlib.Path(INSTALLER).parent / name
         assert os.access(path, os.X_OK), f"{name} lost its executable bit"
+
+
+def test_no_pages_url():
+    """The installer is bootstrapped from raw.githubusercontent.com — the
+    anonysec.github.io Pages URL is retired (it served stale scripts)."""
+    import pathlib
+
+    repo = pathlib.Path(INSTALLER).parent
+    for rel in ("README.md", "install.sh", "manager.sh"):
+        assert "github.io" not in (repo / rel).read_text(encoding="utf-8"), rel
+    for doc in (repo / "docs").glob("*.md"):
+        assert "github.io" not in doc.read_text(encoding="utf-8"), doc.name
+
+
+def test_release_stub_is_rejected_before_checksum(tmp_path):
+    """A redirect stub saved as the tarball must fail as 'not a release
+    archive' — never as a checksum mismatch (the v1.2.3 failure mode)."""
+    stub = tmp_path / "stub.tar.gz"
+    stub.write_text("<html>302 Found</html>", encoding="utf-8")
+    real = tmp_path / "real.tar.gz"
+    subprocess.run(["tar", "-czf", str(real), "-C", str(tmp_path), "stub.tar.gz"], check=True)
+    harness = (
+        _extract_function("is_release_archive") + "\n"
+        f'is_release_archive "{stub}" && echo STUB-OK || echo STUB-BAD\n'
+        f'is_release_archive "{real}" && echo REAL-OK || echo REAL-BAD\n'
+    )
+    r = subprocess.run(["bash", "-c", harness], capture_output=True, text=True, timeout=30)
+    assert r.returncode == 0, r.stderr
+    assert "STUB-BAD" in r.stdout and "REAL-OK" in r.stdout
+
+
+def test_installer_menu_copy_is_stepped():
+    """One menu dialect: step counters in setup, a single front-door
+    question."""
+    with open(INSTALLER, encoding="utf-8") as f:
+        content = f.read()
+    assert "How do you want to install?" in content
+    for token in ("Step 1/4", "Step 4/4"):
+        assert token in content, token
