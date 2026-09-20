@@ -443,3 +443,12 @@ def test_interactive_verb_runs_wizard():
         content = f.read()
     assert 'interactive)  ACTION="interactive"; CMD_GIVEN=1; shift ;;' in content
     assert "INTERACTIVE=1" in content
+
+
+def test_release_downloads_follow_redirects():
+    """github.com/download answers 302 to release-assets — curl needs -L,
+    or every release install/update breaks."""
+    with open(INSTALLER, encoding="utf-8") as f:
+        content = f.read()
+    assert "curl -fsSL -o" in content
+    assert "curl -fsSLo" not in content
