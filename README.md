@@ -2,7 +2,7 @@
 
 [![CI](https://github.com/anonysec/OVNode/actions/workflows/ci.yml/badge.svg)](https://github.com/anonysec/OVNode/actions/workflows/ci.yml)
 [![License: MIT](https://img.shields.io/badge/License-MIT-green.svg)](LICENSE)
-[![Version](https://img.shields.io/badge/version-1.1.4-blue)](CHANGELOG.md)
+[![Version](https://img.shields.io/badge/version-1.1.5-blue)](CHANGELOG.md)
 
 OpenVPN node agent for [OVManager](https://github.com/anonysec/OVManager). Manages the OpenVPN server, PKI, per-user configs, traffic accounting, and multi-login enforcement — implementing exactly the sync API OVManager's panel expects.
 
@@ -47,7 +47,7 @@ Identity: the OpenVPN CN is the panel's numeric user id (`str(user.id)`); the di
 ## Install (beginners start here)
 
 ```bash
-bash <(curl -sSL https://anonysec.github.io/OVNode/install.sh)
+bash <(curl -sSL https://raw.githubusercontent.com/anonysec/OVNode/main/install.sh)
 ```
 
 The menu offers **Express** (recommended — no questions: `ovnode`, port

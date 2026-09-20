@@ -1,5 +1,12 @@
 # Changelog
 
+## 1.1.5 — 2026-09-20
+
+Checksum-mismatch follow-up (mirror of panel 1.2.7): archive check
+before the checksum with a re-bootstrap hint, Pages bootstrap URL
+retired for raw.githubusercontent.com, stepped installer menus
+(Step N/4) with shorter copy.
+
 ## 1.1.4 — 2026-09-20
 
 Follow-up fixes: release downloads follow redirects (`curl -L`),
