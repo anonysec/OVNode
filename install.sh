@@ -35,7 +35,7 @@
 set -Eeuo pipefail
 
 # ── Constants ──────────────────────────────────────────────────────────
-VERSION="1.1.2"
+VERSION="1.1.3"
 # Forks: point source downloads (and update pulls) at your own repo.
 REPO="${OVN_REPO:-anonysec/OVNode}"
 # Where the code comes from: "release" (default) downloads the versioned

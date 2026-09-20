@@ -16,7 +16,7 @@
 set -Eeuo pipefail
 
 # ── Constants ──────────────────────────────────────────────────────────
-VERSION="1.1.2"
+VERSION="1.1.3"
 APP_DIR="${OVN_APP_DIR:-/opt/ovnode}"
 DATA_BASE="/var/lib/ovnode"
 OPENVPN_ROOT="/etc/openvpn"
@@ -628,6 +628,7 @@ do_rollback() {
     local snap
     snap="$(latest_snapshot node)"
     [[ -n "$snap" ]] || die "No code snapshot in /var/backups — nothing to roll back to" "$EX_ERROR"
+    check_root
     info "Rolling back to: $snap"
     [[ "$YES" -eq 1 ]] || confirm "Restore the pre-update tree and restart?" || exit "$EX_OK"
     local port tls scheme
@@ -699,6 +700,8 @@ parse_args() {
                           if [[ $# -ge 1 && "$1" != -* ]]; then AUTO_BACKUP_ACTION="$1"; shift; fi ;;
             --keep)       eval "$need2"; BACKUP_KEEP="$2"; shift 2 ;;
             tls)          ACTION="tls"; shift ;;
+            doctor)       ACTION="doctor"; shift ;;
+            rollback)     ACTION="rollback"; shift ;;
             logs)         ACTION="logs"
                           if [[ $# -ge 2 && ( "$2" == "-f" || "$2" =~ ^[0-9]+$ ) ]]; then
                               LOGS_ARG="$2"; shift 2
@@ -735,7 +738,7 @@ main() {
         auto-backup) check_root; auto_backup_cli "$AUTO_BACKUP_ACTION"; exit "$EX_OK" ;;
         tls) check_root; node_tls_menu; exit "$EX_OK" ;;
         doctor) do_doctor; exit "$EX_OK" ;;
-        rollback) check_root; do_rollback; exit "$EX_OK" ;;
+        rollback) do_rollback; exit "$EX_OK" ;;
         uninstall) delegate_uninstall; exit "$EX_OK" ;;
     esac
 }
