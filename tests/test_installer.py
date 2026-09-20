@@ -34,26 +34,24 @@ def test_installer_syntax():
 def test_help_documents_the_machine_interface():
     r = sh("help")
     assert r.returncode == 0
-    for token in ("--json", "OVN_API_KEY", "Exit codes", "status", "--docker", "--vpn-ports"):
+    for token in ("--json", "OVN_API_KEY", "Exit codes", "update", "--docker", "--vpn-ports"):
         assert token in r.stderr, f"help missing {token}"
 
 
-def test_status_not_installed_json(tmp_path):
-    # OVN_APP_DIR points at an empty dir so this holds on machines that
-    # already host a node (dev boxes, this repo's own CI sandbox, prod).
-    r = sh("status", "--json", env={"OVN_APP_DIR": str(tmp_path / "empty")})
-    assert r.returncode == 4  # EX_NOTINSTALLED
-    data = json.loads(r.stdout)  # stdout is exactly one JSON object
-    assert data["ok"] is True
-    assert data["installed"] is False
+def test_manager_ops_redirect_to_ovn():
+    """status/logs/etc. are no longer installer commands — point at ovn."""
+    for cmd in ("status", "logs", "backup", "tls", "menu", "install"):
+        r = sh(cmd)
+        assert r.returncode == 2, cmd
+        assert "moved to the manager" in r.stderr, cmd
+        assert "ovn" in r.stderr, cmd
 
 
 def test_usage_errors_exit_2_with_json():
     cases = [
-        ["install", "--json", "--port", "abc", "--api-key", "0123456789abcdef"],
-        ["install", "--json", "--api-key", "short"],
+        ["--json", "--port", "abc", "--api-key", "0123456789abcdef"],
+        ["--json", "--api-key", "short"],
         [
-            "install",
             "--json",
             "--port",
             "1194",
@@ -62,8 +60,8 @@ def test_usage_errors_exit_2_with_json():
             "--api-key",
             "0123456789abcdef",
         ],
-        ["install", "--json", "--tls", "bogus", "--api-key", "0123456789abcdef"],
-        ["install", "--json", "--proto", "bogus", "--api-key", "0123456789abcdef"],
+        ["--json", "--tls", "bogus", "--api-key", "0123456789abcdef"],
+        ["--json", "--proto", "bogus", "--api-key", "0123456789abcdef"],
         ["--nonsense-flag"],
     ]
     for args in cases:
@@ -82,7 +80,6 @@ def test_stdout_carries_only_json(tmp_path):
     "successful" install would really provision /opt/ovnode.
     """
     r = sh(
-        "install",
         "--json",
         "--port",
         "abc",
@@ -99,7 +96,7 @@ def test_stdout_carries_only_json(tmp_path):
 
 
 def test_env_overrides_mirror_flags():
-    r = sh("install", env={"OVN_JSON": "1", "OVN_API_KEY": "short"})
+    r = sh("--json", env={"OVN_JSON": "1", "OVN_API_KEY": "short"})
     assert r.returncode == 2
     data = json.loads(r.stdout)
     assert "16 characters" in data["error"]
@@ -108,7 +105,6 @@ def test_env_overrides_mirror_flags():
 def test_json_implies_noninteractive(tmp_path):
     """--json must never hang waiting for a prompt (AI/automation safety)."""
     r = sh(
-        "install",
         "--json",
         "--port",
         "abc",
@@ -150,7 +146,6 @@ def test_tls_wizard_defaults_to_selfsigned():
 def test_plain_http_is_rejected():
     """--tls none must fail with a usage error and a clear message."""
     r = sh(
-        "install",
         "--json",
         "--tls",
         "none",
@@ -160,15 +155,15 @@ def test_plain_http_is_rejected():
     )
     assert r.returncode == 2, r.stderr
     data = json.loads(r.stdout)
-    assert "Plain HTTP is not allowed" in data["error"]
+    assert "Invalid --tls" in data["error"]
 
 
-def test_start_menu_offers_express_custom_update_uninstall():
+def test_start_menu_offers_express_or_custom():
     """A bare interactive run opens the friendly menu (not the wizard)."""
     with open(INSTALLER, encoding="utf-8") as f:
         content = f.read()
     assert "start_menu" in content
-    for label in ("Express", "Custom", "Update", "Uninstall"):
+    for label in ("Express", "Custom"):
         assert label in content
     # Express skips every question and turns TLS on.
     assert "apply_express_defaults()" in content
@@ -176,13 +171,15 @@ def test_start_menu_offers_express_custom_update_uninstall():
     assert ': "${VPN_PROTO:=udp}"' in content
 
 
-def test_already_installed_menu_never_auto_runs_destructive_actions():
-    """Enter/EOF/cancel must not start update or uninstall by default."""
+def test_already_installed_menu_is_installer_only():
+    """The installer's already-installed menu offers update/uninstall/quit —
+    day-to-day ops moved to ovn."""
     with open(INSTALLER, encoding="utf-8") as f:
         content = f.read()
-    assert 'tui_select "OVNode — node"' in content
+    assert 'tui_select "OVNode — installer"' in content
     assert 'quit        "Quit")' in content
     assert "*)           return 0 ;;" in content
+    assert "Manage the node with: ovn" in content
 
 
 def test_env_recovery_survives_missing_keys(tmp_path):
@@ -249,43 +246,17 @@ def test_installer_hardening_guards():
     assert "chmod 600 /etc/ssl/self-signed/privkey.pem" in content
 
 
-def test_terminal_command_and_tui_are_installed():
-    """The installer copies itself to /usr/local/bin as ovnode (+ ovn)."""
+def test_installer_deploys_the_manager():
+    """install.sh puts manager.sh on PATH as ovnode (+ ovn) — never itself."""
     with open(INSTALLER, encoding="utf-8") as f:
         content = f.read()
     assert 'BIN_DIR="${OVN_BIN_DIR:-/usr/local/bin}"' in content
     assert 'CLI_NAME="ovnode"' in content
     assert 'CLI_ALIAS="ovn"' in content
+    assert 'local src="${APP_DIR}/manager.sh"' in content
     assert content.count("install_cli") >= 3  # definition + do_install + do_update
     assert content.count("remove_cli") >= 2  # definition + do_uninstall
     assert "command -v whiptail" in content and "tui_select" in content
-
-
-def test_help_lists_tui_commands():
-    r = sh("help")
-    output = r.stdout + r.stderr
-    for token in (
-        "start | stop | restart",
-        "restart-vpn",
-        "logs [N|-f]",
-        "backup",
-        "tls",
-        "menu",
-        "Installed commands: ovnode",
-    ):
-        assert token in output, token
-
-
-def test_menu_without_terminal_is_usage_error():
-    """`menu` must not fall back to defaults and start installing."""
-    r = sh("menu")
-    assert r.returncode == 2
-    assert "No terminal available" in r.stderr
-
-
-def test_logs_command_never_crashes():
-    r = sh("logs", "5")
-    assert r.returncode == 0
 
 
 def test_no_function_ends_with_a_failing_test():
@@ -293,7 +264,7 @@ def test_no_function_ends_with_a_failing_test():
     returns 1 when the test is false, which exits the whole installer."""
     import re
 
-    lines = open(INSTALLER, encoding="utf-8").readlines()
+    lines = open(INSTALLER, encoding="utf-8").read().splitlines()
     func = None
     body: list[str] = []
     offenders = []
@@ -379,14 +350,17 @@ def test_uninstall_asks_about_data():
     assert 'confirm_no "Also delete data and backups?" && PURGE=1' in content
 
 
-def test_auto_backup_host_timer_wiring():
+def test_tls_numbers_map_to_methods():
+    """--tls takes 1-4 (names still accepted for old scripts)."""
     with open(INSTALLER, encoding="utf-8") as f:
         content = f.read()
-    assert "ovnode-backup.timer" in content
-    assert "ovnode-backup.service" in content
-    assert "backup --keep ${keep}" in content
-    assert "auto-backup on|off|status" in content
-    assert "prune_backups" in content
+    assert "1|selfsigned" in content
+    assert "2|letsencrypt" in content
+    assert "3|letsencrypt-ip" in content
+    assert "4|custom" in content
+    r = sh("--tls", "9")
+    assert r.returncode == 2
+    assert "Invalid --tls" in r.stderr
 
 
 def test_default_node_name_is_ovnode():
