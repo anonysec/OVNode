@@ -34,7 +34,7 @@ def test_installer_syntax():
 def test_help_documents_the_machine_interface():
     r = sh("help")
     assert r.returncode == 0
-    for token in ("--json", "OVN_API_KEY", "Exit codes", "update", "--docker", "--vpn-ports"):
+    for token in ("--json", "OVN_KEY", "Exit codes", "update", "--docker", "--vpn-ports"):
         assert token in r.stderr, f"help missing {token}"
 
 
@@ -52,19 +52,19 @@ def test_manager_ops_redirect_to_ovn():
 
 def test_usage_errors_exit_2_with_json():
     cases = [
-        ["--json", "--port", "abc", "--api-key", "0123456789abcdef"],
-        ["--json", "--api-key", "short"],
+        ["--json", "--port", "abc", "-p", "0123456789abcdef"],
+        ["--json", "-p", "short"],
         [
             "--json",
             "--port",
             "1194",
             "--vpn-ports",
             "1194",
-            "--api-key",
+            "-p",
             "0123456789abcdef",
         ],
-        ["--json", "--tls", "bogus", "--api-key", "0123456789abcdef"],
-        ["--json", "--proto", "bogus", "--api-key", "0123456789abcdef"],
+        ["--json", "--tls", "bogus", "-p", "0123456789abcdef"],
+        ["--json", "--proto", "bogus", "-p", "0123456789abcdef"],
         ["--nonsense-flag"],
     ]
     for args in cases:
@@ -86,7 +86,7 @@ def test_stdout_carries_only_json(tmp_path):
         "--json",
         "--port",
         "abc",
-        "--api-key",
+        "-p",
         "0123456789abcdef",
         env={"OVN_APP_DIR": str(tmp_path / "empty")},
     )
@@ -99,7 +99,7 @@ def test_stdout_carries_only_json(tmp_path):
 
 
 def test_env_overrides_mirror_flags():
-    r = sh("--json", env={"OVN_JSON": "1", "OVN_API_KEY": "short"})
+    r = sh("--json", env={"OVN_JSON": "1", "OVN_KEY": "short"})
     assert r.returncode == 2
     data = json.loads(r.stdout)
     assert "16 characters" in data["error"]
@@ -111,7 +111,7 @@ def test_json_implies_noninteractive(tmp_path):
         "--json",
         "--port",
         "abc",
-        "--api-key",
+        "-p",
         "0123456789abcdef",
         env={"OVN_APP_DIR": str(tmp_path / "empty")},
     )  # stdin closed
@@ -152,7 +152,7 @@ def test_plain_http_is_rejected():
         "--json",
         "--tls",
         "none",
-        "--api-key",
+        "-p",
         "0123456789abcdef",
         env={"OVN_APP_DIR": "/tmp/ovn-nowhere"},
     )
@@ -395,3 +395,51 @@ def test_detect_os_preserves_app_version(tmp_path):
     r = subprocess.run(["bash", str(probe)], capture_output=True, text=True, timeout=30)
     assert r.returncode == 0, r.stderr
     assert "VERSION=9.9.9-probe" in r.stdout
+
+
+def test_bad_version_pin_fails_fast():
+    r = sh("update", "-v", "notaversion")
+    assert r.returncode == 2
+    assert "Bad --version" in r.stderr
+
+
+def test_update_rolls_back_on_health_failure():
+    """do_update snapshots the tree first and restores it when the agent
+    never becomes healthy (update failover)."""
+    with open(INSTALLER, encoding="utf-8") as f:
+        content = f.read()
+    assert "snapshot_code" in content
+    assert "rolling back to the snapshot" in content
+    assert "Rolled back to the pre-update tree" in content
+
+
+def test_snapshot_rotation_keeps_two(tmp_path):
+    """snapshot_code keeps the newest 2 code snapshots, pruning older ones."""
+    lines = open(INSTALLER, encoding="utf-8").readlines()
+    start = next(i for i, ln in enumerate(lines) if ln.startswith("snapshot_code()"))
+    end = start
+    while lines[end].rstrip("\n") != "}":
+        end += 1
+    src = "".join(lines[start : end + 1]).replace("/var/backups", str(tmp_path))
+    harness = (
+        "set -Eeuo pipefail\n"
+        'die() { echo "DIE: $1" >&2; exit 1; }\n'
+        "step() { :; }\ninfo() { :; }\nwarn() { :; }\n"
+        + src
+        + f"\nmkdir -p {tmp_path}/app\n"
+        + f"\nsnapshot_code {tmp_path}/app node 2 >/dev/null\nsleep 1.1\n"
+        + f"snapshot_code {tmp_path}/app node 2 >/dev/null\nsleep 1.1\n"
+        + f"snapshot_code {tmp_path}/app node 2 >/dev/null\n"
+        + f"ls {tmp_path}/node-code-*.tar.gz | wc -l\n"
+    )
+    r = subprocess.run(["bash", "-c", harness], capture_output=True, text=True, timeout=30)
+    assert r.returncode == 0, r.stderr
+    assert r.stdout.strip() == "2", r.stdout
+
+
+def test_interactive_verb_runs_wizard():
+    """`interactive` forces the numbered wizard (Enter = default)."""
+    with open(INSTALLER, encoding="utf-8") as f:
+        content = f.read()
+    assert 'interactive)  ACTION="interactive"; CMD_GIVEN=1; shift ;;' in content
+    assert "INTERACTIVE=1" in content

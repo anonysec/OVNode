@@ -16,7 +16,7 @@
 set -Eeuo pipefail
 
 # ── Constants ──────────────────────────────────────────────────────────
-VERSION="1.1.1"
+VERSION="1.1.2"
 APP_DIR="${OVN_APP_DIR:-/opt/ovnode}"
 DATA_BASE="/var/lib/ovnode"
 OPENVPN_ROOT="/etc/openvpn"
@@ -37,6 +37,8 @@ YES="${OVN_YES:-0}"
 PURGE="${OVN_PURGE:-0}"
 JSON="${OVN_JSON:-0}"
 QUIET="${OVN_QUIET:-0}"
+FIX=0
+PIN=""
 LOGS_ARG=""
 AUTO_BACKUP_ACTION="" BACKUP_TIME="" BACKUP_KEEP=""
 NODE_NAME="${OVN_NAME:-}"
@@ -185,6 +187,7 @@ delegate_update() {
     [[ "$YES" -eq 1 ]] && args+=(-y)
     [[ "$JSON" -eq 1 ]] && args+=(--json)
     [[ "$QUIET" -eq 1 ]] && args+=(--quiet)
+    [[ -n "$PIN" ]] && args+=(--version "$PIN")
     run_installer update "${args[@]}"
 }
 
@@ -457,6 +460,28 @@ node_tls_menu() {
 
 # Boxed menu when whiptail is already installed; colored menu otherwise.
 
+backup_submenu() {
+    while true; do
+        line ""
+        line "${B}Backup${NC}"
+        line "  ${WH}1${NC}) Backup now"
+        line "  ${WH}2${NC}) Auto-backup status"
+        line "  ${WH}3${NC}) Enable daily auto-backup"
+        line "  ${WH}4${NC}) Disable auto-backup"
+        line "  ${WH}0${NC}) Back"
+        line ""
+        local c
+        c="$(ask "Select" "0")"
+        case "${c:-0}" in
+            1) check_root; do_node_backup ;;
+            2) auto_backup_cli status ;;
+            3) check_root; auto_backup_cli on ;;
+            4) check_root; auto_backup_cli off ;;
+            0|*) return 0 ;;
+        esac
+    done
+}
+
 manager_menu() {
     while true; do
         line ""
@@ -466,9 +491,11 @@ manager_menu() {
         line "  ${WH}3${NC}) Restart agent"
         line "  ${WH}4${NC}) Restart VPN"
         line "  ${WH}5${NC}) Logs"
-        line "  ${WH}6${NC}) Backup now"
+        line "  ${WH}6${NC}) Backup"
         line "  ${WH}7${NC}) TLS certificate"
-        line "  ${WH}8${NC}) Uninstall node"
+        line "  ${WH}8${NC}) Health check (doctor)"
+        line "  ${WH}9${NC}) Roll back update"
+        line "  ${WH}10${NC}) Uninstall node"
         line "  ${WH}0${NC}) Exit"
         line ""
         local c
@@ -479,9 +506,11 @@ manager_menu() {
             3) check_root; node_service_action restart ;;
             4) check_root; restart_vpn ;;
             5) do_node_logs "${LOGS_ARG:-100}" ;;
-            6) check_root; do_node_backup ;;
+            6) backup_submenu ;;
             7) check_root; node_tls_menu ;;
-            8) delegate_uninstall ;;
+            8) do_doctor ;;
+            9) check_root; do_rollback ;;
+            10) delegate_uninstall ;;
             0|*) return 0 ;;
         esac
     done
@@ -491,6 +520,130 @@ manager_menu() {
 
 # ── Preconditions ──────────────────────────────────────────────────────
 check_root() { [[ "$EUID" -eq 0 ]] || die "Must run as root."; }
+
+
+# ── Health check (doctor) ────────────────────────────────────────────
+# Read-only by default; --fix restarts a dead agent.
+do_doctor() {
+    [[ -d "$APP_DIR" ]] || die "Not installed ($APP_DIR missing)" "$EX_NOTINSTALLED"
+    local problems=0
+    sep
+    line "  ${B}Node health${NC}"
+    # 1. Agent service.
+    local agent="unknown"
+    if is_docker_node; then
+        agent="docker"
+    elif has_systemd; then
+        agent="$(systemctl is-active "$SYSTEMD_SERVICE" 2>/dev/null || echo unknown)"
+    fi
+    if [[ "$agent" == "active" || "$agent" == "docker" ]]; then
+        field "Agent" "$agent"
+    else
+        field "Agent" "$agent"
+        warn "Fix: ovn restart"
+        problems=$((problems + 1))
+        if [[ "$FIX" -eq 1 ]]; then
+            info "Restarting the agent…"
+            node_service_action restart && problems=$((problems - 1)) || true
+        fi
+    fi
+    # 2. OpenVPN daemon.
+    local ovpn="unknown"
+    if is_docker_node; then
+        ovpn="in-container"
+        field "OpenVPN" "$ovpn"
+    elif has_systemd; then
+        ovpn="$(systemctl is-active openvpn-server@server 2>/dev/null || echo unknown)"
+        if [[ "$ovpn" == "active" ]]; then
+            field "OpenVPN" "$ovpn"
+        else
+            field "OpenVPN" "$ovpn"
+            warn "Fix: ovn restart-vpn"
+            problems=$((problems + 1))
+        fi
+    fi
+    # 3. Disk.
+    local disk
+    disk="$(df "$DATA_BASE" 2>/dev/null | awk 'NR==2 {print $5}' | tr -d '%' || echo 0)"
+    if (( disk < 80 )); then
+        field "Disk" "${disk}% used"
+    else
+        field "Disk" "${disk}% used"
+        warn "Fix: ovn backup --keep 7, then remove old tarballs in /var/backups"
+        problems=$((problems + 1))
+    fi
+    # 4. API answers (values from the installed .env).
+    local port tls scheme
+    port="$(env_get "$APP_DIR/.env" SERVICE_PORT)"; : "${port:=$DEFAULT_PORT}"
+    tls="$(env_get "$APP_DIR/.env" TLS_METHOD)"; : "${tls:=selfsigned}"
+    scheme="http"; [[ "$tls" != "none" ]] && scheme="https"
+    if wait_health "${scheme}://127.0.0.1:${port}/sync/health" 5; then
+        field "API" "ok"
+    else
+        field "API" "unreachable"
+        warn "Fix: ovn logs 50, then ovn restart"
+        problems=$((problems + 1))
+    fi
+    # 5. Server certificate expiry.
+    local cert days_left
+    cert="$(env_get "$APP_DIR/.env" SSL_CERTFILE)"; : "${cert:=/etc/ssl/self-signed/fullchain.pem}"
+    if [[ -f "$cert" ]]; then
+        days_left=$(( ($(date -d "$(openssl x509 -enddate -noout -in "$cert" 2>/dev/null | cut -d= -f2)" +%s 2>/dev/null || echo 0) - $(date +%s)) / 86400 ))
+        field "Certificate" "expires in ${days_left}d"
+        if (( days_left <= 30 )); then
+            warn "Fix: ovn tls"
+            problems=$((problems + 1))
+        fi
+    else
+        field "Certificate" "not found"
+        problems=$((problems + 1))
+    fi
+    # 6. Backup age.
+    local newest age
+    newest="$(ls -t /var/backups/node-*.tar.gz 2>/dev/null | head -1 || true)"
+    if [[ -n "$newest" ]]; then
+        age=$(( ($(date +%s) - $(stat -c %Y "$newest" 2>/dev/null || echo 0)) / 86400 ))
+        field "Backup" "${age}d old"
+        if (( age > 7 )); then
+            warn "Fix: ovn backup"
+            problems=$((problems + 1))
+        fi
+    else
+        field "Backup" "none yet"
+        warn "Fix: ovn backup"
+        problems=$((problems + 1))
+    fi
+    sep
+    if (( problems == 0 )); then
+        step "Healthy — nothing to fix"
+    else
+        warn "$problems problem(s) found"
+    fi
+    return 0
+}
+
+# Roll back to the newest pre-update code snapshot (update failover).
+do_rollback() {
+    [[ -d "$APP_DIR" ]] || die "Not installed ($APP_DIR missing)" "$EX_NOTINSTALLED"
+    local snap
+    snap="$(latest_snapshot node)"
+    [[ -n "$snap" ]] || die "No code snapshot in /var/backups — nothing to roll back to" "$EX_ERROR"
+    info "Rolling back to: $snap"
+    [[ "$YES" -eq 1 ]] || confirm "Restore the pre-update tree and restart?" || exit "$EX_OK"
+    local port tls scheme
+    port="$(env_get "$APP_DIR/.env" SERVICE_PORT)"; : "${port:=$DEFAULT_PORT}"
+    tls="$(env_get "$APP_DIR/.env" TLS_METHOD)"; : "${tls:=selfsigned}"
+    scheme="http"; [[ "$tls" != "none" ]] && scheme="https"
+    systemctl_bounded stop "$SYSTEMD_SERVICE" >/dev/null 2>&1 || true
+    tar -xzf "$snap" -C "$(dirname "$APP_DIR")" >/dev/null 2>&1 \
+        || die "Rollback extract failed — snapshot kept at $snap" "$EX_ERROR"
+    run "Restarting node agent" systemctl_bounded restart "$SYSTEMD_SERVICE"
+    if wait_health "${scheme}://127.0.0.1:${port}/sync/health" 45; then
+        step "Rolled back and healthy"
+    else
+        die "Rollback did not restore health — snapshot at $snap, data backups in /var/backups." "$EX_ERROR"
+    fi
+}
 
 
 # ── Help / args ────────────────────────────────────────────────────────
@@ -508,15 +661,19 @@ show_help() {
     ovn backup [--keep N]       Save state + PKI backups now
     ovn auto-backup on|off|status   Host timer: daily backup at 03:30
     ovn tls                     Show/replace the cert
+    ovn doctor [--fix]          Health check (agent, VPN, disk, cert, backups)
+    ovn rollback                Restore the newest pre-update code snapshot
     ovn uninstall [--purge]     Remove OVNode (data kept unless --purge)
     ovn help                    This help
 
   Flags (every flag has an OVN_* env equivalent; CLI wins):
     --yes | -y          Never prompt, accept defaults    [OVN_YES=1]
-    --json              Machine output on stdout         [OVN_JSON=1]
+    --json | -j         Machine output on stdout         [OVN_JSON=1]
     --quiet | -q        Suppress progress logs           [OVN_QUIET=1]
     --purge             With uninstall: remove data too  [OVN_PURGE=1]
     --keep N            backup: keep newest N tarballs
+    -v | --version      update: install this release instead
+    --fix               doctor: apply safe automatic fixes
     --help | -h         This help
 
   Update and uninstall are implemented in install.sh — this script
@@ -550,8 +707,9 @@ parse_args() {
                           fi ;;
             --yes|-y)     YES=1; shift ;;
             --purge)      PURGE=1; shift ;;
-            --json)       JSON=1; YES=1; shift ;;
-            --quiet|-q)   QUIET=1; shift ;;
+            --json|-j)    JSON=1; YES=1; shift ;;
+            --fix)        FIX=1; shift ;;
+            -v|--version) eval "$need2"; PIN="$2"; shift 2 ;;
             *)            die "Unknown option: $1 (ovn help for usage)" "$EX_USAGE" ;;
         esac
     done
@@ -576,6 +734,8 @@ main() {
         backup) check_root; do_node_backup; exit "$EX_OK" ;;
         auto-backup) check_root; auto_backup_cli "$AUTO_BACKUP_ACTION"; exit "$EX_OK" ;;
         tls) check_root; node_tls_menu; exit "$EX_OK" ;;
+        doctor) do_doctor; exit "$EX_OK" ;;
+        rollback) check_root; do_rollback; exit "$EX_OK" ;;
         uninstall) delegate_uninstall; exit "$EX_OK" ;;
     esac
 }

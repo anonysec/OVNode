@@ -1,5 +1,14 @@
 # Changelog
 
+## 1.1.2 — 2026-09-20
+
+Fresh rewrite of the shell layer (Concept A): tiny installer with
+zero-question defaults, numbered `interactive` wizard, `--version` pins,
+code snapshots with automatic update rollback, and plan output by default.
+New `ovn doctor` (agent, VPN, disk, cert, backups) with `--fix`, and
+`ovn rollback`. Flags cut to `-y/-j/-h/-p/--purge`; `--key` replaces
+`--api-key` (`OVN_KEY`); `--tls` takes 1-4 (names still accepted).
+
 ## 1.1.1 — 2026-09-19
 
 Concept-A split: the installer (`install.sh`) only installs, updates and

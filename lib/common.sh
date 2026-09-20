@@ -322,3 +322,28 @@ emit_result() {
     done
     printf '%s}\n' "$out"
 }
+
+# Code-tree snapshots for update failover: keep the newest $keep.
+snapshot_code() {  # snapshot_code <dir> <label> [keep=2] → prints the file
+    local dir="$1" label="$2" keep="${3:-2}"
+    [[ -d "$dir" ]] || die "Not installed ($dir missing)" "$EX_ERROR"
+    mkdir -p /var/backups
+    local stamp base file
+    stamp="$(date +%Y%m%d-%H%M%S)"
+    base="$(basename "$dir")"
+    file="/var/backups/${label}-code-${base}-${stamp}.tar.gz"
+    tar -czf "$file" -C "$(dirname "$dir")" "$base" 2>/dev/null \
+        || die "Could not snapshot $dir" "$EX_ERROR"
+    step "Snapshot  $file"
+    local old
+    old="$(ls -t /var/backups/${label}-code-*.tar.gz 2>/dev/null | tail -n +$((keep + 1)) || true)"
+    if [[ -n "$old" ]]; then
+        # shellcheck disable=SC2086
+        rm -f $old
+    fi
+    printf '%s' "$file"
+}
+
+latest_snapshot() {  # latest_snapshot <label> → prints newest code snapshot or empty
+    ls -t /var/backups/"$1"-code-*.tar.gz 2>/dev/null | head -1 || true
+}

@@ -18,7 +18,7 @@ SHARED = [
     "line", "step", "info", "warn", "field", "sep",
     "json_escape", "die", "is_tty", "fancy", "spinner", "run", "try_run",
     "_masked_read", "ask", "confirm", "confirm_no",
-    "is_port", "backup_dir", "wait_health",
+    "is_port", "backup_dir", "snapshot_code", "latest_snapshot", "wait_health",
     "env_get", "env_set", "systemctl_bounded",
     "tui_select",
     "generate_selfsigned", "ensure_acme", "issue_letsencrypt", "setup_tls",

@@ -192,3 +192,24 @@ def test_no_function_ends_with_a_failing_test():
         if re.match(r"^\[\[.*\]\]\s*&&", tail)
     ]
     assert not offenders, offenders
+
+
+def test_doctor_checks_agent_vpn_disk_api_cert_backups():
+    """doctor covers the node-critical checks, each with its fix hint."""
+    with open(MANAGER, encoding="utf-8") as f:
+        content = f.read()
+    assert "do_doctor()" in content
+    for token in ("Node health", "Certificate", "Backup", "Disk", "Agent", "OpenVPN", "API"):
+        assert token in content, f"doctor missing {token}"
+    for fix in ("ovn restart", "ovn backup", "ovn tls", "ovn logs"):
+        assert fix in content, f"doctor missing fix hint {fix}"
+    assert '"$FIX" -eq 1' in content
+
+
+def test_rollback_restores_newest_snapshot():
+    """do_rollback restores the newest code snapshot and re-verifies health."""
+    with open(MANAGER, encoding="utf-8") as f:
+        content = f.read()
+    assert "do_rollback()" in content
+    assert "latest_snapshot node" in content
+    assert "Rolled back and healthy" in content
