@@ -3,9 +3,9 @@
 
 name: Deploy to GitHub Pages
 
+# Disabled for now (Pages planning is pending) — run manually if needed.
 on:
-  push:
-    branches: [main]
+  workflow_dispatch
 
 permissions:
   contents: read
