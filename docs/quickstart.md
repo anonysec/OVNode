@@ -12,8 +12,9 @@ You need: a Linux server (Debian/Ubuntu recommended), `sudo` access.
 bash <(curl -sSL https://raw.githubusercontent.com/anonysec/OVNode/main/install.sh)
 ```
 
-Pick **Express** (recommended: `ovnode`, port `2083`, UDP, self-signed TLS,
-generated API key — no questions) or **Custom**:
+Pick **Install** (recommended: `ovnode`, port `2083`, UDP, self-signed TLS,
+generated API key — no questions) or **Install with Docker**. The
+`interactive` command asks every question instead:
 
 | Question | Beginner answer |
 |---|---|
@@ -21,7 +22,7 @@ generated API key — no questions) or **Custom**:
 | Service port | Enter (`2083` — the panel's API, not the VPN) |
 | OpenVPN ports | Enter (`1194`; add `443,8443` for users on restrictive networks) |
 | API key | Leave blank — a strong one is generated. **Copy it from the summary.** |
-| Mode | `1` Native on a normal VPS. `2` Docker if you prefer containers (needs `/dev/net/tun`, handled automatically). |
+| Mode | `1` Host on a normal VPS. `2` Docker if you prefer containers (needs `/dev/net/tun`, handled automatically). |
 | TLS | `1` Self-signed (default; encrypted — turn TLS **on** in the panel). Plain HTTP is not offered. |
 
 You get a green summary: node name, address, service URL, **API key**.

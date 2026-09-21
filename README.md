@@ -50,10 +50,11 @@ Identity: the OpenVPN CN is the panel's numeric user id (`str(user.id)`); the di
 bash <(curl -sSL https://raw.githubusercontent.com/anonysec/OVNode/main/install.sh)
 ```
 
-The menu offers **Express** (recommended — no questions: `ovnode`, port
-`2083`, UDP, self-signed TLS, generated API key) or **Custom** (asks every
-question; plain HTTP is not offered). Save the green summary (node name +
-API key), then register it in the panel: **Nodes → Add Node**.
+The menu offers **Install** (recommended — host service, no questions:
+`ovnode`, port `2083`, UDP, self-signed TLS, generated API key) or
+**Install with Docker**. The `interactive` command opens the full wizard
+instead. Save the green summary (node name + API key), then register it
+in the panel: **Nodes → Add Node**.
 
 Full walkthrough: [docs/quickstart.md](docs/quickstart.md) ·
 under the hood: [docs/how-it-works.md](docs/how-it-works.md) ·
