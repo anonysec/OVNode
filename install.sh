@@ -941,10 +941,13 @@ release_checksum_url() {
 IMAGE_REPO="ghcr.io/${REPO,,}"
 
 # ── Transactional update state ────────────────────────────────────────
-# Journal + maintenance marker live beside node state (host paths in both
-# modes: Docker bind-mounts DATA_BASE). Staging/previous live beside the app.
+# Journal + lock live beside node state (host paths in both modes: Docker
+# bind-mounts DATA_BASE). The maintenance marker lives inside the node's
+# own data dir so the agent (settings.data_dir, also /app/data in Docker)
+# sees the same file the installer writes. Staging/previous live beside
+# the app.
 UPDATE_STATE="${DATA_BASE}/update-state.json"
-UPDATE_MARKER="${DATA_BASE}/update-maintenance"
+update_marker() { printf '%s' "${DATA_BASE}/${NODE_NAME:-ovnode}/update-maintenance"; }
 UPDATE_STAGE="$(dirname "$APP_DIR")/.ovnode.staging"
 UPDATE_PREVIOUS="$(dirname "$APP_DIR")/.ovnode.previous"
 OP_LOCK="${DATA_BASE}/.operation.lock"
@@ -1053,6 +1056,8 @@ members = {}
 def add_tree(archive, src, arc):
     for root, _dirs, files in os.walk(src):
         for name in sorted(files):
+            if name in ("update-maintenance", "update-state.json"):
+                continue  # live transaction artifacts must never restore
             full = os.path.join(root, name)
             if not os.path.isfile(full) or os.path.islink(full) and not os.path.exists(full):
                 continue
@@ -1278,6 +1283,7 @@ services:
     environment:
       SERVICE_PORT: ${PORT}
       API_KEY: ${API_KEY}
+      DATA_DIR: /app/data
       OPENVPN_PORT: ${VPN_PORT}
       TLS_METHOD: ${TLS_METHOD}
       OVNODE_OPENVPN_ROOT: /etc/openvpn
@@ -1455,6 +1461,14 @@ do_update() {
         TLS_METHOD="$(env_get TLS_METHOD)"
     fi
     : "${TLS_METHOD:=selfsigned}"
+    # Compose regeneration (docker) and setup steps need the full install
+    # parameters: recover everything the update did not receive as flags so
+    # a refresh never silently drops TLS mounts, extra ports or IPv6.
+    [[ -n "$TLS_KEY" ]] || TLS_KEY="$(env_get SSL_KEYFILE)"
+    [[ -n "$TLS_CERT" ]] || TLS_CERT="$(env_get SSL_CERTFILE)"
+    if [[ -z "${OVN_IPV6:-}" && "$IPV6" -eq 0 ]]; then
+        [[ "$(env_get OVNODE_ENABLE_IPV6)" == "1" ]] && IPV6=1
+    fi
 
     line ""; info "Updating OVNode to v${VERSION}…"
     detect_os
@@ -1496,8 +1510,8 @@ do_update() {
     fi
 
     info "Step 3/6 — Enter maintenance mode"
-    : > "$UPDATE_MARKER"
-    chmod 600 "$UPDATE_MARKER"
+    : > "$(update_marker)"
+    chmod 600 "$(update_marker)"
     update_state activating "$from_version" "$VERSION" "$safety" "$identity"
     if [[ "$DOCKER" -eq 1 ]]; then
         ( cd "$APP_DIR" && docker compose -f "$(compose_file)" down ) >/dev/null 2>&1 || true
@@ -1518,7 +1532,7 @@ do_update() {
             activated=1
         else
             if [[ -d "$APP_DIR" ]] || { [[ -d "$UPDATE_PREVIOUS" ]] && mv "$UPDATE_PREVIOUS" "$APP_DIR"; }; then
-                rm -f "$UPDATE_MARKER"
+                rm -f "$(update_marker)"
                 update_state failed_over "$from_version" "$VERSION" "$safety" "$identity"
                 operation_end
                 die "Could not activate the staged release; the previous release remains active and state was not changed" "$EX_ERROR"
@@ -1554,19 +1568,19 @@ do_update() {
     fi
 
     if [[ "$start_ok" -ne 1 ]]; then
-        fail "Candidate verification failed — failing over to v${from_version}"
+        warn "Candidate verification failed — failing over to v${from_version}"
         update_state failing_over "$from_version" "$VERSION" "$safety" "$identity"
         node_failover "$from_version" "$VERSION" "$safety" "$identity" "$snapshot"
     fi
 
     info "Step 6/6 — Commit update"
-    rm -f "$UPDATE_MARKER"
+    rm -f "$(update_marker)"
     if [[ "$DOCKER" -eq 0 ]]; then
         setup_nat
         setup_logrotate
     fi
     if ! wait_health "${scheme}://127.0.0.1:${PORT}/sync/health" 60; then
-        : > "$UPDATE_MARKER"; chmod 600 "$UPDATE_MARKER"
+        : > "$(update_marker)"; chmod 600 "$(update_marker)"
         update_state recovery_required "$from_version" "$VERSION" "$safety" "$identity"
         operation_end
         die "Candidate passed verification but failed its final check. Writes are blocked; run: ovn recover-update" "$EX_ERROR"
@@ -1575,7 +1589,7 @@ do_update() {
     operation_end
     install_cli
     step "Update complete  v${from_version} → v${VERSION}"
-    step "Failover release kept at $UPDATE_PREVIOUS"
+    [[ "$DOCKER" -eq 1 ]] || step "Failover release kept at $UPDATE_PREVIOUS"
     line ""
 
     emit_result true update \
@@ -1612,7 +1626,7 @@ node_failover() {
     fi
     local scheme="http"; [[ "$TLS_METHOD" != "none" ]] && scheme="https"
     if wait_health "${scheme}://127.0.0.1:${PORT}/sync/health" 60; then
-        rm -f "$UPDATE_MARKER"
+        rm -f "$(update_marker)"
         update_state failed_over "$from_version" "$target" "$safety" "$identity"
         operation_end
         die "Update failed over safely to v${from_version}. State was restored from $safety. Check logs before retrying." "$EX_ERROR"
@@ -1625,7 +1639,7 @@ node_failover() {
 # ── Uninstall ──────────────────────────────────────────────────────────
 do_recover_update() {
     if [[ ! -f "$UPDATE_STATE" ]]; then
-        [[ -f "$UPDATE_MARKER" ]] && die "Update maintenance marker exists but its state journal is missing" "$EX_ERROR"
+        [[ -f "$(update_marker)" ]] && die "Update maintenance marker exists but its state journal is missing" "$EX_ERROR"
         step "No interrupted update needs recovery"
         return 0
     fi
@@ -1639,7 +1653,7 @@ PY
 ) || die "Update state journal is unreadable" "$EX_ERROR"
     case "$phase" in
         committed|failed_over)
-            if [[ ! -f "$UPDATE_MARKER" ]]; then
+            if [[ ! -f "$(update_marker)" ]]; then
                 step "No interrupted update needs recovery"
                 return 0
             fi
@@ -1651,7 +1665,7 @@ PY
             operation_begin recover-update
             trap operation_end EXIT
             rm -rf "$UPDATE_STAGE"
-            rm -f "$UPDATE_MARKER"
+            rm -f "$(update_marker)"
             update_state failed_over "$from" "$target" "$safety" "$identity"
             operation_end
             step "Cleared an interrupted pre-activation update; v${from} remains active"
@@ -1663,9 +1677,9 @@ PY
     check_root
     operation_begin recover-update
     trap operation_end EXIT
-    if [[ ! -f "$UPDATE_MARKER" ]]; then
-        : > "$UPDATE_MARKER"
-        chmod 600 "$UPDATE_MARKER"
+    if [[ ! -f "$(update_marker)" ]]; then
+        : > "$(update_marker)"
+        chmod 600 "$(update_marker)"
         warn "Re-created the missing update maintenance marker"
     fi
     [[ -f "$(compose_file)" ]] && DOCKER=1 || DOCKER=0
@@ -1685,14 +1699,14 @@ PY
         ident_ok="$(identity_sha "$(env_get NODE_NAME)" "$api_key")"
     fi
     if [[ "${reported:-}" == "$target" && "${vpn_ok:-}" == "true" && "${ident_ok:-}" == "$identity" ]]; then
-        rm -f "$UPDATE_MARKER"
+        rm -f "$(update_marker)"
         update_state committed "$from" "$target" "$safety" "$identity"
         operation_end
         step "Recovered update journal — v${target} is healthy"
         return 0
     fi
     if [[ "${reported:-}" == "$from" && "${vpn_ok:-}" == "true" && "${ident_ok:-}" == "$identity" && ! -d "$UPDATE_PREVIOUS" ]]; then
-        rm -f "$UPDATE_MARKER"
+        rm -f "$(update_marker)"
         update_state failed_over "$from" "$target" "$safety" "$identity"
         operation_end
         step "Recovered update journal — previous v${from} is healthy"
@@ -1707,7 +1721,7 @@ PY
             systemctl_bounded restart "$SYSTEMD_SERVICE" >/dev/null 2>&1 || systemctl start "$SYSTEMD_SERVICE" >/dev/null 2>&1 || true
         fi
         if wait_health "${scheme}://127.0.0.1:${PORT}/sync/health" 60; then
-            rm -f "$UPDATE_MARKER"
+            rm -f "$(update_marker)"
             update_state failed_over "$from" "$target" "$safety" "$identity"
             operation_end
             step "Interrupted update never activated — v${from} restarted, staging discarded"
@@ -1736,7 +1750,7 @@ PY
             || die "Previous release restored but will not start" "$EX_ERROR"
     fi
     if wait_health "${scheme}://127.0.0.1:${PORT}/sync/health" 60; then
-        rm -f "$UPDATE_MARKER"
+        rm -f "$(update_marker)"
         update_state failed_over "$from" "$target" "$safety" "$identity"
         operation_end
         step "Interrupted update failed over safely to v${from}"

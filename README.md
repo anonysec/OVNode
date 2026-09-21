@@ -33,6 +33,19 @@ Identity: the OpenVPN CN is the panel's numeric user id (`str(user.id)`); the di
 
 **The node never calls the panel.** All communication is panel → node, authenticated by the node API key (over TLS when enabled). Nodes don't store the panel's address, so you can move or replace the panel at any time — just re-add the nodes with the same address, name and API key.
 
+## Version compatibility
+
+The node reports its version in `GET /sync/status` (`data.version`); the panel's node-status API returns a `version_compat` verdict per node:
+
+| Node vs panel | Verdict | Meaning |
+|---|---|---|
+| Same major (e.g. node 1.1.5, panel 1.2.7) | `compatible` | Supported. Minor drift is tolerated — both sides ignore unknown keys. |
+| Node newer, same major | `node-newer` | Not supported — the panel may not understand the node. Update the panel. |
+| Different major | `incompatible` | Not supported — update both to the same major release. |
+| Missing/garbled version | `unknown` | Never treated as compatible — investigate connectivity or version skew. |
+
+Rolling updates: update one node at a time; the others keep serving. A node briefly answers `503` on mutating calls while it verifies a candidate — reads and health keep working, and the panel reports the message verbatim.
+
 ## Features
 
 - **Modern OpenVPN defaults** — ECDSA (secp384r1) PKI, `tls-crypt`, TLS ≥ 1.2, ECDHE (no static DH), GCM ciphers, CRL enforcement, `remote-cert-tls` verification on both sides.

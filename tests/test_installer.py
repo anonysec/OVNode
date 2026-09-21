@@ -563,7 +563,7 @@ def test_transactional_update_core_present():
     with open(INSTALLER, encoding="utf-8") as f:
         content = f.read()
     for token in ("update_state", "state_safety_bundle", "state_restore",
-                  "UPDATE_STAGE", "UPDATE_PREVIOUS", "UPDATE_MARKER",
+                  "UPDATE_STAGE", "UPDATE_PREVIOUS", "update_marker()",
                   "operation_begin", "do_recover_update", "node_failover",
                   "node_api_status", "identity_sha", "recover-update"):
         assert token in content, f"missing: {token}"
@@ -577,3 +577,21 @@ def test_docker_uses_published_image_only():
     assert "up -d --build" not in content
     assert 'image: ${IMAGE_REPO}:${tag}' in content
     assert "docker pull" in content
+
+
+def test_update_recovers_full_config_for_compose():
+    """do_update must recover TLS key/cert/IPv6 from .env: the compose
+    rewrite dropped SSL mounts and broke every Docker update (defect)."""
+    src = open(INSTALLER, encoding="utf-8").read()
+    source = src.split("do_update()")[1].split("do_recover_update()")[0]
+    for token in ('TLS_KEY="$(env_get SSL_KEYFILE)"', 'TLS_CERT="$(env_get SSL_CERTFILE)"',
+                  'OVNODE_ENABLE_IPV6', 'EXTRA_PORTS="$(env_get OVNODE_EXTRA_PORTS)"'):
+        assert token in source, f"update must recover: {token}"
+
+
+def test_no_undefined_fail_helper():
+    """install.sh has warn/step/info — a stray fail call dies with 127."""
+    import re
+
+    content = open(INSTALLER, encoding="utf-8").read()
+    assert not re.search(r"(^|\s)fail \"", content)

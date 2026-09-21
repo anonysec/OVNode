@@ -614,8 +614,8 @@ do_doctor() {
         problems=$((problems + 1))
     fi
     # 7. Interrupted update transaction.
-    local update_interrupted=0
-    [[ -f "$DATA_BASE/update-maintenance" ]] && update_interrupted=1
+    local update_interrupted=0 node_dir="$DATA_BASE/$(node_name_from_env)"
+    [[ -f "$node_dir/update-maintenance" ]] && update_interrupted=1
     if [[ "$update_interrupted" -eq 0 && -f "$DATA_BASE/update-state.json" ]]; then
         python3 - "$DATA_BASE/update-state.json" <<'PY' >/dev/null 2>&1 || update_interrupted=1
 import json, sys
@@ -716,7 +716,7 @@ PY
 do_rollback() {
     [[ -d "$APP_DIR" ]] || die "Not installed ($APP_DIR missing)" "$EX_NOTINSTALLED"
     # An interrupted transaction owns recovery: rollback must not fight it.
-    if [[ -f "$DATA_BASE/update-maintenance" ]]; then
+    if [[ -f "$DATA_BASE/$(node_name_from_env)/update-maintenance" ]]; then
         die "An update transaction is interrupted — run: ovn recover-update" "$EX_ERROR"
     fi
     local snap
