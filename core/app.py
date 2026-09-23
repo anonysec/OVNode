@@ -32,6 +32,30 @@ class SecurityHeadersMiddleware(BaseHTTPMiddleware):
         return response
 
 
+def _maintenance_marker() -> str:
+    base = (settings.data_dir or "").strip() or "/var/lib/ovnode"
+    return os.path.join(base, "update-maintenance")
+
+
+class MaintenanceMiddleware(BaseHTTPMiddleware):
+    """Block mutating manager requests while the installer verifies a
+    candidate release. Reads (GET/HEAD/OPTIONS) and the health probe keep
+    answering so verification and monitoring never go blind."""
+
+    async def dispatch(self, request, call_next):
+        blocked = request.method not in ("GET", "HEAD", "OPTIONS")
+        if blocked and os.path.isfile(_maintenance_marker()):
+            return JSONResponse(
+                status_code=503,
+                content={
+                    "success": False,
+                    "msg": "Node is verifying an update — writes are blocked; retry in a minute",
+                    "data": None,
+                },
+            )
+        return await call_next(request)
+
+
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     """Initialize PKI + OpenVPN config (idempotent).
@@ -90,6 +114,7 @@ api.add_middleware(
     allow_headers=["key", "content-type", "authorization", "x-requested-with"],
 )
 api.add_middleware(SecurityHeadersMiddleware)
+api.add_middleware(MaintenanceMiddleware)
 
 api.include_router(core_router)
 
