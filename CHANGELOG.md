@@ -1,5 +1,17 @@
 # Changelog
 
+## 1.1.6 — 2026-09-21
+
+Redesign release (squash of #5): transactional reboot-safe updates with
+persisted journals and `ovn recover-update`, manifest-linked state safety
+snapshots, Docker installs from the published versioned image (no local
+builds), beginner-first installer (Install / Install with Docker, host
+default), maintenance guard blocking mutating API calls during
+verification, extended doctor (update transactions, snapshots, VPN PKI,
+unit, locks) with safe `--fix`, `repair-unit`, and a documented
+panel/node version compatibility policy. Validated live against panel
+1.2.8. Pairs with OVManager 1.2.8.
+
 ## 1.1.5 — 2026-09-20
 
 Checksum-mismatch follow-up (mirror of panel 1.2.7): archive check
