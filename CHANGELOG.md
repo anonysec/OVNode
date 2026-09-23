@@ -1,5 +1,9 @@
 # Changelog
 
+## 1.0.0 — unreleased
+
+Version reset: pre-publish cleanup. History was rewritten to a single identity, all prior releases/tags removed, numbering restarted at 1.0.0. Node redesign continues on `dev` before the first public release.
+
 ## 1.1.6 — 2026-09-21
 
 Redesign release (squash of #5): transactional reboot-safe updates with
