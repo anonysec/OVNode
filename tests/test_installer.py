@@ -161,14 +161,17 @@ def test_plain_http_is_rejected():
     assert "Invalid --tls" in data["error"]
 
 
-def test_start_menu_offers_express_or_custom():
-    """A bare interactive run opens the friendly menu (not the wizard)."""
+def test_start_menu_offers_install_or_docker():
+    """A bare interactive run opens the friendly menu (not the wizard):
+    Install (host, default) or Install with Docker."""
     with open(INSTALLER, encoding="utf-8") as f:
         content = f.read()
     assert "start_menu" in content
-    for label in ("Express", "Custom"):
-        assert label in content
-    # Express skips every question and turns TLS on.
+    assert "Install with Docker" in content
+    assert "Recommended (host service)" in content
+    # Host install is the default; Docker is explicit.
+    assert "DOCKER=1; apply_express_defaults" in content
+    # Install still uses safe generated defaults with TLS on.
     assert "apply_express_defaults()" in content
     assert "TLS_METHOD=\"selfsigned\"" in content
     assert ': "${VPN_PROTO:=udp}"' in content
@@ -242,7 +245,7 @@ def test_installer_hardening_guards():
     """
     with open(INSTALLER, encoding="utf-8") as f:
         content = f.read()
-    assert "mktemp /tmp/ovn.XXXXXX.tar.gz" in content
+    assert "mktemp -d /tmp/ovn.XXXXXX" in content
     assert "curl -fsSLo /tmp/ovn.tar.gz" not in content
     assert "umask 077" in content
     assert 'chmod 600 "$file"' in content
@@ -404,13 +407,14 @@ def test_bad_version_pin_fails_fast():
 
 
 def test_update_rolls_back_on_health_failure():
-    """do_update snapshots the tree first and restores it when the agent
-    never becomes healthy (update failover)."""
+    """do_update snapshots state + code first and fails over when the
+    candidate never becomes healthy (transactional update failover)."""
     with open(INSTALLER, encoding="utf-8") as f:
         content = f.read()
     assert "snapshot_code" in content
-    assert "rolling back to the snapshot" in content
-    assert "Rolled back to the pre-update tree" in content
+    assert "state_safety_bundle" in content
+    assert "Candidate verification failed — failing over" in content
+    assert "failed over safely" in content
 
 
 def test_snapshot_rotation_keeps_two(tmp_path):
@@ -501,3 +505,93 @@ def test_installer_menu_copy_is_stepped():
     assert "How do you want to install?" in content
     for token in ("Step 1/4", "Step 4/4"):
         assert token in content, token
+
+
+def test_no_source_build_paths():
+    """The production installer consumes verified releases only —
+    no source flags, no clone/pull logic."""
+    with open(INSTALLER, encoding="utf-8") as f:
+        content = f.read()
+    for token in ("--from-source", "--branch)", "git clone", "git pull", "refs/heads/"):
+        assert token not in content, f"source-build remnant: {token}"
+    assert 'BRANCH="${OVN_BRANCH' not in content
+    # OVN_BRANCH survives only as a migration guard pointing at clones.
+    assert "OVN_BRANCH was removed" in content
+    assert "clone the repo and follow CONTRIBUTING.md" in content
+
+
+def test_release_checksum_is_mandatory():
+    """An unverified download must never be installed (was warn-and-follow)."""
+    with open(INSTALLER, encoding="utf-8") as f:
+        content = f.read()
+    assert "No checksum file" not in content
+    assert "Release checksum file is missing" in content
+
+
+def test_native_wording_is_gone_from_installer_text():
+    """Host installs must not be called 'native' in user-facing text."""
+    with open(INSTALLER, encoding="utf-8") as f:
+        content = f.read()
+    for token in ("Install with safe defaults", "Choose every option yourself",
+                  "instead of v1.1.2", "Native —", "|| echo Native"):
+        assert token not in content, f"stale wording: {token}"
+    assert "|| echo Host" in content
+
+
+def test_version_constants_are_synchronized():
+    """install.sh, manager.sh and core/version.py must agree; --help must
+    show the real version (was hardcoding v1.1.2)."""
+    import pathlib
+    import re
+
+    repo = pathlib.Path(INSTALLER).parent
+    shell_versions = set()
+    for name in ("install.sh", "manager.sh"):
+        m = re.search(r'^VERSION="([^"]+)"', (repo / name).read_text(encoding="utf-8"), re.M)
+        assert m, name
+        shell_versions.add(m.group(1))
+    core_ns: dict = {}
+    exec((repo / "core" / "version.py").read_text(encoding="utf-8"), core_ns)
+    shell_versions.add(core_ns["__version__"])
+    assert len(shell_versions) == 1, shell_versions
+    r = subprocess.run(["bash", INSTALLER, "help"], capture_output=True, text=True, timeout=30)
+    assert f"instead of v{core_ns['__version__']}" in r.stderr
+
+
+def test_transactional_update_core_present():
+    """Nine-phase journal, safety bundle, staging, op lock, recovery."""
+    with open(INSTALLER, encoding="utf-8") as f:
+        content = f.read()
+    for token in ("update_state", "state_safety_bundle", "state_restore",
+                  "UPDATE_STAGE", "UPDATE_PREVIOUS", "update_marker()",
+                  "operation_begin", "do_recover_update", "node_failover",
+                  "node_api_status", "identity_sha", "recover-update"):
+        assert token in content, f"missing: {token}"
+    assert "Step 1/6" in content and "Step 6/6" in content
+
+
+def test_docker_uses_published_image_only():
+    """Docker installs pull the versioned published image — never build."""
+    with open(INSTALLER, encoding="utf-8") as f:
+        content = f.read()
+    assert "up -d --build" not in content
+    assert 'image: ${IMAGE_REPO}:${tag}' in content
+    assert "docker pull" in content
+
+
+def test_update_recovers_full_config_for_compose():
+    """do_update must recover TLS key/cert/IPv6 from .env: the compose
+    rewrite dropped SSL mounts and broke every Docker update (defect)."""
+    src = open(INSTALLER, encoding="utf-8").read()
+    source = src.split("do_update()")[1].split("do_recover_update()")[0]
+    for token in ('TLS_KEY="$(env_get SSL_KEYFILE)"', 'TLS_CERT="$(env_get SSL_CERTFILE)"',
+                  'OVNODE_ENABLE_IPV6', 'EXTRA_PORTS="$(env_get OVNODE_EXTRA_PORTS)"'):
+        assert token in source, f"update must recover: {token}"
+
+
+def test_no_undefined_fail_helper():
+    """install.sh has warn/step/info — a stray fail call dies with 127."""
+    import re
+
+    content = open(INSTALLER, encoding="utf-8").read()
+    assert not re.search(r"(^|\s)fail \"", content)

@@ -2,7 +2,7 @@
 
 [![CI](https://github.com/anonysec/OVNode/actions/workflows/ci.yml/badge.svg)](https://github.com/anonysec/OVNode/actions/workflows/ci.yml)
 [![License: MIT](https://img.shields.io/badge/License-MIT-green.svg)](LICENSE)
-[![Version](https://img.shields.io/badge/version-1.1.5-blue)](CHANGELOG.md)
+[![Version](https://img.shields.io/badge/version-1.1.6-blue)](CHANGELOG.md)
 
 OpenVPN node agent for [OVManager](https://github.com/anonysec/OVManager). Manages the OpenVPN server, PKI, per-user configs, traffic accounting, and multi-login enforcement — implementing exactly the sync API OVManager's panel expects.
 
@@ -33,6 +33,19 @@ Identity: the OpenVPN CN is the panel's numeric user id (`str(user.id)`); the di
 
 **The node never calls the panel.** All communication is panel → node, authenticated by the node API key (over TLS when enabled). Nodes don't store the panel's address, so you can move or replace the panel at any time — just re-add the nodes with the same address, name and API key.
 
+## Version compatibility
+
+The node reports its version in `GET /sync/status` (`data.version`); the panel's node-status API returns a `version_compat` verdict per node:
+
+| Node vs panel | Verdict | Meaning |
+|---|---|---|
+| Same major (e.g. node 1.1.5, panel 1.2.7) | `compatible` | Supported. Minor drift is tolerated — both sides ignore unknown keys. |
+| Node newer, same major | `node-newer` | Not supported — the panel may not understand the node. Update the panel. |
+| Different major | `incompatible` | Not supported — update both to the same major release. |
+| Missing/garbled version | `unknown` | Never treated as compatible — investigate connectivity or version skew. |
+
+Rolling updates: update one node at a time; the others keep serving. A node briefly answers `503` on mutating calls while it verifies a candidate — reads and health keep working, and the panel reports the message verbatim.
+
 ## Features
 
 - **Modern OpenVPN defaults** — ECDSA (secp384r1) PKI, `tls-crypt`, TLS ≥ 1.2, ECDHE (no static DH), GCM ciphers, CRL enforcement, `remote-cert-tls` verification on both sides.
@@ -50,10 +63,11 @@ Identity: the OpenVPN CN is the panel's numeric user id (`str(user.id)`); the di
 bash <(curl -sSL https://raw.githubusercontent.com/anonysec/OVNode/main/install.sh)
 ```
 
-The menu offers **Express** (recommended — no questions: `ovnode`, port
-`2083`, UDP, self-signed TLS, generated API key) or **Custom** (asks every
-question; plain HTTP is not offered). Save the green summary (node name +
-API key), then register it in the panel: **Nodes → Add Node**.
+The menu offers **Install** (recommended — host service, no questions:
+`ovnode`, port `2083`, UDP, self-signed TLS, generated API key) or
+**Install with Docker**. The `interactive` command opens the full wizard
+instead. Save the green summary (node name + API key), then register it
+in the panel: **Nodes → Add Node**.
 
 Full walkthrough: [docs/quickstart.md](docs/quickstart.md) ·
 under the hood: [docs/how-it-works.md](docs/how-it-works.md) ·

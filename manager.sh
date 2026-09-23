@@ -16,7 +16,7 @@
 set -Eeuo pipefail
 
 # ── Constants ──────────────────────────────────────────────────────────
-VERSION="1.1.5"
+VERSION="1.1.6"
 APP_DIR="${OVN_APP_DIR:-/opt/ovnode}"
 DATA_BASE="/var/lib/ovnode"
 OPENVPN_ROOT="/etc/openvpn"
@@ -613,6 +613,96 @@ do_doctor() {
         warn "Fix: ovn backup"
         problems=$((problems + 1))
     fi
+    # 7. Interrupted update transaction.
+    local update_interrupted=0 node_dir="$DATA_BASE/$(node_name_from_env)"
+    [[ -f "$node_dir/update-maintenance" ]] && update_interrupted=1
+    if [[ "$update_interrupted" -eq 0 && -f "$DATA_BASE/update-state.json" ]]; then
+        python3 - "$DATA_BASE/update-state.json" <<'PY' >/dev/null 2>&1 || update_interrupted=1
+import json, sys
+phase = json.load(open(sys.argv[1])).get("phase")
+raise SystemExit(0 if phase in {"committed", "failed_over"} else 1)
+PY
+    fi
+    if [[ "$update_interrupted" -eq 1 ]]; then
+        field "Update" "recovery required"
+        warn "Fix: ovn recover-update"
+        problems=$((problems + 1))
+        if [[ "$FIX" -eq 1 ]]; then
+            info "Recovering the interrupted update…"
+            if run_installer recover-update; then
+                problems=$((problems - 1))
+            else
+                warn "Update recovery needs manual attention"
+            fi
+        fi
+    else
+        field "Update" "no interrupted transaction"
+    fi
+    # 8. Code snapshot usable for explicit rollback.
+    local snap
+    snap="$(latest_snapshot node 2>/dev/null || true)"
+    if [[ -n "$snap" ]]; then
+        if tar -tzf "$snap" >/dev/null 2>&1; then
+            field "Snapshot" "ok"
+        else
+            field "Snapshot" "corrupt ($snap)"
+            warn "Fix: ovn update (creates a fresh snapshot)"
+            problems=$((problems + 1))
+        fi
+    else
+        field "Snapshot" "none yet (created on first update)"
+    fi
+    # 9. VPN PKI expiry (CA + server cert): a lapsed CA silently kills
+    # every client, and the API-TLS check above does not cover it.
+    local pki_dir="$OPENVPN_ROOT/server/pki"
+    for cert_label in "ca:ca.crt" "server:issued/server.crt"; do
+        local label="${cert_label%%:*}" file="$pki_dir/${cert_label#*:}"
+        if [[ -f "$file" ]]; then
+            local pki_days
+            pki_days=$(( ($(date -d "$(openssl x509 -enddate -noout -in "$file" 2>/dev/null | cut -d= -f2)" +%s 2>/dev/null || echo 0) - $(date +%s)) / 86400 ))
+            if (( pki_days > 30 )); then
+                field "PKI $label" "expires in ${pki_days}d"
+            else
+                field "PKI $label" "expires in ${pki_days}d — plan renewal"
+                warn "VPN $label certificate expires in ${pki_days}d"
+                problems=$((problems + 1))
+            fi
+        fi
+    done
+    # 10. Stale operation lock (update/recover/uninstall coordination).
+    if [[ -d "$DATA_BASE/.operation.lock" ]]; then
+        local lock_pid
+        lock_pid="$(cat "$DATA_BASE/.operation.lock/pid" 2>/dev/null || true)"
+        if [[ "$lock_pid" =~ ^[0-9]+$ ]] && kill -0 "$lock_pid" 2>/dev/null; then
+            field "Op lock" "held by process $lock_pid"
+        else
+            field "Op lock" "stale — safe to clear"
+            warn "Fix: ovn doctor --fix"
+            problems=$((problems + 1))
+            if [[ "$FIX" -eq 1 ]]; then
+                rm -rf "$DATA_BASE/.operation.lock" \
+                    && field "Op lock" "stale lock cleared" && problems=$((problems - 1)) \
+                    || warn "Could not clear the operation lock"
+            fi
+        fi
+    fi
+    # 11. Host integration files (unit / NAT / logrotate present).
+    if ! is_docker_node && has_systemd; then
+        if [[ -f "/etc/systemd/system/$SYSTEMD_SERVICE" ]]; then
+            field "Unit" "present"
+        else
+            field "Unit" "missing"
+            warn "Fix: ovn doctor --fix"
+            problems=$((problems + 1))
+            if [[ "$FIX" -eq 1 ]]; then
+                if run_installer repair-unit; then
+                    problems=$((problems - 1))
+                else
+                    warn "Unit repair failed"
+                fi
+            fi
+        fi
+    fi
     sep
     if (( problems == 0 )); then
         step "Healthy — nothing to fix"
@@ -625,6 +715,10 @@ do_doctor() {
 # Roll back to the newest pre-update code snapshot (update failover).
 do_rollback() {
     [[ -d "$APP_DIR" ]] || die "Not installed ($APP_DIR missing)" "$EX_NOTINSTALLED"
+    # An interrupted transaction owns recovery: rollback must not fight it.
+    if [[ -f "$DATA_BASE/$(node_name_from_env)/update-maintenance" ]]; then
+        die "An update transaction is interrupted — run: ovn recover-update" "$EX_ERROR"
+    fi
     local snap
     snap="$(latest_snapshot node)"
     [[ -n "$snap" ]] || die "No code snapshot in /var/backups — nothing to roll back to" "$EX_ERROR"
@@ -664,6 +758,7 @@ show_help() {
     ovn tls                     Show/replace the cert
     ovn doctor [--fix]          Health check (agent, VPN, disk, cert, backups)
     ovn rollback                Restore the newest pre-update code snapshot
+    ovn recover-update          Recover an interrupted update transaction
     ovn uninstall [--purge]     Remove OVNode (data kept unless --purge)
     ovn help                    This help
 
@@ -702,6 +797,7 @@ parse_args() {
             tls)          ACTION="tls"; shift ;;
             doctor)       ACTION="doctor"; shift ;;
             rollback)     ACTION="rollback"; shift ;;
+            recover-update) ACTION="recover-update"; shift ;;
             logs)         ACTION="logs"
                           if [[ $# -ge 2 && ( "$2" == "-f" || "$2" =~ ^[0-9]+$ ) ]]; then
                               LOGS_ARG="$2"; shift 2
@@ -739,6 +835,7 @@ main() {
         tls) check_root; node_tls_menu; exit "$EX_OK" ;;
         doctor) do_doctor; exit "$EX_OK" ;;
         rollback) do_rollback; exit "$EX_OK" ;;
+        recover-update) run_installer recover-update; exit "$EX_OK" ;;
         uninstall) delegate_uninstall; exit "$EX_OK" ;;
     esac
 }
