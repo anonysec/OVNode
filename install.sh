@@ -38,10 +38,10 @@ set -Eeuo pipefail
 VERSION="1.1.5"
 # Forks: point source downloads (and update pulls) at your own repo.
 REPO="${OVN_REPO:-anonysec/OVNode}"
-# Where the code comes from: "release" (default) downloads the versioned
-# tarball from GitHub Releases (verified checksum, no git needed);
-# "source" clones/pulls git (developers).
-SRC="${OVN_SRC:-release}"
+# Where the code comes from: versioned GitHub Release tarballs (verified
+# checksum, no git needed). Source builds were removed from the production
+# installer — developers clone the repo and follow CONTRIBUTING.md.
+SRC="release"
 # OVN_APP_DIR override exists for hermetic tests: status/uninstall probes
 # below must be runnable on machines that already host a node (like CI
 # sandboxes and dev boxes) without seeing the real install.
@@ -71,7 +71,6 @@ API_KEY="${OVN_KEY:-}"
 VPN_PORTS="${OVN_VPN_PORTS:-}"
 VPN_PROTO="${OVN_PROTO:-}"
 NODE_NAME="${OVN_NAME:-}"
-BRANCH="${OVN_BRANCH:-main}"
 TLS_METHOD="${OVN_TLS:-selfsigned}"
 TLS_DOMAIN="${OVN_TLS_DOMAIN:-}"
 TLS_KEY="${OVN_TLS_KEY:-}"
@@ -96,7 +95,7 @@ AUTO_BACKUP_ACTION="" BACKUP_TIME="" BACKUP_KEEP=""
 # Any OVN_* input present (mirrors CLI flags for early validation / no menu).
 ENV_INPUTS=0
 for _ovn_var in OVN_PORT OVN_KEY OVN_VPN_PORTS OVN_PROTO OVN_NAME OVN_TLS \
-                OVN_TLS_DOMAIN OVN_TLS_KEY OVN_TLS_CERT OVN_DOCKER OVN_IPV6 OVN_NO_NAT OVN_SRC; do
+                OVN_TLS_DOMAIN OVN_TLS_KEY OVN_TLS_CERT OVN_DOCKER OVN_IPV6 OVN_NO_NAT; do
     if [[ -n "${!_ovn_var:-}" ]]; then ENV_INPUTS=1; fi
 done
 unset _ovn_var
@@ -263,20 +262,24 @@ has_systemd() { command -v systemctl >/dev/null 2>&1 && [[ -d /run/systemd/syste
 
 # ── Help / args ────────────────────────────────────────────────────────
 show_help() {
-    cat << 'EOF' >&2
-  OVNode installer — native (systemd) or Docker, human or machine.
+    cat << EOF >&2
+  OVNode installer — host (systemd) or Docker, human or machine.
 
   Usage:
     bash <(curl -Ls URL) [command] [flags]
 
   No command? Zero-question install with safe generated values.
-  The `interactive` command opens the numbered wizard instead:
-  Express installs with safe defaults (ovnode, UDP, self-signed TLS,
-  generated API key). Custom asks every question. Plain HTTP is not offered.
+  The start menu offers Install (host service) or Install with Docker.
+  The \`interactive\` command opens the numbered wizard instead.
+  Installs use safe defaults (ovnode, UDP, self-signed TLS,
+  generated API key). Plain HTTP is not offered.
 
   Commands: (default: install)
-    update [-v vX.Y.Z]    Fetch release (or pull) and restart (data backup
-                          + code snapshot first, auto-rollback on failure)
+    update [-v vX.Y.Z]    Fetch the verified release and restart (state
+                          safety snapshot + code snapshot first,
+                          auto-rollback on failure)
+    recover-update        Recover an interrupted update transaction
+    repair-unit           Regenerate systemd unit / NAT / logrotate
     uninstall [--purge] Remove OVNode (data kept unless --purge)
     interactive, -i       Numbered install wizard (Enter = default)
     help                This help
@@ -288,7 +291,7 @@ show_help() {
 
   Flags (every flag has an OVN_* env equivalent; CLI wins):
     -p, --key KEY       API key, min 16 chars (generated if omitted)
-                                              [OVN_KEY]
+                                               [OVN_KEY]
     --name NAME         Node name                        [OVN_NAME, ovnode]
     --port PORT         Sync API port                    [OVN_PORT, 2083]
     --vpn-ports LIST    OpenVPN ports, comma separated   [OVN_VPN_PORTS, 1194]
@@ -305,10 +308,8 @@ show_help() {
     --docker            Deploy in Docker (container runs agent + OpenVPN,
                         host networking)                 [OVN_DOCKER=1]
     --from-release      Download the versioned release file [default]
-                        (verified checksum)              [OVN_SRC=release]
-    --from-source       Clone/pull git instead (developers) [OVN_SRC=source]
-    --branch BRANCH     Source branch                    [OVN_BRANCH, main]
-    -v, --version vX.Y.Z  Install/update this release instead of v1.1.2
+                        (verified checksum)
+    -v, --version vX.Y.Z  Install/update this release instead of v${VERSION}
     --ipv6              Enable IPv6 on the VPN           [OVN_IPV6=1]
     --no-nat            Skip forwarding/NAT/redirects    [OVN_NO_NAT=1]
     --purge             With uninstall: remove data too  [OVN_PURGE=1]
@@ -318,14 +319,17 @@ show_help() {
     --quiet | -q        Suppress progress logs (errors still shown)
     --help | -h         This help
 
+  Source installs were removed: the installer consumes verified release
+  archives only. Developers: clone the repo and follow CONTRIBUTING.md.
+
   Exit codes:
     0 success · 1 error · 2 usage error · 3 already installed ·
     4 not installed
 
   Automation example (safe to parse):
-    RESULT=$(bash install.sh -j --tls 1) || exit
-    KEY=$(echo "$RESULT" | jq -r .api_key)
-    BUNDLE=$(echo "$RESULT" | jq -r .bundle)  # paste into panel: Nodes → Add Node
+    RESULT=\$(bash install.sh -j --tls 1) || exit
+    KEY=\$(echo "\$RESULT" | jq -r .api_key)
+    BUNDLE=\$(echo "\$RESULT" | jq -r .bundle)  # paste into panel: Nodes → Add Node
 EOF
     exit "$EX_OK"
 }
@@ -336,6 +340,8 @@ parse_args() {
         case "$1" in
             update)       ACTION="update"; CMD_GIVEN=1; shift ;;
             uninstall) ACTION="uninstall"; CMD_GIVEN=1; shift ;;
+            recover-update) ACTION="recover-update"; CMD_GIVEN=1; shift ;;
+            repair-unit) ACTION="repair-unit"; CMD_GIVEN=1; shift ;;
             help|--help|-h) show_help ;;
             --port)       eval "$need2"; PORT="$2"; CLI_FLAGS=1; shift 2 ;;
             -p|--key)       eval "$need2"; API_KEY="$2"; CLI_FLAGS=1; shift 2 ;;
@@ -344,7 +350,6 @@ parse_args() {
             --vpn-ports|--vpn-port) eval "$need2"; VPN_PORTS="$2"; CLI_FLAGS=1; shift 2 ;;
             --proto) eval "$need2"; VPN_PROTO="$2"; CLI_FLAGS=1; shift 2 ;;
             --name)       eval "$need2"; NODE_NAME="$2"; CLI_FLAGS=1; shift 2 ;;
-            --branch)     eval "$need2"; BRANCH="$2"; CLI_FLAGS=1; shift 2 ;;
             --tls)        eval "$need2"; CLI_FLAGS=1
                           case "$2" in
                               1|selfsigned) TLS_METHOD="selfsigned" ;;
@@ -359,7 +364,6 @@ parse_args() {
             --tls-cert)   eval "$need2"; TLS_CERT="$2"; CLI_FLAGS=1; shift 2 ;;
             --docker)     DOCKER=1; CLI_FLAGS=1; shift ;;
             --from-release) SRC="release"; CLI_FLAGS=1; shift ;;
-            --from-source) SRC="source"; CLI_FLAGS=1; shift ;;
             --ipv6)       IPV6=1; CLI_FLAGS=1; shift ;;
             --no-nat)     NO_NAT=1; CLI_FLAGS=1; shift ;;
             --yes|-y)     YES=1; CLI_FLAGS=1; shift ;;
@@ -934,29 +938,97 @@ release_checksum_url() {
         "$REPO" "$VERSION" "$(release_base)"
 }
 
+IMAGE_REPO="ghcr.io/${REPO,,}"
+
+# ── Transactional update state ────────────────────────────────────────
+# Journal + lock live beside node state (host paths in both modes: Docker
+# bind-mounts DATA_BASE). The maintenance marker lives inside the node's
+# own data dir so the agent (settings.data_dir, also /app/data in Docker)
+# sees the same file the installer writes. Staging/previous live beside
+# the app.
+UPDATE_STATE="${DATA_BASE}/update-state.json"
+update_marker() { printf '%s' "${DATA_BASE}/${NODE_NAME:-ovnode}/update-maintenance"; }
+UPDATE_STAGE="$(dirname "$APP_DIR")/.ovnode.staging"
+UPDATE_PREVIOUS="$(dirname "$APP_DIR")/.ovnode.previous"
+OP_LOCK="${DATA_BASE}/.operation.lock"
+OP_LOCK_HELD=0
+
+operation_begin() {
+    local name="$1" owner=""
+    mkdir -p "$DATA_BASE"
+    if ! mkdir "$OP_LOCK" 2>/dev/null; then
+        owner="$(cat "$OP_LOCK/pid" 2>/dev/null || true)"
+        if [[ "$owner" =~ ^[0-9]+$ ]] && ! kill -0 "$owner" 2>/dev/null; then
+            warn "Removing stale operation lock from process $owner"
+            rm -rf "$OP_LOCK"
+            mkdir "$OP_LOCK" || die "Another maintenance operation is running" "$EX_ERROR"
+        else
+            die "Another maintenance operation is running${owner:+ (process $owner)}. Try again later." "$EX_ERROR"
+        fi
+    fi
+    printf '%s\n' "$$" > "$OP_LOCK/pid"
+    printf '%s\n' "$name" > "$OP_LOCK/action"
+    chmod 700 "$OP_LOCK"
+    OP_LOCK_HELD=1
+}
+
+operation_end() {
+    [[ "$OP_LOCK_HELD" -eq 1 ]] || return 0
+    rm -rf "$OP_LOCK"
+    OP_LOCK_HELD=0
+}
+
+# Persist one transaction phase atomically (0600): power loss or kill -9
+# can never leave a half-written journal.
+update_state() {
+    local phase="$1" from="${2:-unknown}" target="${3:-$VERSION}" backup="${4:-}" identity="${5:-}"
+    mkdir -p "$DATA_BASE"
+    python3 - "$UPDATE_STATE" "$phase" "$from" "$target" "$backup" "$identity" <<'PY'
+import json, os, sys, tempfile, time
+path, phase, old, target, backup, identity = sys.argv[1:]
+data = {"phase": phase, "from_version": old, "to_version": target,
+        "safety_backup": backup or None, "identity_sha": identity or None,
+        "updated_at": int(time.time()), "pid": os.getppid()}
+fd, tmp = tempfile.mkstemp(prefix=".update-state-", dir=os.path.dirname(path))
+try:
+    with os.fdopen(fd, "w") as f:
+        json.dump(data, f, indent=2); f.write("\n"); f.flush(); os.fsync(f.fileno())
+    os.chmod(tmp, 0o600); os.replace(tmp, path)
+finally:
+    try: os.unlink(tmp)
+    except FileNotFoundError: pass
+PY
+}
+
+# sha256(node-name + API key): proves identity survived activation without
+# ever persisting a secret in the journal.
+identity_sha() {
+    python3 - "$1" "$2" <<'PY'
+import hashlib, sys
+print(hashlib.sha256(("|".join(sys.argv[1:])).encode()).hexdigest())
+PY
+}
+
 # A broken download (redirect stub, proxy block page) must fail here with
 # a clear message — never as a checksum mismatch further down.
 is_release_archive() { tar -tzf "$1" >/dev/null 2>&1; }
 
 # Download the versioned release file into $1 (an existing directory).
-# The .sha256 sidecar is verified when published; a missing sidecar only
-# warns (older releases).
+# The .sha256 sidecar is mandatory: unverified code is never installed.
 fetch_release() {
     local dest="$1" work base
     base="$(release_base)"
     work="$(mktemp -d /tmp/ovn.XXXXXX)"
     run "Downloading release v${VERSION}" \
         curl -fsSL -o "$work/$base.tar.gz" "$(release_url)" \
-        || { rm -rf "$work"; die "No release file for v${VERSION} — try --from-source" "$EX_ERROR"; }
+        || { rm -rf "$work"; die "No release file for v${VERSION}" "$EX_ERROR"; }
     is_release_archive "$work/$base.tar.gz" \
-        || { rm -rf "$work"; die "Download for v${VERSION} is not a release archive (stale installer or blocked download?). Re-bootstrap with the latest installer:  bash <(curl -sSL https://raw.githubusercontent.com/${REPO}/main/install.sh)  — or retry with --from-source" "$EX_ERROR"; }
-    if curl -fsSL -o "$work/$base.sha256" "$(release_checksum_url)" 2>/dev/null; then
-        ( cd "$work" && sha256sum -c "$base.sha256" >/dev/null ) \
-            || { rm -rf "$work"; die "Release checksum mismatch for v${VERSION}" "$EX_ERROR"; }
-        step "Checksum ok"
-    else
-        warn "No checksum file — skipping verification"
-    fi
+        || { rm -rf "$work"; die "Download for v${VERSION} is not a release archive (stale installer or blocked download?). Re-bootstrap with the latest installer:  bash <(curl -sSL https://raw.githubusercontent.com/${REPO}/main/install.sh)" "$EX_ERROR"; }
+    curl -fsSL -o "$work/$base.sha256" "$(release_checksum_url)" 2>/dev/null \
+        || { rm -rf "$work"; die "Release checksum file is missing for v${VERSION}" "$EX_ERROR"; }
+    ( cd "$work" && sha256sum -c "$base.sha256" >/dev/null ) \
+        || { rm -rf "$work"; die "Release checksum mismatch for v${VERSION}" "$EX_ERROR"; }
+    step "Checksum ok"
     mkdir -p "$dest"
     tar -xzf "$work/$base.tar.gz" -C "$dest" >/dev/null 2>&1 || { rm -rf "$work"; die "Extract failed" "$EX_ERROR"; }
     rm -rf "$work"
@@ -964,22 +1036,158 @@ fetch_release() {
 }
 
 fetch_source() {
-    if [[ "$SRC" == "release" ]]; then
-        fetch_release "$APP_DIR"
-        return
-    fi
-    if command -v git >/dev/null 2>&1; then
-        run "Cloning repository ($BRANCH)" \
-            git clone --depth 1 --branch "$BRANCH" "https://github.com/${REPO}.git" "$APP_DIR"
-    else
-        local tmp
-        tmp="$(mktemp /tmp/ovn.XXXXXX.tar.gz)"
-        run "Downloading source tarball" \
-            curl -fsSL -o "$tmp" "https://github.com/${REPO}/archive/refs/heads/${BRANCH}.tar.gz"
-        mkdir -p "$APP_DIR"
-        tar -xzf "$tmp" --strip-components=1 -C "$APP_DIR" >/dev/null 2>&1 || die "Extract failed"
-        rm -f "$tmp"
-    fi
+    # Release-only installer: source builds were removed. Developers clone
+    # the repo and follow CONTRIBUTING.md.
+    die "Source installs were removed — the installer consumes verified releases only" "$EX_USAGE"
+}
+
+# Verified safety snapshot of every persistent node state needed for
+# rollback: identity (.env), node data dir, OpenVPN state, API TLS files.
+# Single manifest-linked tarball; restore consumes it after verification.
+state_safety_bundle() {
+    local from_version="$1" backup_root="/var/backups"
+    local node_data="${DATA_BASE}/${NODE_NAME}"
+    mkdir -p "$backup_root" "$node_data"
+    python3 - "$APP_DIR" "$node_data" "$OPENVPN_ROOT" "$backup_root" "$NODE_NAME" "$from_version" <<'PY' || return 1
+import hashlib, json, os, sys, tarfile, tempfile
+from datetime import datetime, timezone
+app_dir, node_data, ovpn_root, backup_root, node, from_version = sys.argv[1:]
+members = {}
+def add_tree(archive, src, arc):
+    for root, _dirs, files in os.walk(src):
+        for name in sorted(files):
+            if name in ("update-maintenance", "update-state.json"):
+                continue  # live transaction artifacts must never restore
+            full = os.path.join(root, name)
+            if not os.path.isfile(full) or os.path.islink(full) and not os.path.exists(full):
+                continue
+            rel = os.path.join(arc, os.path.relpath(full, src))
+            archive.add(full, arcname=rel, recursive=False)
+            digest = hashlib.sha256()
+            with open(full, "rb") as f:
+                for chunk in iter(lambda: f.read(1048576), b""):
+                    digest.update(chunk)
+            members[rel] = digest.hexdigest()
+def add_file(archive, src, arc):
+    if os.path.isfile(src):
+        archive.add(src, arcname=arc, recursive=False)
+        digest = hashlib.sha256()
+        with open(src, "rb") as f:
+            for chunk in iter(lambda: f.read(1048576), b""):
+                digest.update(chunk)
+        members[arc] = digest.hexdigest()
+now = datetime.now(timezone.utc)
+stamp = now.strftime("%Y%m%d_%H%M%S")
+final = os.path.join(backup_root, "ovnode-state-pre-update-%s.tar.gz" % stamp)
+fd, tmp = tempfile.mkstemp(prefix=".ovnode-state-", suffix=".part", dir=backup_root)
+os.close(fd); os.chmod(tmp, 0o600)
+try:
+    with tempfile.TemporaryDirectory(prefix="ovnode-state-") as stage:
+        with tarfile.open(tmp, "w:gz", format=tarfile.PAX_FORMAT) as archive:
+            add_file(archive, os.path.join(app_dir, ".env"), "node.env")
+            add_tree(archive, node_data, "data")
+            for sub in ("server", "ccd", "ovnode"):
+                add_tree(archive, os.path.join(ovpn_root, sub), "openvpn/%s" % sub)
+            try:
+                with open(os.path.join(app_dir, ".env"), encoding="utf-8") as f:
+                    env = dict(line.strip().split("=", 1) for line in f if "=" in line and not line.startswith("#"))
+                for key in ("SSL_KEYFILE", "SSL_CERTFILE"):
+                    target = env.get(key, "")
+                    if target and os.path.isfile(target):
+                        add_file(archive, target, "tls/%s" % os.path.basename(target))
+            except OSError:
+                pass
+            manifest = {"format": "ovnode-state", "format_version": 1, "node": node,
+                        "from_version": from_version, "created_at": now.isoformat(), "members": members}
+            manifest_path = os.path.join(stage, "manifest.json")
+            with open(manifest_path, "w", encoding="utf-8") as f:
+                json.dump(manifest, f, sort_keys=True, indent=2); f.write("\n")
+            archive.add(manifest_path, arcname="manifest.json", recursive=False)
+        with tarfile.open(tmp, "r:gz") as archive:
+            names = {m.name for m in archive.getmembers() if m.isfile()}
+            if "manifest.json" not in names:
+                raise SystemExit("bundle verification failed: no manifest")
+            if any(n.startswith("/") or ".." in n.split("/") for n in names):
+                raise SystemExit("bundle verification failed: unsafe member")
+            seen = json.load(archive.extractfile("manifest.json"))
+            if seen.get("format") != "ovnode-state":
+                raise SystemExit("bundle verification failed: bad manifest")
+    os.replace(tmp, final); os.chmod(final, 0o600)
+finally:
+    try: os.unlink(tmp)
+    except FileNotFoundError: pass
+print(final)
+PY
+    # Retention for safety bundles (backup pruning covers node-*/node-pki-*).
+    ls -t "$backup_root"/ovnode-state-pre-update-*.tar.gz 2>/dev/null | tail -n +6 | xargs -r rm -f
+    return 0
+}
+
+# Restore verified state after a failed activation. Fails closed on any
+# manifest/checksum problem; never extracts unsafe member names.
+state_restore() {
+    local bundle="$1"
+    [[ -f "$bundle" ]] || return 1
+    python3 - "$bundle" "$APP_DIR" "$DATA_BASE" "$OPENVPN_ROOT" <<'PY' || return 1
+import hashlib, json, os, sys, tarfile, tempfile
+bundle, app_dir, data_base, ovpn_root = sys.argv[1:]
+roots = {"node.env": app_dir, "data/": data_base, "openvpn/": ovpn_root, "tls/": None, "manifest.json": None}
+with tarfile.open(bundle, "r:gz") as archive:
+    infos = [m for m in archive.getmembers() if m.isfile()]
+    names = {m.name for m in infos}
+    if "manifest.json" not in names:
+        raise SystemExit("unsafe state backup: no manifest")
+    if any(n.startswith("/") or ".." in n.split("/") for n in names):
+        raise SystemExit("unsafe state backup: unsafe member")
+    manifest = json.load(archive.extractfile("manifest.json"))
+    if manifest.get("format") != "ovnode-state":
+        raise SystemExit("unsafe state backup: bad manifest")
+    expected = manifest.get("members", {})
+    staged = tempfile.mkdtemp(prefix="ovnode-restore-")
+    try:
+        archive.extractall(path=staged, members=infos)
+        for rel, digest in expected.items():
+            with open(os.path.join(staged, rel), "rb") as f:
+                actual = hashlib.sha256(f.read()).hexdigest()
+            if actual != digest:
+                raise SystemExit("state backup checksum mismatch: %s" % rel)
+        import shutil
+        for rel in expected:
+            if rel == "node.env":
+                dst = os.path.join(app_dir, ".env")
+            elif rel.startswith("data/"):
+                dst = os.path.join(data_base, os.path.relpath(rel, "data"))
+            elif rel.startswith("openvpn/"):
+                dst = os.path.join(ovpn_root, os.path.relpath(rel, "openvpn"))
+            elif rel.startswith("tls/"):
+                continue  # certs restore via repair flow, never auto-overwritten
+            else:
+                raise SystemExit("unsafe state backup: unknown member %s" % rel)
+            os.makedirs(os.path.dirname(dst), exist_ok=True)
+            fd, tmp = tempfile.mkstemp(prefix=".ovnode-restore-", dir=os.path.dirname(dst))
+            try:
+                with os.fdopen(fd, "wb") as f, open(os.path.join(staged, rel), "rb") as s:
+                    shutil.copyfileobj(s, f, 1048576)
+                if dst.endswith(".env"):
+                    os.chmod(tmp, 0o600)
+                os.replace(tmp, dst)
+            finally:
+                try: os.unlink(tmp)
+                except FileNotFoundError: pass
+    finally:
+        shutil.rmtree(staged, ignore_errors=True)
+print("state restored")
+PY
+}
+
+# Authenticated status from the running agent: "version openvpn_running".
+# Empty output means unreachable or rejected (identity broken).
+node_api_status() {
+    local key="$1" port="$2" tls="$3" scheme="http"
+    [[ "$tls" != "none" ]] && scheme="https"
+    curl -fskS --max-time 5 "${scheme}://127.0.0.1:${port}/sync/status" \
+        -H "key: ${key}" 2>/dev/null \
+        | python3 -c 'import json,sys; d=(json.load(sys.stdin).get("data") or {}); print(d.get("version",""), str(d.get("openvpn_running","")).lower())' 2>/dev/null || true
 }
 
 write_env() {
@@ -1035,7 +1243,21 @@ setup_docker() {
     fi
     [[ -c /dev/net/tun ]] || warn "/dev/net/tun missing — the VPN cannot start until the tun module is available"
 
-    local compose; compose="$(compose_file)"
+    write_compose_file
+
+    run "Pulling published OVNode image" \
+        docker pull "${IMAGE_REPO}:${IMAGE_TAG:-$VERSION}"
+    run "Starting container" \
+        docker compose -f "$(compose_file)" up -d
+}
+
+# Write the compose file pinning the exact published image. IMAGE_TAG
+# overrides VERSION so updates and failovers can target a specific release.
+# Never builds locally: Docker installs consume published images only.
+write_compose_file() {
+    local compose tag
+    compose="$(compose_file)"
+    tag="${IMAGE_TAG:-$VERSION}"
     mkdir -p "$DATA_BASE/$NODE_NAME"
 
     # TLS material lives on host paths (letsencrypt/self-signed/custom) —
@@ -1054,15 +1276,14 @@ setup_docker() {
     cat > "$compose" << COMPOSE
 services:
   ovnode:
-    build:
-      context: ${APP_DIR}
-      dockerfile: Dockerfile
+    image: ${IMAGE_REPO}:${tag}
     container_name: ovnode-${NODE_NAME}
     restart: unless-stopped
     network_mode: host
     environment:
       SERVICE_PORT: ${PORT}
       API_KEY: ${API_KEY}
+      DATA_DIR: /app/data
       OPENVPN_PORT: ${VPN_PORT}
       TLS_METHOD: ${TLS_METHOD}
       OVNODE_OPENVPN_ROOT: /etc/openvpn
@@ -1084,10 +1305,7 @@ $( [[ -n "$tls_mounts" ]] && printf '%s' "$tls_mounts" )
 COMPOSE
     # The compose file embeds the API key — keep it root-only, like .env.
     chmod 600 "$compose"
-    step "Compose file written: $compose"
-
-    run "Building and starting container (first build takes a while)" \
-        docker compose -f "$compose" up -d --build
+    step "Compose file written: $compose (image ${IMAGE_REPO}:${tag})"
 }
 
 # ── JSON result ────────────────────────────────────────────────────────
@@ -1120,8 +1338,8 @@ do_install() {
     check_deps
     [[ "$DOCKER" -eq 1 ]] || ensure_uv
 
-    sep; info "Downloading OVNode ($BRANCH)..."
-    fetch_source
+    sep; info "Downloading verified OVNode release..."
+    fetch_release "$APP_DIR"
 
     if [[ "$DOCKER" -eq 0 ]]; then
         cd "$APP_DIR"
@@ -1176,7 +1394,7 @@ do_install() {
     step "${B}Installation complete!${NC}"
     line ""
     field "Node name"   "$NODE_NAME"
-    field "Mode"        "$([ "$DOCKER" -eq 1 ] && echo Docker || echo Native)"
+    field "Mode"        "$([ "$DOCKER" -eq 1 ] && echo Docker || echo Host)"
     field "Service"     "${WH}${scheme}://${host}:${PORT}${NC}"
     field "OpenVPN"     "$(vpn_ports_label)"
     field "API key"     "${GR}${API_KEY}${NC}"
@@ -1212,9 +1430,15 @@ do_install() {
 }
 
 # ── Update ─────────────────────────────────────────────────────────────
+# Transactional: safety bundle + code snapshot, staged candidate, maintenance
+# marker (mutating API calls blocked), atomic rename activation, verified
+# commit or automatic failover. Identity (name + API key) is recovered from
+# .env and never regenerated here.
 do_update() {
     [[ -d "$APP_DIR" ]] || die "Not installed ($APP_DIR missing)" "$EX_NOTINSTALLED"
     check_root
+    operation_begin update
+    trap operation_end EXIT
     # Recover install parameters from the installed .env when not passed on
     # the CLI, so `update` never silently changes the configuration.
     local env_get; env_get() { grep -E "^$1=" "$APP_DIR/.env" 2>/dev/null | head -1 | cut -d= -f2- | tr -d '"' || true; }
@@ -1222,6 +1446,8 @@ do_update() {
     : "${NODE_NAME:=ovnode}"
     [[ -n "$PORT" ]] || PORT="$(env_get SERVICE_PORT)"
     : "${PORT:=$DEFAULT_PORT}"
+    [[ -n "$API_KEY" ]] || API_KEY="$(env_get API_KEY)"
+    [[ -n "$API_KEY" ]] || die "Installed .env has no API key — refusing to rotate identity (restore .env or reinstall)" "$EX_ERROR"
     if [[ -z "$VPN_PORTS" ]]; then
         VPN_PORT="$(env_get OPENVPN_PORT)"; : "${VPN_PORT:=$DEFAULT_VPN}"
         EXTRA_PORTS="$(env_get OVNODE_EXTRA_PORTS)"
@@ -1235,8 +1461,16 @@ do_update() {
         TLS_METHOD="$(env_get TLS_METHOD)"
     fi
     : "${TLS_METHOD:=selfsigned}"
+    # Compose regeneration (docker) and setup steps need the full install
+    # parameters: recover everything the update did not receive as flags so
+    # a refresh never silently drops TLS mounts, extra ports or IPv6.
+    [[ -n "$TLS_KEY" ]] || TLS_KEY="$(env_get SSL_KEYFILE)"
+    [[ -n "$TLS_CERT" ]] || TLS_CERT="$(env_get SSL_CERTFILE)"
+    if [[ -z "${OVN_IPV6:-}" && "$IPV6" -eq 0 ]]; then
+        [[ "$(env_get OVNODE_ENABLE_IPV6)" == "1" ]] && IPV6=1
+    fi
 
-    line ""; info "Updating OVNode..."
+    line ""; info "Updating OVNode to v${VERSION}…"
     detect_os
     # Auto-detect the deployment mode: a compose file means this install was
     # done with --docker, even when `update` is called without the flag.
@@ -1244,74 +1478,329 @@ do_update() {
         DOCKER=1
         info "Detected Docker deployment (compose file present)"
     fi
-    backup_dir "$DATA_BASE" "node"
-    backup_dir "$OPENVPN_ROOT/server/pki" "node-pki"
-    local snapshot
+    local from_version safety snapshot scheme activated=0 identity
+    from_version="$(grep -Eo '"[0-9]+\.[0-9]+\.[0-9]+"' "$APP_DIR/core/version.py" 2>/dev/null | head -1 | tr -d '"' || true)"
+    : "${from_version:=unknown}"
+    identity="$(identity_sha "$NODE_NAME" "$API_KEY")"
+    scheme="http"; [[ "$TLS_METHOD" != "none" ]] && scheme="https"
+    update_state preflight "$from_version" "$VERSION" "" "$identity"
+
+    info "Step 1/6 — Verified safety snapshot"
+    safety="$(state_safety_bundle "$from_version")" || die "Could not create the mandatory state safety snapshot" "$EX_ERROR"
+    [[ -n "$safety" && -f "$safety" ]] || die "The state safety snapshot was not created" "$EX_ERROR"
     snapshot="$(snapshot_code "$APP_DIR" "node" 2)"
+    update_state staging "$from_version" "$VERSION" "$safety" "$identity"
 
-    cd "$APP_DIR"
-    if [[ "$SRC" == "release" ]]; then
-        # .env is never in the tarball (uncommitted), so extracting over the
-        # install keeps it.
-        fetch_release "$APP_DIR"
-    elif [[ -d .git ]]; then
-        git stash --quiet 2>/dev/null || true
-        run "Pulling latest changes" git pull --rebase origin "$BRANCH"
-        git stash pop --quiet 2>/dev/null || true
-    else
-        warn "No git checkout — re-downloading source over existing install (.env preserved)"
-        local tmp
-        tmp="$(mktemp /tmp/ovn.XXXXXX.tar.gz)"
-        run "Downloading source" \
-            curl -fsSL -o "$tmp" "https://github.com/${REPO}/archive/refs/heads/${BRANCH}.tar.gz"
-        tar -xzf "$tmp" --strip-components=1 -C "$APP_DIR" >/dev/null 2>&1 || die "Extract failed"
-        rm -f "$tmp"
-    fi
-
-    local scheme="http"
-    [[ "$TLS_METHOD" != "none" ]] && scheme="https"
-
+    info "Step 2/6 — Stage verified release"
+    rm -rf "$UPDATE_STAGE"
+    mkdir -p "$UPDATE_STAGE"
     if [[ "$DOCKER" -eq 1 ]]; then
-        stop_native_openvpn
-        run "Rebuilding Docker container" docker compose -f "$(compose_file)" up -d --build
+        ensure_docker
+        run "Pulling published OVNode image" \
+            docker pull "ghcr.io/${REPO,,}:${VERSION}" \
+            || die "Could not pull ghcr.io/${REPO,,}:${VERSION}" "$EX_ERROR"
     else
+        fetch_release "$UPDATE_STAGE"
+        cp -p "$APP_DIR/.env" "$UPDATE_STAGE/.env" || die "Could not preserve configuration" "$EX_ERROR"
+        chmod 600 "$UPDATE_STAGE/.env"
         ensure_uv
-        run "Updating Python dependencies" uv_sync
-        # Re-write the unit: older installs launched via `uv run`.
-        has_systemd && write_systemd_unit
-        run "Restarting node agent" systemctl_bounded restart "$SYSTEMD_SERVICE"
+        ( cd "$UPDATE_STAGE" && run "Staged Python dependencies" uv_sync ) \
+            || die "Could not prepare the staged release; current version is still running" "$EX_ERROR"
+        [[ -f "$UPDATE_STAGE/core/version.py" ]] || die "Staged release is incomplete" "$EX_ERROR"
     fi
-    setup_nat
-    setup_logrotate
 
-    local health="ok"
-    if ! wait_health "${scheme}://127.0.0.1:${PORT}/sync/health" 45; then
-        warn "Agent did not answer /sync/health after update — rolling back to the snapshot"
+    info "Step 3/6 — Enter maintenance mode"
+    : > "$(update_marker)"
+    chmod 600 "$(update_marker)"
+    update_state activating "$from_version" "$VERSION" "$safety" "$identity"
+    if [[ "$DOCKER" -eq 1 ]]; then
+        ( cd "$APP_DIR" && docker compose -f "$(compose_file)" down ) >/dev/null 2>&1 || true
+    else
+        # The OpenVPN daemon keeps serving clients; only the agent stops.
         systemctl_bounded stop "$SYSTEMD_SERVICE" >/dev/null 2>&1 || true
-        tar -xzf "$snapshot" -C "$(dirname "$APP_DIR")" >/dev/null 2>&1 \
-            || die "Rollback extract failed — restore manually from $snapshot and /var/backups" "$EX_ERROR"
-        run "Restarting node agent" systemctl_bounded restart "$SYSTEMD_SERVICE"
-        if wait_health "${scheme}://127.0.0.1:${PORT}/sync/health" 45; then
-            die "Rolled back to the pre-update tree (snapshot kept at $snapshot). Update aborted — check: journalctl -u $SYSTEMD_SERVICE -n 50" "$EX_ERROR"
-        fi
-        die "Rollback did not restore health either — snapshot at $snapshot, data backups in /var/backups." "$EX_ERROR"
     fi
-    [[ "$DOCKER" -eq 1 ]] && check_container_openvpn
+
+    info "Step 4/6 — Activate candidate"
+    if [[ "$DOCKER" -eq 1 ]]; then
+        IMAGE_TAG="$VERSION" write_compose_file
+        ( cd "$APP_DIR" && docker compose -f "$(compose_file)" up -d ) >/dev/null 2>&1 \
+            || { update_state recovery_required "$from_version" "$VERSION" "$safety" "$identity"; die "Could not start the candidate container. Writes remain blocked; run: ovn recover-update" "$EX_ERROR"; }
+        activated=1
+    else
+        rm -rf "$UPDATE_PREVIOUS"
+        if mv "$APP_DIR" "$UPDATE_PREVIOUS" && mv "$UPDATE_STAGE" "$APP_DIR"; then
+            activated=1
+        else
+            if [[ -d "$APP_DIR" ]] || { [[ -d "$UPDATE_PREVIOUS" ]] && mv "$UPDATE_PREVIOUS" "$APP_DIR"; }; then
+                rm -f "$(update_marker)"
+                update_state failed_over "$from_version" "$VERSION" "$safety" "$identity"
+                operation_end
+                die "Could not activate the staged release; the previous release remains active and state was not changed" "$EX_ERROR"
+            fi
+            update_state recovery_required "$from_version" "$VERSION" "$safety" "$identity"
+            operation_end
+            die "Could not activate or restore release files. Writes remain blocked; run: ovn recover-update" "$EX_ERROR"
+        fi
+    fi
+
+    local start_ok=0
+    if [[ "$DOCKER" -eq 1 ]]; then
+        start_ok=1
+    else
+        has_systemd && write_systemd_unit
+        run "Candidate agent started" systemctl_bounded restart "$SYSTEMD_SERVICE" && start_ok=1 || true
+    fi
+
+    info "Step 5/6 — Verify candidate"
+    update_state verifying "$from_version" "$VERSION" "$safety" "$identity"
+    if [[ "$start_ok" -eq 1 ]] && wait_health "${scheme}://127.0.0.1:${PORT}/sync/health" 60; then
+        local reported vpn_ok ident_ok
+        read -r reported vpn_ok < <(node_api_status "$API_KEY" "$PORT" "$TLS_METHOD") || true
+        ident_ok="$(identity_sha "$(env_get_after NODE_NAME)" "$(env_get_after API_KEY)")"
+        if [[ "$reported" == "$VERSION" && "$vpn_ok" == "true" && "$ident_ok" == "$identity" ]]; then
+            start_ok=1
+        else
+            warn "Candidate verification mismatch (version='${reported:-unknown}' openvpn='${vpn_ok:-unknown}' identity-preserved=$([[ "$ident_ok" == "$identity" ]] && echo yes || echo no))"
+            start_ok=0
+        fi
+    else
+        start_ok=0
+    fi
+
+    if [[ "$start_ok" -ne 1 ]]; then
+        warn "Candidate verification failed — failing over to v${from_version}"
+        update_state failing_over "$from_version" "$VERSION" "$safety" "$identity"
+        node_failover "$from_version" "$VERSION" "$safety" "$identity" "$snapshot"
+    fi
+
+    info "Step 6/6 — Commit update"
+    rm -f "$(update_marker)"
+    if [[ "$DOCKER" -eq 0 ]]; then
+        setup_nat
+        setup_logrotate
+    fi
+    if ! wait_health "${scheme}://127.0.0.1:${PORT}/sync/health" 60; then
+        : > "$(update_marker)"; chmod 600 "$(update_marker)"
+        update_state recovery_required "$from_version" "$VERSION" "$safety" "$identity"
+        operation_end
+        die "Candidate passed verification but failed its final check. Writes are blocked; run: ovn recover-update" "$EX_ERROR"
+    fi
+    update_state committed "$from_version" "$VERSION" "$safety" "$identity"
+    operation_end
     install_cli
-    step "Update complete"
+    step "Update complete  v${from_version} → v${VERSION}"
+    [[ "$DOCKER" -eq 1 ]] || step "Failover release kept at $UPDATE_PREVIOUS"
     line ""
 
     emit_result true update \
         mode "$([ "$DOCKER" -eq 1 ] && echo docker || echo native)" \
         node "$NODE_NAME" \
         service_port "$PORT" \
-        health "$health"
+        health "ok"
+}
+
+# Read a key from the CURRENT (possibly just activated) install .env.
+env_get_after() { grep -E "^$1=" "$APP_DIR/.env" 2>/dev/null | head -1 | cut -d= -f2- | tr -d '"' || true; }
+
+# Failover to the pre-update release + state. Never returns on success paths
+# (dies after journaling the terminal state).
+node_failover() {
+    local from_version="$1" target="$2" safety="$3" identity="$4" snapshot="$5"
+    if [[ "$DOCKER" -eq 1 ]]; then
+        ( cd "$APP_DIR" && docker compose -f "$(compose_file)" down ) >/dev/null 2>&1 || true
+        state_restore "$safety" \
+            || { update_state recovery_required "$from_version" "$target" "$safety" "$identity"; operation_end; die "Previous container stopped but state could not be restored. Run: ovn recover-update" "$EX_ERROR"; }
+        IMAGE_TAG="$from_version" write_compose_file
+        ( cd "$APP_DIR" && docker compose -f "$(compose_file)" up -d ) >/dev/null 2>&1 \
+            || { update_state recovery_required "$from_version" "$target" "$safety" "$identity"; operation_end; die "Previous image could not be restarted. Run: ovn recover-update" "$EX_ERROR"; }
+    else
+        systemctl_bounded stop "$SYSTEMD_SERVICE" >/dev/null 2>&1 || true
+        rm -rf "$UPDATE_STAGE"
+        mv "$APP_DIR" "$UPDATE_STAGE" || true
+        mv "$UPDATE_PREVIOUS" "$APP_DIR" \
+            || { update_state recovery_required "$from_version" "$target" "$safety" "$identity"; operation_end; die "Automatic failover could not restore the previous release. Snapshot: $snapshot" "$EX_ERROR"; }
+        state_restore "$safety" \
+            || { update_state recovery_required "$from_version" "$target" "$safety" "$identity"; operation_end; die "Previous code was restored but state could not be restored" "$EX_ERROR"; }
+        run "Previous agent restarted" systemctl_bounded restart "$SYSTEMD_SERVICE" \
+            || { update_state recovery_required "$from_version" "$target" "$safety" "$identity"; operation_end; die "Previous release restored but will not start" "$EX_ERROR"; }
+    fi
+    local scheme="http"; [[ "$TLS_METHOD" != "none" ]] && scheme="https"
+    if wait_health "${scheme}://127.0.0.1:${PORT}/sync/health" 60; then
+        rm -f "$(update_marker)"
+        update_state failed_over "$from_version" "$target" "$safety" "$identity"
+        operation_end
+        die "Update failed over safely to v${from_version}. State was restored from $safety. Check logs before retrying." "$EX_ERROR"
+    fi
+    update_state recovery_required "$from_version" "$target" "$safety" "$identity"
+    operation_end
+    die "Failover did not restore health either — state backup at $safety, code snapshot at $snapshot. Check logs." "$EX_ERROR"
+}
+
+# ── Uninstall ──────────────────────────────────────────────────────────
+do_recover_update() {
+    if [[ ! -f "$UPDATE_STATE" ]]; then
+        [[ -f "$(update_marker)" ]] && die "Update maintenance marker exists but its state journal is missing" "$EX_ERROR"
+        step "No interrupted update needs recovery"
+        return 0
+    fi
+    local phase from target safety identity
+    read -r phase from target safety identity < <(python3 - "$UPDATE_STATE" <<'PY'
+import json, sys
+x = json.load(open(sys.argv[1]))
+print(x.get("phase", "unknown"), x.get("from_version", "unknown"),
+      x.get("to_version", "unknown"), x.get("safety_backup") or "", x.get("identity_sha") or "")
+PY
+) || die "Update state journal is unreadable" "$EX_ERROR"
+    case "$phase" in
+        committed|failed_over)
+            if [[ ! -f "$(update_marker)" ]]; then
+                step "No interrupted update needs recovery"
+                return 0
+            fi
+            ;;
+        preflight|staging)
+            # Activation had not begun: installed release and state are
+            # untouched. Discard staging and clear the journal.
+            check_root
+            operation_begin recover-update
+            trap operation_end EXIT
+            rm -rf "$UPDATE_STAGE"
+            rm -f "$(update_marker)"
+            update_state failed_over "$from" "$target" "$safety" "$identity"
+            operation_end
+            step "Cleared an interrupted pre-activation update; v${from} remains active"
+            return 0
+            ;;
+        activating|verifying|failing_over|recovery_required) ;;
+        *) die "Update journal has unknown phase '$phase'; writes remain blocked" "$EX_ERROR" ;;
+    esac
+    check_root
+    operation_begin recover-update
+    trap operation_end EXIT
+    if [[ ! -f "$(update_marker)" ]]; then
+        : > "$(update_marker)"
+        chmod 600 "$(update_marker)"
+        warn "Re-created the missing update maintenance marker"
+    fi
+    [[ -f "$(compose_file)" ]] && DOCKER=1 || DOCKER=0
+    local env_get; env_get() { grep -E "^$1=" "$APP_DIR/.env" 2>/dev/null | head -1 | cut -d= -f2- | tr -d '"' || true; }
+    [[ -n "$NODE_NAME" ]] || NODE_NAME="$(env_get NODE_NAME)"
+    : "${NODE_NAME:=ovnode}"
+    [[ -n "$PORT" ]] || PORT="$(env_get SERVICE_PORT)"
+    : "${PORT:=$DEFAULT_PORT}"
+    local api_key
+    api_key="$(env_get API_KEY)"
+    [[ -n "$api_key" ]] || die "Installed .env has no API key — cannot verify identity. Restore .env from $safety, then retry." "$EX_ERROR"
+    TLS_METHOD="$(env_get TLS_METHOD)"; : "${TLS_METHOD:=selfsigned}"
+    local scheme="http"; [[ "$TLS_METHOD" != "none" ]] && scheme="https"
+    local reported vpn_ok ident_ok
+    if wait_health "${scheme}://127.0.0.1:${PORT}/sync/health" 5; then
+        read -r reported vpn_ok < <(node_api_status "$api_key" "$PORT" "$TLS_METHOD") || true
+        ident_ok="$(identity_sha "$(env_get NODE_NAME)" "$api_key")"
+    fi
+    if [[ "${reported:-}" == "$target" && "${vpn_ok:-}" == "true" && "${ident_ok:-}" == "$identity" ]]; then
+        rm -f "$(update_marker)"
+        update_state committed "$from" "$target" "$safety" "$identity"
+        operation_end
+        step "Recovered update journal — v${target} is healthy"
+        return 0
+    fi
+    if [[ "${reported:-}" == "$from" && "${vpn_ok:-}" == "true" && "${ident_ok:-}" == "$identity" && ! -d "$UPDATE_PREVIOUS" ]]; then
+        rm -f "$(update_marker)"
+        update_state failed_over "$from" "$target" "$safety" "$identity"
+        operation_end
+        step "Recovered update journal — previous v${from} is healthy"
+        return 0
+    fi
+    if [[ ! -d "$UPDATE_PREVIOUS" ]]; then
+        # Activation never swapped the trees: restart the intact install.
+        rm -rf "$UPDATE_STAGE"
+        if [[ "$DOCKER" -eq 1 ]]; then
+            ( cd "$APP_DIR" && docker compose -f "$(compose_file)" up -d ) >/dev/null 2>&1 || true
+        else
+            systemctl_bounded restart "$SYSTEMD_SERVICE" >/dev/null 2>&1 || systemctl start "$SYSTEMD_SERVICE" >/dev/null 2>&1 || true
+        fi
+        if wait_health "${scheme}://127.0.0.1:${PORT}/sync/health" 60; then
+            rm -f "$(update_marker)"
+            update_state failed_over "$from" "$target" "$safety" "$identity"
+            operation_end
+            step "Interrupted update never activated — v${from} restarted, staging discarded"
+            return 0
+        fi
+        update_state recovery_required "$from" "$target" "$safety" "$identity"
+        operation_end
+        die "Interrupted update never activated and v${from} does not answer health. Run: ovn logs 100" "$EX_ERROR"
+    fi
+    info "Interrupted candidate is unhealthy — failing over to v${from}"
+    if [[ "$DOCKER" -eq 1 ]]; then
+        ( cd "$APP_DIR" && docker compose -f "$(compose_file)" down ) >/dev/null 2>&1 || true
+        [[ -n "$safety" ]] && state_restore "$safety" \
+            || die "Previous container stopped, but state could not be restored" "$EX_ERROR"
+        IMAGE_TAG="$from" write_compose_file
+        ( cd "$APP_DIR" && docker compose -f "$(compose_file)" up -d ) >/dev/null 2>&1 \
+            || die "Previous image could not be restarted" "$EX_ERROR"
+    else
+        systemctl_bounded stop "$SYSTEMD_SERVICE" >/dev/null 2>&1 || true
+        rm -rf "$UPDATE_STAGE"
+        [[ -d "$APP_DIR" ]] && mv "$APP_DIR" "$UPDATE_STAGE"
+        mv "$UPDATE_PREVIOUS" "$APP_DIR" || die "Could not restore the previous release directory" "$EX_ERROR"
+        [[ -n "$safety" ]] && state_restore "$safety" \
+            || die "Previous release restored, but state could not be restored" "$EX_ERROR"
+        systemctl_bounded restart "$SYSTEMD_SERVICE" >/dev/null 2>&1 \
+            || die "Previous release restored but will not start" "$EX_ERROR"
+    fi
+    if wait_health "${scheme}://127.0.0.1:${PORT}/sync/health" 60; then
+        rm -f "$(update_marker)"
+        update_state failed_over "$from" "$target" "$safety" "$identity"
+        operation_end
+        step "Interrupted update failed over safely to v${from}"
+        return 0
+    fi
+    update_state recovery_required "$from" "$target" "$safety" "$identity"
+    operation_end
+    die "Previous release was restored but is not healthy. Run: ovn logs 100" "$EX_ERROR"
+}
+
+# Regenerate host integration files from the installed release + .env
+# (unit, NAT, logrotate). Non-disruptive: no restart, no re-enrollment.
+do_repair_unit() {
+    [[ -d "$APP_DIR" ]] || die "Not installed ($APP_DIR missing)" "$EX_NOTINSTALLED"
+    check_root
+    operation_begin repair-unit
+    trap operation_end EXIT
+    local env_get; env_get() { grep -E "^$1=" "$APP_DIR/.env" 2>/dev/null | head -1 | cut -d= -f2- | tr -d '"' || true; }
+    NODE_NAME="$(env_get NODE_NAME)"; : "${NODE_NAME:=ovnode}"
+    PORT="$(env_get SERVICE_PORT)"; : "${PORT:=$DEFAULT_PORT}"
+    API_KEY="$(env_get API_KEY)"
+    [[ -n "$API_KEY" ]] || die "Installed .env has no API key — restore .env first" "$EX_ERROR"
+    VPN_PORT="$(env_get OPENVPN_PORT)"; : "${VPN_PORT:=$DEFAULT_VPN}"
+    EXTRA_PORTS="$(env_get OVNODE_EXTRA_PORTS)"
+    TLS_METHOD="$(env_get TLS_METHOD)"; : "${TLS_METHOD:=selfsigned}"
+    TLS_KEY="$(env_get SSL_KEYFILE)"; TLS_CERT="$(env_get SSL_CERTFILE)"
+    [[ "$(env_get OVNODE_ENABLE_IPV6)" == "1" ]] && IPV6=1 || IPV6=0
+    detect_os
+    if [[ -f "$(compose_file)" ]]; then
+        DOCKER=1
+        ensure_docker
+        write_compose_file
+        step "Compose file regenerated (image ${IMAGE_REPO}:${IMAGE_TAG:-$VERSION})"
+    else
+        DOCKER=0
+        has_systemd || die "systemd not found — cannot install the agent unit" "$EX_ERROR"
+        write_systemd_unit
+        setup_nat
+        setup_logrotate
+    fi
+    operation_end
+    step "Host integration repaired — restart the agent if it is stopped: ovn restart"
 }
 
 # ── Uninstall ──────────────────────────────────────────────────────────
 do_uninstall() {
     [[ -d "$APP_DIR" ]] || die "Not installed ($APP_DIR missing)" "$EX_NOTINSTALLED"
     check_root
+    operation_begin uninstall
+    trap operation_end EXIT
     [[ -n "$NODE_NAME" ]] || NODE_NAME="$(grep -E '^NODE_NAME=' "$APP_DIR/.env" 2>/dev/null | head -1 | cut -d= -f2- | tr -d '"' || true)"
     : "${NODE_NAME:=ovnode}"
     confirm "Remove OVNode and stop all services?" || die "Cancelled."
@@ -1381,7 +1870,7 @@ interactive_setup() {
     if [[ "$DOCKER" -eq 0 ]]; then
         line ""
         line "${B}Step 3/4 — Deployment${NC}"
-        line "  ${WH}1${NC})  Native — systemd services (recommended)"
+        line "  ${WH}1${NC})  Host — systemd service (recommended)"
         line "  ${WH}2${NC})  Docker — agent + OpenVPN in one container"
         local dep; dep="$(ask "Mode" "1")"
         [[ "$dep" == "2" ]] && DOCKER=1
@@ -1416,17 +1905,18 @@ apply_express_defaults() {
 }
 
 # Friendly front door: shown only for a bare interactive invocation.
+# Host install is the default; Docker is the explicit second choice.
 start_menu() {
     line "  ${B}How do you want to install?${NC}"
     line ""
-    line "  ${GR}1${NC})  Express    Recommended — working node, no questions"
-    line "  ${WH}2${NC})  Custom     Answer a few questions (ports, key, certificate)"
+    line "  ${GR}1${NC})  Install              ${GY}Recommended (host service)${NC}"
+    line "  ${WH}2${NC})  Install with Docker"
     line ""
     local choice
     choice="$(ask "Select" "1")"
     case "${choice:-1}" in
         1) apply_express_defaults ;;
-        2) EXPRESS=0 ;;
+        2) DOCKER=1; apply_express_defaults ;;
         *) apply_express_defaults ;;
     esac
     line ""
@@ -1587,9 +2077,11 @@ check_deps() {
 # ── Main ───────────────────────────────────────────────────────────────
 main() {
     parse_args "$@"
+    [[ -n "${OVN_SRC:-}" && "${OVN_SRC}" != "release" ]] && die "Source installs were removed — the installer consumes verified releases only (developers: clone the repo)" "$EX_USAGE"
+    [[ -n "${OVN_BRANCH:-}" ]] && die "OVN_BRANCH was removed with source installs — developers: git checkout the branch in a clone" "$EX_USAGE"
     case "$SRC" in
-        release|source) ;;
-        *) die "Invalid source '$SRC' (use release or source)" "$EX_USAGE" ;;
+        release) ;;
+        *) die "Invalid source '$SRC' (releases only)" "$EX_USAGE" ;;
     esac
     if [[ -n "$PIN" ]]; then
         [[ "$PIN" =~ ^v?[0-9]+\.[0-9]+\.[0-9]+$ ]] || die "Bad --version '$PIN' (use vX.Y.Z)" "$EX_USAGE"
@@ -1603,6 +2095,8 @@ main() {
     case "$ACTION" in
         uninstall) do_uninstall; exit "$EX_OK" ;;
         update)    confirm "Update OVNode now?" || exit "$EX_OK"; do_update; exit "$EX_OK" ;;
+        recover-update) do_recover_update; exit "$EX_OK" ;;
+        repair-unit) do_repair_unit; exit "$EX_OK" ;;
         interactive) INTERACTIVE=1 ;;
     esac
 
@@ -1648,7 +2142,7 @@ main() {
 
     field "OS"        "$OS_NAME"
     field "Version"   "v$VERSION ($SRC)"
-    field "Mode"      "$([ "$DOCKER" -eq 1 ] && echo Docker || echo Native)"
+    field "Mode"      "$([ "$DOCKER" -eq 1 ] && echo Docker || echo Host)"
     field "Node"      "$NODE_NAME"
     field "Service"   "$PORT"
     field "OpenVPN"   "$(vpn_ports_label)/$VPN_PROTO"

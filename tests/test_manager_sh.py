@@ -223,3 +223,29 @@ def test_doctor_and_rollback_dispatch_past_parse(tmp_path):
         r = mgr(cmd, env=env)
         assert "Unknown option" not in r.stderr, cmd
         assert "Not installed" in r.stderr, (cmd, r.stderr)
+
+
+def test_recover_update_delegates_to_installer():
+    """ovn recover-update must reach install.sh (interrupted tx recovery)."""
+    import re
+
+    content = MANAGER_PATH.read_text(encoding="utf-8")
+    assert "recover-update" in content
+    assert "run_installer recover-update" in content
+    assert re.search(r"recover-update\) ACTION=", content)
+
+
+def test_doctor_covers_update_snapshot_pki():
+    """doctor must see interrupted transactions, snapshot validity and
+    VPN PKI expiry — not just agent/disk/API."""
+    content = MANAGER_PATH.read_text(encoding="utf-8")
+    tokens = ("ovn recover-update", "latest_snapshot node", "PKI ",
+              ".operation.lock", "repair-unit")
+    for token in tokens:
+        assert token in content, f"doctor missing: {token}"
+
+
+def test_rollback_refuses_during_interrupted_update():
+    """Rollback must not fight an interrupted transaction."""
+    content = MANAGER_PATH.read_text(encoding="utf-8")
+    assert "update-maintenance" in content.split("do_rollback()")[1].split("# ──")[0]

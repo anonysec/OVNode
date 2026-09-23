@@ -151,3 +151,30 @@ def test_create_user_accepts_valid_name_shape():
     assert r.status_code == 200
     body = r.json()
     assert body["success"] is False or body["data"] is None
+
+
+def test_maintenance_marker_blocks_mutating_requests(monkeypatch, tmp_path):
+    """With update-maintenance present, POST/PUT/DELETE get 503 while
+    reads and the health probe keep answering."""
+    from core import app as app_module
+    from core.app import api
+
+    monkeypatch.setattr(app_module.settings, "data_dir", str(tmp_path))
+    (tmp_path / "update-maintenance").touch()
+    client = TestClient(api)
+    assert client.get("/sync/health").status_code == 200
+    r = client.post("/sync/user", json={}, headers={"key": "x"})
+    assert r.status_code == 503
+    assert r.json()["success"] is False
+    r = client.delete("/sync/user/some-id", headers={"key": "x"})
+    assert r.status_code == 503
+
+
+def test_no_maintenance_marker_allows_requests(tmp_path):
+    """Without the marker, mutating routes pass through the middleware
+    (auth still applies downstream)."""
+    from core.app import api
+
+    client = TestClient(api)
+    r = client.post("/sync/user", json={}, headers={"key": "x"})
+    assert r.status_code != 503
