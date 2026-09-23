@@ -163,12 +163,17 @@ def test_plain_http_is_rejected():
 
 def test_start_menu_offers_install_or_docker():
     """A bare interactive run opens the friendly menu (not the wizard):
-    Install (host, default) or Install with Docker."""
+    Install (host, default) or Install with Docker — same shape as the
+    panel installer."""
     with open(INSTALLER, encoding="utf-8") as f:
         content = f.read()
     assert "start_menu" in content
-    assert "Install with Docker" in content
-    assert "Recommended (host service)" in content
+    assert "OVNode Setup" in content
+    assert "1.${NC} Install" in content
+    assert "2.${NC} Install with Docker" in content
+    assert "0.${NC} Exit" in content
+    assert "Cancelled. No changes were made." in content
+    assert "How do you want to install?" not in content
     # Host install is the default; Docker is explicit.
     assert "DOCKER=1; apply_express_defaults" in content
     # Install still uses safe generated defaults with TLS on.
@@ -502,7 +507,9 @@ def test_installer_menu_copy_is_stepped():
     question."""
     with open(INSTALLER, encoding="utf-8") as f:
         content = f.read()
-    assert "How do you want to install?" in content
+    assert "How do you want to install?" not in content
+    assert "Ready — save this login" in content
+    assert "verified release" in content
     for token in ("Step 1/4", "Step 4/4"):
         assert token in content, token
 
@@ -595,3 +602,32 @@ def test_no_undefined_fail_helper():
 
     content = open(INSTALLER, encoding="utf-8").read()
     assert not re.search(r"(^|\s)fail \"", content)
+
+
+def test_installer_design_language_matches_panel():
+    """Anti-divergence: the node installer shares the panel's menu/card
+    language (shared tokens mirror the panel suite) plus node-only rows.
+    Update both suites together."""
+    content = open(INSTALLER, encoding="utf-8").read()
+    for token in (
+        "Setup${NC}",
+        "1.${NC} Install",
+        "2.${NC} Install with Docker",
+        "0.${NC} Exit",
+        "Cancelled. No changes were made.",
+        "installer${NC}",
+        "up and running in a few minutes",
+        "Step 1/4",
+        "verified release",
+        "Ready — save this login",
+        "Proceed with installation?",
+        "Options (every option has an OVN_* env equivalent; CLI wins):",
+    ):
+        assert token in content, f"design drift: {token}"
+    for retired in (
+        "How do you want to install?",
+        "Installation complete!",
+        "Choose every option yourself",
+        "v$VERSION ($SRC)",
+    ):
+        assert retired not in content, f"retired wording back: {retired}"

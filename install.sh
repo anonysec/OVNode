@@ -289,7 +289,7 @@ show_help() {
 
   Installed commands: ovnode (alias ovn) — day-to-day operations, plus a menu.
 
-  Flags (every flag has an OVN_* env equivalent; CLI wins):
+  Options (every option has an OVN_* env equivalent; CLI wins):
     -p, --key KEY       API key, min 16 chars (generated if omitted)
                                                [OVN_KEY]
     --name NAME         Node name                        [OVN_NAME, ovnode]
@@ -432,7 +432,10 @@ validate_input() {
     fi
 }
 
-port_in_use() { ss -ltn 2>/dev/null | awk -v p=":${1}$" '$4 ~ p {exit 0} END {exit 1}'; }
+port_in_use() {
+    command -v ss >/dev/null 2>&1 || return 1
+    ss -ltn 2>/dev/null | awk -v p=":${1}$" '$4 ~ p {exit 0} END {exit 1}'
+}
 
 find_free_port() {
     local port="${1:-$DEFAULT_PORT}"
@@ -1338,9 +1341,10 @@ do_install() {
     check_deps
     [[ "$DOCKER" -eq 1 ]] || ensure_uv
 
-    sep; info "Downloading verified OVNode release..."
+    sep; info "Step 1/4 — Download verified release v${VERSION}"
     fetch_release "$APP_DIR"
 
+    info "Step 2/4 — Certificate and configuration"
     if [[ "$DOCKER" -eq 0 ]]; then
         cd "$APP_DIR"
         run "Installing Python dependencies" uv_sync
@@ -1356,6 +1360,7 @@ do_install() {
     mkdir -p "$DATA_BASE/$NODE_NAME"
     ensure_openvpn_dirs
 
+    info "Step 3/4 — Runtime and service"
     if [[ "$DOCKER" -eq 1 ]]; then
         setup_docker
     else
@@ -1369,6 +1374,7 @@ do_install() {
 
     # First boot generates the PKI + server.conf; wait for the agent to
     # answer /sync/health before bringing up OpenVPN so the config exists.
+    info "Step 4/4 — Health check and finish"
     local health="ok"
     if ! wait_health "${scheme}://127.0.0.1:${PORT}/sync/health" 60; then
         health="unreachable"
@@ -1390,20 +1396,20 @@ do_install() {
     open_firewall_ports
     install_cli
 
-    sep; line ""
-    step "${B}Installation complete!${NC}"
+    local tls_flag=0; [[ "$TLS_METHOD" != "none" ]] && tls_flag=1
+    local bundle="ovnode://${NODE_NAME}@${host}:${PORT}?key=${API_KEY}&tls=${tls_flag}"
     line ""
-    field "Node name"   "$NODE_NAME"
+    line "  ${GR}Ready — save this login${NC}"
+    sep
+    field "Node"        "${WH}${NODE_NAME}${NC}"
     field "Mode"        "$([ "$DOCKER" -eq 1 ] && echo Docker || echo Host)"
     field "Service"     "${WH}${scheme}://${host}:${PORT}${NC}"
     field "OpenVPN"     "$(vpn_ports_label)"
-    field "API key"     "${GR}${API_KEY}${NC}"
+    field "API key"     "${GR}${API_KEY}${NC}  ${GY}(generated — save this)${NC}"
+    field "Bundle"      "${CY}${bundle}${NC}"
+    field "Manage"      "ovn  (status, logs, backup, TLS)"
     field "Data"        "$DATA_BASE/$NODE_NAME"
     field "OpenVPN cfg" "$OPENVPN_ROOT/server"
-    line ""
-    local tls_flag=0; [[ "$TLS_METHOD" != "none" ]] && tls_flag=1
-    local bundle="ovnode://${NODE_NAME}@${host}:${PORT}?key=${API_KEY}&tls=${tls_flag}"
-    field "Bundle"      "${CY}${bundle}${NC}"
     line ""
     info "Add this node in the panel: Nodes → Add Node → paste the Bundle above"
     info "(or type address ${host}, port ${PORT}, API key above → save)."
@@ -1907,17 +1913,21 @@ apply_express_defaults() {
 # Friendly front door: shown only for a bare interactive invocation.
 # Host install is the default; Docker is the explicit second choice.
 start_menu() {
-    line "  ${B}How do you want to install?${NC}"
+    line "  ${B}OVNode Setup${NC}"
+    sep
     line ""
-    line "  ${GR}1${NC})  Install              ${GY}Recommended (host service)${NC}"
-    line "  ${WH}2${NC})  Install with Docker"
+    line "  ${GR}1.${NC} Install              ${GY}Recommended${NC}"
+    line "  ${WH}2.${NC} Install with Docker"
+    line ""
+    line "  ${WH}0.${NC} Exit"
     line ""
     local choice
     choice="$(ask "Select" "1")"
     case "${choice:-1}" in
         1) apply_express_defaults ;;
         2) DOCKER=1; apply_express_defaults ;;
-        *) apply_express_defaults ;;
+        0) line "Cancelled. No changes were made."; exit "$EX_OK" ;;
+        *) warn "Choose 0, 1, or 2."; start_menu ;;
     esac
     line ""
 }
@@ -2089,8 +2099,9 @@ main() {
     fi
     if fancy; then command clear >/dev/null 2>&1 || true; fi
     line ""
-    line "  ${B}OVNode${NC} — OpenVPN Node Agent Installer ${GY}v${VERSION}${NC}"
-    sep; line ""
+    line "  ${B}OVNode installer${NC}  ${GY}v${VERSION}${NC}"
+    line "  ${GY}Secure VPN node — up and running in a few minutes${NC}"
+    line ""
 
     case "$ACTION" in
         uninstall) do_uninstall; exit "$EX_OK" ;;
@@ -2141,7 +2152,7 @@ main() {
     validate_input
 
     field "OS"        "$OS_NAME"
-    field "Version"   "v$VERSION ($SRC)"
+    field "Version"   "v$VERSION (verified release)"
     field "Mode"      "$([ "$DOCKER" -eq 1 ] && echo Docker || echo Host)"
     field "Node"      "$NODE_NAME"
     field "Service"   "$PORT"
@@ -2150,13 +2161,9 @@ main() {
     field "Install"   "$APP_DIR"
     field "Data"      "$DATA_BASE/$NODE_NAME"
     sep
-    # Express still gets one confirmation: it is the only thing standing
-    # between a menu keypress and a system change.
-    if [[ "$EXPRESS" -eq 1 ]]; then
-        confirm "Proceed with installation (Express)?" || die "Cancelled."
-    else
-        confirm "Proceed with installation?" || die "Cancelled."
-    fi
+    # One confirmation: it is the only thing standing between a menu
+    # keypress and a system change.
+    confirm "Proceed with installation?" || die "Cancelled."
 
     do_install
 }
