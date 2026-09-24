@@ -238,7 +238,7 @@ def test_template_generation_honours_state(root, monkeypatch):
     remotes = _remotes(tmp_path)
     assert len(remotes) == 3
     assert all("UPDATE_VIA_PANEL" not in r for r in remotes)
-    assert remotes[0].endswith(" 1194") and remotes[1].endswith(" 443") and remotes[2].endswith(" 8443")
+    assert [r.rsplit(" ", 1)[1] for r in remotes] == ["1194", "443", "8443"]
     # _fresh_server_conf() has no remote lines (ports live in the template);
     # it must keep generating cleanly while ports state exists.
     assert "remote " not in pki._fresh_server_conf()
