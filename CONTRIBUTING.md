@@ -23,3 +23,10 @@ Thanks for helping. This project stays small on purpose.
 
 **Discussions** for usage questions; **issues** for bugs with reproduction
 steps (version, logs, expected vs actual).
+
+## Release freeze
+
+`main` is frozen at **1.0.0** until explicit owner sign-off. No version
+bumps, features, or fixes land without owner review and approval — open a
+pull request and wait. The published `v1.0.0` release is a pre-release
+baseline, not a validated public release.
