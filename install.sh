@@ -2098,9 +2098,16 @@ main() {
         VERSION="${PIN#v}"
     fi
     if fancy; then command clear >/dev/null 2>&1 || true; fi
+    # The tagline advertises a fresh install, so it must not appear on
+    # update/uninstall/repair where it reads as if work were about to start.
+    local subtitle
+    case "$ACTION" in
+        install) subtitle="Secure VPN node — up and running in a few minutes" ;;
+        *)      subtitle="Secure VPN node" ;;
+    esac
     line ""
     line "  ${B}OVNode installer${NC}  ${GY}v${VERSION}${NC}"
-    line "  ${GY}Secure VPN node — up and running in a few minutes${NC}"
+    line "  ${GY}${subtitle}${NC}"
     line ""
 
     case "$ACTION" in
@@ -2161,9 +2168,8 @@ main() {
     field "Install"   "$APP_DIR"
     field "Data"      "$DATA_BASE/$NODE_NAME"
     sep
-    # One confirmation: it is the only thing standing between a menu
-    # keypress and a system change.
-    confirm "Proceed with installation?" || die "Cancelled."
+    # No extra confirm: the review card above is the confirmation, same as
+    # the panel installer.
 
     do_install
 }

@@ -38,6 +38,7 @@ PURGE="${OVN_PURGE:-0}"
 JSON="${OVN_JSON:-0}"
 QUIET="${OVN_QUIET:-0}"
 FIX=0
+SHOW_ALL=0
 PIN=""
 LOGS_ARG=""
 AUTO_BACKUP_ACTION="" BACKUP_TIME="" BACKUP_KEEP=""
@@ -240,16 +241,19 @@ do_status() {
         fi
     fi
 
-    field "Installed" "$installed"
     if [[ "$installed" == "true" ]]; then
-        field "Mode"      "$mode"
-        field "Node"      "$node"
-        field "Version"   "${agent_version:-unknown}"
         field "Agent"     "$agent"
-        field "OpenVPN"   "$openvpn"
-        field "API port"  "$port"
-        field "TLS"       "$tls"
         field "Health"    "$health"
+        field "Version"   "${agent_version:-unknown}"
+        field "OpenVPN"   "$openvpn"
+        if [[ "$SHOW_ALL" -eq 1 ]]; then
+            field "Node"      "$node"
+            field "Mode"      "$mode"
+            field "API port"  "$port"
+            field "TLS"       "$tls"
+        fi
+    else
+        field "Installed" "no"
     fi
 
     emit_result true status \
@@ -484,6 +488,9 @@ backup_submenu() {
 
 manager_menu() {
     while true; do
+        # Clear between menus so each screen is one clean view; never when
+        # output is piped or --json is in play.
+        if is_tty && [[ "$JSON" -eq 0 ]]; then command clear >/dev/null 2>&1 || true; fi
         line ""
         line "  ${B}ovnode — node manager${NC}  ${GY}v${VERSION}${NC}"
         line "  ${WH}1${NC}) Status"
@@ -748,7 +755,8 @@ show_help() {
 
   Usage:
     ovn                         Interactive numbered menu
-    ovn status [--json]         Report install state
+    ovn status [--json]         Agent, health, version and VPN state
+    ovn status --all            Also show node, mode, port and TLS
     ovn update                  Update via install.sh (with backup)
     ovn start|stop|restart      Control the node agent service
     ovn restart-vpn             Restart/reload OpenVPN
@@ -770,6 +778,7 @@ show_help() {
     --keep N            backup: keep newest N tarballs
     -v | --version      update: install this release instead
     --fix               doctor: apply safe automatic fixes
+    -a, --all            status: include node, mode, port and TLS
     --help | -h         This help
 
   Update and uninstall are implemented in install.sh — this script
@@ -808,6 +817,7 @@ parse_args() {
             --purge)      PURGE=1; shift ;;
             --json|-j)    JSON=1; YES=1; shift ;;
             --fix)        FIX=1; shift ;;
+            -a|--all)     SHOW_ALL=1; shift ;;
             -v|--version) eval "$need2"; PIN="$2"; shift 2 ;;
             *)            die "Unknown option: $1 (ovn help for usage)" "$EX_USAGE" ;;
         esac

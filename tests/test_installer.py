@@ -620,7 +620,6 @@ def test_installer_design_language_matches_panel():
         "Step 1/4",
         "verified release",
         "Ready — save this login",
-        "Proceed with installation?",
         "Options (every option has an OVN_* env equivalent; CLI wins):",
     ):
         assert token in content, f"design drift: {token}"
@@ -631,3 +630,16 @@ def test_installer_design_language_matches_panel():
         "v$VERSION ($SRC)",
     ):
         assert retired not in content, f"retired wording back: {retired}"
+
+
+def test_banner_tagline_only_for_fresh_install():
+    """The tagline advertises a fresh install, not an update or uninstall."""
+    content = open(INSTALLER, encoding="utf-8").read()
+    assert 'install) subtitle="Secure VPN node — up and running in a few minutes"' in content
+    assert '*)      subtitle="Secure VPN node"' in content
+
+
+def test_no_extra_install_confirmation():
+    """The panel asks no extra question; the review card is the confirmation."""
+    content = open(INSTALLER, encoding="utf-8").read()
+    assert "Proceed with installation?" not in content
