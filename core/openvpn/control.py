@@ -27,6 +27,7 @@ from core.openvpn import dns as dns_policy
 from core.openvpn import ipv6 as ipv6_policy
 from core.openvpn import ports as ports_policy
 from core.openvpn import store
+from core.openvpn.pki import _node_public_ip
 
 logger = logging.getLogger("ovnode.openvpn")
 
@@ -375,7 +376,10 @@ def change_config(request) -> bool:
         # Rebuild the full `remote` block. Without a new tunnel address,
         # keep the one from the first existing remote line.
         if not tunnel_addr:
-            tunnel_addr = ports_policy.remote_address(template) or "UPDATE_VIA_PANEL"
+            tunnel_addr = ports_policy.remote_address(template)
+            if not tunnel_addr or tunnel_addr == "UPDATE_VIA_PANEL":
+                # Placeholder must never reach a client config.
+                tunnel_addr = _node_public_ip()
         template, _ = ports_policy.rewrite_remote_lines(
             template, tunnel_addr, ovpn_port, ports_policy.effective(ovpn_port)
         )

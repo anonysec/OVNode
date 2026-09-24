@@ -328,7 +328,11 @@ def set_extra_ports(primary: int, raw: object) -> tuple[bool, str]:
         path = template_path()
         with open(path, encoding="utf-8") as f:
             template = f.read()
-        address = remote_address(template) or "UPDATE_VIA_PANEL"
+        address = remote_address(template)
+        if not address or address == "UPDATE_VIA_PANEL":
+            from core.openvpn.pki import _node_public_ip
+
+            address = _node_public_ip()
         new_template, template_changed = rewrite_remote_lines(template, address, primary, extras)
         if template_changed:
             _atomic_write(path, new_template)

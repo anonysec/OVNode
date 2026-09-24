@@ -211,6 +211,30 @@ def _extra_vpn_ports() -> list[int]:
     return parse_extra_ports(os.getenv("OVNODE_EXTRA_PORTS", ""), _openvpn_port())
 
 
+def _node_public_ip() -> str:
+    """This node's first non-loopback IPv4 address.
+
+    Used when the panel has not pushed a tunnel address yet, so a generated
+    .ovpn is immediately usable instead of carrying a placeholder.
+    """
+    import socket
+    import subprocess
+
+    try:
+        out = subprocess.run(
+            ["hostname", "-I"], capture_output=True, text=True, timeout=3, check=False
+        ).stdout.split()
+        for addr in out:
+            if not addr.startswith("127.") and ":" not in addr:
+                return addr
+    except (OSError, subprocess.SubprocessError):
+        pass
+    try:
+        return socket.gethostbyname(socket.gethostname())
+    except OSError:
+        return "127.0.0.1"
+
+
 def _remote_lines(tunnel_addr: str, primary_port: int) -> str:
     """One `remote` line per reachable port — clients fail over in order."""
     ports = [primary_port, *_extra_vpn_ports()]
@@ -710,7 +734,12 @@ def _ensure_client_template() -> None:
         return
     port = _openvpn_port()
     proto = _fresh_proto()
-    tunnel_addr = os.getenv("TUNNEL_ADDRESS", "UPDATE_VIA_PANEL")
+    tunnel_addr = os.getenv("TUNNEL_ADDRESS", "").strip()
+    if not tunnel_addr:
+        # Never ship the "UPDATE_VIA_PANEL" placeholder to a client: fall
+        # back to this node's own public address so the profile is usable
+        # immediately; the panel overwrites it whenever it pushes config.
+        tunnel_addr = _node_public_ip()
     content = f"""client
 dev tun
 proto {proto}
