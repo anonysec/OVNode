@@ -249,3 +249,20 @@ def test_rollback_refuses_during_interrupted_update():
     """Rollback must not fight an interrupted transaction."""
     content = MANAGER_PATH.read_text(encoding="utf-8")
     assert "update-maintenance" in content.split("do_rollback()")[1].split("# ──")[0]
+
+
+def test_status_is_concise_and_all_is_opt_in():
+    """status answers 'is it up?'; node/mode/port/TLS need --all."""
+    with open(MANAGER, encoding="utf-8") as f:
+        content = f.read()
+    src = content.split("do_status()")[1].split("\n}")[0]
+    assert '[[ "$SHOW_ALL" -eq 1 ]]' in src
+    assert "-a|--all" in content
+    for row in ('field "Agent"', 'field "Health"', 'field "Version"', 'field "OpenVPN"'):
+        assert row in src, row
+
+
+def test_manager_menu_clears_between_screens():
+    with open(MANAGER, encoding="utf-8") as f:
+        content = f.read()
+    assert "command clear" in content.split("manager_menu()")[1].split("\n}")[0]
