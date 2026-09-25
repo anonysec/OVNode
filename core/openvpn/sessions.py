@@ -14,6 +14,7 @@ pool-IP keying.
 from __future__ import annotations
 
 import glob
+import json
 import os
 import re
 import shutil
@@ -24,7 +25,7 @@ from collections import Counter
 from typing import Any
 
 from core.logger import logger
-from core.openvpn.store import SESSIONS_DIR
+from core.openvpn.store import OVNODE_DIR, SESSIONS_DIR
 from core.validation import _CLIENT_NAME_RE, _SIMPLE_ID_RE, _UUID_RE
 
 _OPENVPN_ROOT = os.getenv("OVNODE_OPENVPN_ROOT", "/etc/openvpn")
@@ -82,13 +83,16 @@ _TLS_ERROR_RE = re.compile(
     r"(TLS Error|Auth Failed|VERIFY ERROR|CRL has expired|certificate revoked|SSL error)",
     re.IGNORECASE,
 )
-# `log-timestamp` (server.conf) prefixes each openvpn.log line:
-# "Fri Sep 25 01:23:45 2026 TLS Error: ..." — without it ts stays 0 and the
-# panel shows the event as "time unknown" instead of inventing a time.
+# Some builds DO stamp the log ("Fri Sep 25 01:23:45 2026 TLS Error: ...").
+# Ours do not (log-append + --suppress-timestamps), so the prefix is optional
+# and the observed first/last-seen times are used instead.
 _OPENVPN_TS_RE = re.compile(
     r"^[A-Z][a-z]{2}\s+([A-Z][a-z]{2})\s+(\d{1,2})\s+(\d{2}:\d{2}:\d{2})\s+(\d{4})\s+(.*)$"
 )
 _PEER_RE = re.compile(r"\[AF_INET6?\](\d{1,3}(?:\.\d{1,3}){3}(?::\d+)?|\S+:\d+)")
+# Agent-owned state (per-failure first/last-seen times) lives beside the
+# per-user and per-session trees, not in the user's data dir.
+_STATE_DIR = os.path.join(OVNODE_DIR, "state")
 
 _mgmt_available_at = 0.0
 # Tri-state availability probe: None = unchecked, True/False = cached.
@@ -254,60 +258,150 @@ def _classify_reject(message: str) -> tuple[str, str, str]:
     return "event", _SEVERITY_POLICY, "session event"
 
 
-def _openvpn_log_events(hours: int) -> list[dict[str, Any]]:
-    """Real TLS/auth failures from the OpenVPN log (the danger bucket).
-
-    The max-login journal never sees these: a bad certificate or a failed
-    handshake never reaches client-connect, so nothing else in the node can
-    report them.
-    """
+def _openvpn_log_lines() -> list[str]:
+    """Tail of the OpenVPN log (the only place its output lands)."""
     path = os.path.join(_OPENVPN_ROOT, "server", "openvpn.log")
     try:
         size = os.path.getsize(path)
         with open(path, encoding="utf-8", errors="ignore") as f:
             # Tail only: the log is append-only and unbounded, and the panel
             # polls this on a timer.
-            f.seek(max(0, size - 512 * 1024))
-            if size > 512 * 1024:
+            f.seek(max(0, size - 256 * 1024))
+            if size > 256 * 1024:
                 f.readline()  # drop the partial first line
-            raw = f.read()
+            return f.read().splitlines()
     except OSError:
         return []
 
+
+def _tls_seen_path() -> str:
+    return os.path.join(_STATE_DIR, "tls_seen.json")
+
+
+def _load_tls_seen() -> dict[str, dict[str, float]]:
+    try:
+        with open(_tls_seen_path(), encoding="utf-8") as f:
+            data = json.load(f)
+        if isinstance(data, dict):
+            return {str(k): v for k, v in data.items() if isinstance(v, dict)}
+    except (OSError, ValueError):
+        pass
+    return {}
+
+
+def _save_tls_seen(seen: dict[str, dict[str, float]]) -> None:
+    try:
+        os.makedirs(_STATE_DIR, exist_ok=True)
+        tmp = _tls_seen_path() + ".tmp"
+        with open(tmp, "w", encoding="utf-8") as f:
+            json.dump(seen, f)
+        os.replace(tmp, _tls_seen_path())
+        os.chmod(_tls_seen_path(), 0o600)
+    except OSError as e:
+        logger.debug("could not persist TLS seen-state: %s", e)
+
+
+def _openvpn_log_events(hours: int) -> list[dict[str, Any]]:
+    """Real TLS/auth failures from the OpenVPN log (the danger bucket).
+
+    The max-login journal never sees these: a bad certificate or a failed
+    handshake never reaches client-connect, so nothing else in the node can
+    report them.
+
+    The log carries no timestamps: OpenVPN writes through `log-append`, so its
+    output never reaches the journal, and the distribution unit starts it with
+    --suppress-timestamps. There is no option to stamp the file (verified
+    against OpenVPN 2.7: `log-timestamp` is not a directive and refuses to
+    start). So the times here are the ones *this agent observed* — first seen
+    and last seen per distinct failure, kept in a small state file. Honest, and
+    identical under systemd, Docker or a bare daemon.
+    """
     now = time.time()
     window = max(1, min(int(hours or 8), 24)) * 3600
-    events: list[dict[str, Any]] = []
-    for line in raw.splitlines():
+    fingerprints: dict[str, dict[str, Any]] = {}
+    for line in _openvpn_log_lines():
         if not _TLS_ERROR_RE.search(line):
             continue
-        ts = 0.0
-        m = _OPENVPN_TS_RE.match(line)
-        message = line
-        if m:
+        peer = _PEER_RE.search(line)
+        peer_text = peer.group(1) if peer else "?"
+        # Peer + kind is the identity that matters: one scanner retrying is one
+        # problem, not N log lines.
+        key = f"{peer_text}|{'auth' if 'Auth Failed' in line else 'tls'}"
+        detail = line.split(": ", 1)[-1][:160] or line[:160]
+        stamped = _OPENVPN_TS_RE.match(line)
+        line_ts = 0.0
+        if stamped:
             from datetime import datetime
 
+            month, day, clock, year = stamped.group(1, 2, 3, 4)
             try:
-                dt = datetime.strptime(
-                    f"{m.group(4)} {m.group(1)} {m.group(2)} {m.group(3)}", "%Y %b %d %H:%M:%S"
-                ).astimezone()
-                ts = dt.timestamp()
+                line_ts = (
+                    datetime.strptime(f"{year} {month} {day} {clock}", "%Y %b %d %H:%M:%S")
+                    .astimezone()
+                    .timestamp()
+                )
             except ValueError:
-                ts = 0.0
-            message = m.group(5)
-        if ts and now - ts > window:
-            continue
-        peer = _PEER_RE.search(message)
+                line_ts = 0.0
+            # A stamped line can be aged out exactly. An unstamped one cannot:
+            # it is in the log right now, and first/last-seen is all we know.
+            if line_ts and now - line_ts > window:
+                continue
+        entry = fingerprints.get(key)
+        if entry is None:
+            fingerprints[key] = {
+                "count": 1,
+                # A stamped build gives the exact time; otherwise the time this
+                # agent first observed the failure.
+                "first": line_ts or now,
+                "last": line_ts or now,
+                "peer": peer_text,
+                "reason": detail,
+            }
+        else:
+            entry["count"] += 1
+            if line_ts:
+                entry["last"] = max(entry["last"], line_ts)
+                entry["first"] = min(entry["first"], line_ts) if entry["first"] else line_ts
+            else:
+                entry["last"] = now
+    if not fingerprints:
+        # Nothing in the log: forget what we saw, so a failure that stopped
+        # does not stay "ongoing" forever.
+        _save_tls_seen({})
+        return []
+
+    seen = _load_tls_seen()
+    events: list[dict[str, Any]] = []
+    for key, entry in fingerprints.items():
+        prior = seen.get(key) or {}
+        # A stamped line is authoritative; otherwise keep the first time this
+        # agent saw this failure so the panel can show a stable "since".
+        first = entry["first"] or float(prior.get("first") or 0) or now
+        last = max(entry["last"], float(prior.get("last") or 0))
+        # Present in this poll AND in the previous one: still happening.
+        ongoing = bool(prior) and (now - float(prior.get("last") or 0)) <= window / 2
         events.append(
             {
-                "ts": ts,
+                "ts": first,
+                "last_seen": last,
+                "ongoing": ongoing,
+                "count": entry["count"],
                 "cn": "",
-                "action": "tls_auth" if "Auth Failed" in message else "tls",
+                "action": "tls_auth" if key.endswith("|auth") else "tls",
                 "severity": _SEVERITY_FAILURE,
-                "reason": message.split(": ", 1)[-1][:160] or message[:160],
-                "peer": peer.group(1) if peer else "",
+                "reason": entry["reason"],
+                "peer": entry["peer"],
                 "source": "openvpn",
             }
         )
+    # Bounded by construction: whatever is not in this poll is forgotten.
+    _save_tls_seen(
+        {
+            key: {"first": entry["first"], "last": entry["last"]}
+            for key, entry in fingerprints.items()
+        }
+    )
+    events.sort(key=lambda e: e["ts"], reverse=True)
     return events
 
 
@@ -373,6 +467,10 @@ def user_diagnostics(common_name: str | None = None, hours: int = 8) -> dict[str
         events.append(
             {
                 "ts": ts,
+                "last_seen": ts,
+                # The hook knows nothing beyond this line, so the panel decides
+                # "ongoing" from the timestamp.
+                "ongoing": None,
                 "cn": cn,
                 "action": action,
                 "severity": severity,

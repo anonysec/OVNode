@@ -10,8 +10,11 @@ reach the hook at all. These tests pin the split so the panel's "auth errors"
 badge can only mean the dangerous bucket.
 """
 
+import json
 import time
 from datetime import datetime
+
+import pytest
 
 import core.openvpn.sessions as sessions
 
@@ -114,17 +117,19 @@ def test_journal_line_without_epoch_is_kept_but_undated(monkeypatch):
 
 def test_tls_log_scan_reports_real_handshake_failures(monkeypatch, tmp_path):
     monkeypatch.setattr(sessions, "_OPENVPN_ROOT", str(tmp_path))
+    monkeypatch.setattr(sessions, "_STATE_DIR", str(tmp_path / "state"))
     (tmp_path / "server").mkdir()
     log = tmp_path / "server" / "openvpn.log"
     stamp = datetime.now().astimezone().strftime("%a %b %d %H:%M:%S %Y")
     log.write_text(
         f"{stamp} TLS Error: incoming packet authentication failed from [AF_INET]9.9.9.9:1194\n"
         f"{stamp} SIGTERM[soft,remote-exit] received, client-instance exiting\n"
-        "Mon Jan  1 00:00:00 2001 TLS Error: certificate revoked\n"
+        "Mon Jan  1 00:00:00 2001 TLS Error: certificate revoked from [AF_INET]1.1.1.1:1194\n"
     )
 
     events = sessions._openvpn_log_events(8)
-    # The fresh TLS error is kept; the year-2001 one is outside the window.
+    # The SIGTERM line is not a failure; the 2001 line is a stamped old event
+    # and must be dropped, the current one kept.
     assert len(events) == 1
     ev = events[0]
     assert ev["severity"] == "failure"
@@ -133,16 +138,87 @@ def test_tls_log_scan_reports_real_handshake_failures(monkeypatch, tmp_path):
     assert ev["ts"] > time.time() - 600
 
 
+def test_tls_events_have_observed_times_without_log_stamps(monkeypatch, tmp_path):
+    """Our log carries no stamps (log-append + --suppress-timestamps), so the
+    agent must still give every event a real, stable time."""
+    monkeypatch.setattr(sessions, "_OPENVPN_ROOT", str(tmp_path))
+    monkeypatch.setattr(sessions, "_STATE_DIR", str(tmp_path / "state"))
+    (tmp_path / "server").mkdir()
+    log = tmp_path / "server" / "openvpn.log"
+    log.write_text(
+        "TLS Error: tls-crypt unwrapping failed from [AF_INET]185.200.116.40:45929\n"
+        "tls-crypt unwrap error: packet too short\n"
+    )
+
+    first = sessions._openvpn_log_events(8)
+    assert len(first) == 1
+    assert first[0]["ts"] > time.time() - 60
+    assert first[0]["last_seen"] >= first[0]["ts"]
+    assert first[0]["count"] == 1  # one failure, not two log lines
+    # First sighting is not yet "ongoing": no previous poll to compare with.
+    assert first[0]["ongoing"] is False
+
+    seen = sessions._tls_seen_path()
+    assert seen.endswith("tls_seen.json")
+    stored = json.loads((tmp_path / "state" / "tls_seen.json").read_text())
+    assert "185.200.116.40:45929|tls" in stored
+
+    # A second poll keeps the original first-seen time and marks it ongoing.
+    second = sessions._openvpn_log_events(8)
+    assert second[0]["ts"] == pytest.approx(first[0]["ts"])
+    assert second[0]["ongoing"] is True
+
+
+def test_tls_seen_state_drops_failures_that_stopped(monkeypatch, tmp_path):
+    monkeypatch.setattr(sessions, "_OPENVPN_ROOT", str(tmp_path))
+    monkeypatch.setattr(sessions, "_STATE_DIR", str(tmp_path / "state"))
+    (tmp_path / "server").mkdir()
+    log = tmp_path / "server" / "openvpn.log"
+    log.write_text("TLS Error: tls-crypt unwrapping failed from [AF_INET]10.0.0.1:1194\n")
+    sessions._openvpn_log_events(8)
+
+    log.write_text("")
+    assert sessions._openvpn_log_events(8) == []
+    assert json.loads((tmp_path / "state" / "tls_seen.json").read_text()) == {}
+
+
+def test_tls_seen_state_survives_a_corrupt_file(monkeypatch, tmp_path):
+    monkeypatch.setattr(sessions, "_OPENVPN_ROOT", str(tmp_path))
+    monkeypatch.setattr(sessions, "_STATE_DIR", str(tmp_path / "state"))
+    (tmp_path / "server").mkdir()
+    (tmp_path / "state").mkdir()
+    (tmp_path / "state" / "tls_seen.json").write_text("{not json")
+    log = tmp_path / "server" / "openvpn.log"
+    log.write_text("TLS Error: tls-crypt unwrapping failed from [AF_INET]10.0.0.2:1194\n")
+    events = sessions._openvpn_log_events(8)
+    assert len(events) == 1 and events[0]["ts"] > 0
+
+
 def test_missing_openvpn_log_is_not_an_error(monkeypatch, tmp_path):
     monkeypatch.setattr(sessions, "_OPENVPN_ROOT", str(tmp_path))
     assert sessions._openvpn_log_events(8) == []
 
 
-def test_pki_writes_log_timestamp(monkeypatch, tmp_path):
+def test_tls_seen_state_is_private(monkeypatch, tmp_path):
+    monkeypatch.setattr(sessions, "_OPENVPN_ROOT", str(tmp_path))
+    monkeypatch.setattr(sessions, "_STATE_DIR", str(tmp_path / "state"))
+    (tmp_path / "server").mkdir()
+    log = tmp_path / "server" / "openvpn.log"
+    log.write_text("TLS Error: tls-crypt unwrapping failed from [AF_INET]10.0.0.3:1194\n")
+    sessions._openvpn_log_events(8)
+    mode = (tmp_path / "state" / "tls_seen.json").stat().st_mode & 0o777
+    assert mode == 0o600
+
+
+def test_pki_does_not_write_log_timestamp(monkeypatch, tmp_path):
+    """Regression: `log-timestamp` is not an OpenVPN directive (2.7) and it
+    stopped the node from starting. tests/test_server_conf_options.py holds the
+    wider guard; this keeps the intent next to the TLS timing tests."""
     from core.openvpn import pki
 
     monkeypatch.setattr(pki, "_OPENVPN_ROOT", str(tmp_path))
     monkeypatch.setattr(pki, "SERVER_CONF", str(tmp_path / "server" / "server.conf"))
     monkeypatch.setattr(pki, "SCRIPTS_DIR", str(tmp_path / "scripts"))
     conf = pki._fresh_server_conf()
-    assert "log-timestamp" in conf.splitlines()
+    assert "log-append" in conf
+    assert "log-timestamp" not in conf.splitlines()
