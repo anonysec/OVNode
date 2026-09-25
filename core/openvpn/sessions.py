@@ -242,6 +242,10 @@ def _classify_reject(message: str) -> tuple[str, str, str]:
     for needle, action, severity, reason in _REJECT_REASONS:
         if needle in message:
             return action, severity, reason
+    # The strict max-login hook line carries the limit, not the words
+    # "max login reached": "CN=1 ... limit=2 active=2 status=2; REJECT".
+    if "REJECT" in message and re.search(r"\blimit=", message):
+        return "max_logins", _SEVERITY_POLICY, "max logins reached"
     if "REJECT" in message:
         # Unexplained reject: shown, but never counted as a security failure.
         return "other", _SEVERITY_WARN, "unclassified reject"

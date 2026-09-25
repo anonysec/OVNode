@@ -65,6 +65,22 @@ def test_fail_closed_and_takeover_failure_are_danger(monkeypatch):
     assert {e["action"] for e in data["events"]} == {"fail_closed", "takeover_failed"}
 
 
+def test_strict_max_login_line_is_policy(monkeypatch):
+    """The hook's strict-reject line says "limit=2", not "max login reached"."""
+    _journal(
+        monkeypatch,
+        [
+            _now_prefix(30)
+            + "CN=3 ip=1.2.3.4:5000 pool=10.8.0.3 limit=2 active=2 status=2; REJECT",
+        ],
+    )
+    data = sessions.user_diagnostics(hours=8)
+    assert data["auth_errors"] == 0
+    assert data["warn_rejects"] == 0
+    assert data["policy_rejects"] == 1
+    assert data["events"][0]["action"] == "max_logins"
+
+
 def test_unclassified_reject_is_warn_not_danger(monkeypatch):
     _journal(monkeypatch, [_now_prefix(5) + "CN=9 something unexpected happened; REJECT"])
     data = sessions.user_diagnostics(hours=8)
