@@ -68,11 +68,6 @@ class Settings(BaseSettings):
     # fail over automatically when an ISP blocks a port.
     ovnode_extra_ports: str = ""
 
-    @property
-    def extra_vpn_ports(self) -> list[int]:
-        """Parsed, validated, de-duplicated extra ports (primary excluded)."""
-        return parse_extra_ports(self.ovnode_extra_ports, self.openvpn_port)
-
     model_config = {"env_file": os.path.join(os.path.dirname(__file__), "../.env")}
 
     def __init__(self, **data):
