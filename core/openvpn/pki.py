@@ -590,10 +590,6 @@ def _fresh_server_conf() -> str:
         mgmt_line(),
         f"writepid {PID_FILE}",
         f"log-append {os.path.join(_OPENVPN_ROOT, 'server', 'openvpn.log')}",
-        # Without a timestamp prefix the panel cannot place a TLS/auth failure
-        # in time and has to show "time unknown"; the security view reads this
-        # log for real handshake failures.
-        "log-timestamp",
         # verb 2 on fresh installs: verb 3 logs every handshake at scale.
         # Existing installs keep their level — the tune-up never rewrites it.
         "verb 2",
@@ -663,10 +659,6 @@ def _ensure_server_conf() -> bool:
         # connect script and traffic parser.
         if not any(ln.strip().startswith("status ") for ln in lines):
             to_add.append(f"status {os.path.join(_OPENVPN_ROOT, 'server', 'status.log')} 5")
-        # Timestamped OpenVPN log lines: the security view can then show when
-        # a TLS/auth failure happened instead of an undated entry.
-        if "log-timestamp" not in existing:
-            to_add.append("log-timestamp")
         # If an existing `dh <path>` references a file that no longer exists
         # (e.g. the PKI was re-initialized), replace it with `dh none` so the
         # config keeps loading (ECDHE needs no static DH). Files that exist
