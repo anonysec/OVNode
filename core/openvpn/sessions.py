@@ -58,6 +58,38 @@ _journal_cache: dict[str, tuple[int, float, list[str]]] = {}
 # Management liveness is probed on every diagnostics poll — cache briefly.
 _MGMT_TTL = 8.0
 _mgmt_available_cached: bool | None = None
+
+# A reject is not automatically an authentication failure. The max-login hook
+# logs four distinct situations and the panel used to present all of them as
+# "auth errors", which made a deliberately disabled user's reconnect look like
+# a security incident. Severities: policy = expected, warn = unexplained,
+# failure = the node or the TLS layer is actually broken.
+_SEVERITY_POLICY = "policy"
+_SEVERITY_WARN = "warn"
+_SEVERITY_FAILURE = "failure"
+
+_REJECT_REASONS = (
+    ("is disabled", "disabled", _SEVERITY_POLICY, "user disabled in the panel"),
+    ("disabled;", "disabled", _SEVERITY_POLICY, "user disabled in the panel"),
+    ("USERS_DIR missing", "fail_closed", _SEVERITY_FAILURE, "node user state missing"),
+    ("could not verify", "takeover_failed", _SEVERITY_FAILURE, "old session not terminated"),
+    ("management unavailable", "mgmt_degraded", _SEVERITY_WARN, "management unavailable"),
+    ("GLOBAL_CHECK_FAILED", "global_check", _SEVERITY_POLICY, "panel policy check failed"),
+    ("GLOBAL_REJECT", "global_policy", _SEVERITY_POLICY, "panel rejected the connection"),
+    ("max login reached", "max_logins", _SEVERITY_POLICY, "max logins reached"),
+)
+_TLS_ERROR_RE = re.compile(
+    r"(TLS Error|Auth Failed|VERIFY ERROR|CRL has expired|certificate revoked|SSL error)",
+    re.IGNORECASE,
+)
+# `log-timestamp` (server.conf) prefixes each openvpn.log line:
+# "Fri Sep 25 01:23:45 2026 TLS Error: ..." — without it ts stays 0 and the
+# panel shows the event as "time unknown" instead of inventing a time.
+_OPENVPN_TS_RE = re.compile(
+    r"^[A-Z][a-z]{2}\s+([A-Z][a-z]{2})\s+(\d{1,2})\s+(\d{2}:\d{2}:\d{2})\s+(\d{4})\s+(.*)$"
+)
+_PEER_RE = re.compile(r"\[AF_INET6?\](\d{1,3}(?:\.\d{1,3}){3}(?::\d+)?|\S+:\d+)")
+
 _mgmt_available_at = 0.0
 # Tri-state availability probe: None = unchecked, True/False = cached.
 # In Docker there is no journald/journalctl at all — without this, every
@@ -173,6 +205,11 @@ def _journal_lines(hours: int) -> list[str]:
                     "--since",
                     f"{bounded} hours ago",
                     "--no-pager",
+                    # Epoch prefix: the panel showed a guessed year/time parsed
+                    # back out of the human-readable stamp, which was wrong for
+                    # any event near a new year. short-unix gives a real ts.
+                    "-o",
+                    "short-unix",
                 ],
                 text=True,
                 errors="ignore",
@@ -185,6 +222,89 @@ def _journal_lines(hours: int) -> list[str]:
     _journal_cache.clear()
     _journal_cache["last"] = (bounded, now, lines)
     return lines
+
+
+def _split_journal_line(line: str) -> tuple[float, str]:
+    """Return (epoch, message) for a `journalctl -o short-unix` line.
+
+    Falls back to (0, line) for any other format so a pre-existing/legacy
+    journal source can never crash or silently drop its events.
+    """
+    head, _, rest = line.partition(" ")
+    try:
+        return float(head), rest
+    except ValueError:
+        return 0.0, line
+
+
+def _classify_reject(message: str) -> tuple[str, str, str]:
+    """Map a max-login hook line to (action, severity, human reason)."""
+    for needle, action, severity, reason in _REJECT_REASONS:
+        if needle in message:
+            return action, severity, reason
+    if "REJECT" in message:
+        # Unexplained reject: shown, but never counted as a security failure.
+        return "other", _SEVERITY_WARN, "unclassified reject"
+    if "FAILED" in message:
+        return "check_failed", _SEVERITY_WARN, "policy check failed"
+    return "event", _SEVERITY_POLICY, "session event"
+
+
+def _openvpn_log_events(hours: int) -> list[dict[str, Any]]:
+    """Real TLS/auth failures from the OpenVPN log (the danger bucket).
+
+    The max-login journal never sees these: a bad certificate or a failed
+    handshake never reaches client-connect, so nothing else in the node can
+    report them.
+    """
+    path = os.path.join(_OPENVPN_ROOT, "server", "openvpn.log")
+    try:
+        size = os.path.getsize(path)
+        with open(path, encoding="utf-8", errors="ignore") as f:
+            # Tail only: the log is append-only and unbounded, and the panel
+            # polls this on a timer.
+            f.seek(max(0, size - 512 * 1024))
+            if size > 512 * 1024:
+                f.readline()  # drop the partial first line
+            raw = f.read()
+    except OSError:
+        return []
+
+    now = time.time()
+    window = max(1, min(int(hours or 8), 24)) * 3600
+    events: list[dict[str, Any]] = []
+    for line in raw.splitlines():
+        if not _TLS_ERROR_RE.search(line):
+            continue
+        ts = 0.0
+        m = _OPENVPN_TS_RE.match(line)
+        message = line
+        if m:
+            from datetime import datetime
+
+            try:
+                dt = datetime.strptime(
+                    f"{m.group(4)} {m.group(1)} {m.group(2)} {m.group(3)}", "%Y %b %d %H:%M:%S"
+                ).astimezone()
+                ts = dt.timestamp()
+            except ValueError:
+                ts = 0.0
+            message = m.group(5)
+        if ts and now - ts > window:
+            continue
+        peer = _PEER_RE.search(message)
+        events.append(
+            {
+                "ts": ts,
+                "cn": "",
+                "action": "tls_auth" if "Auth Failed" in message else "tls",
+                "severity": _SEVERITY_FAILURE,
+                "reason": message.split(": ", 1)[-1][:160] or message[:160],
+                "peer": peer.group(1) if peer else "",
+                "source": "openvpn",
+            }
+        )
+    return events
 
 
 def user_diagnostics(common_name: str | None = None, hours: int = 8) -> dict[str, Any]:
@@ -203,6 +323,11 @@ def user_diagnostics(common_name: str | None = None, hours: int = 8) -> dict[str
                                 keyed by panel USERNAME (it does
                                 ``auth_counts.get(u.name)``), so CNs are
                                 mapped to usernames here.
+    * ``events``              — structured, classified events (ts, cn, action,
+                                severity, reason, peer) for the panel's
+                                Security view. ``severity`` is policy / warn /
+                                failure; only ``failure`` counts as a real
+                                authentication or TLS problem.
     """
     live = _read_status_sessions()
     active = _read_active_files()
@@ -218,27 +343,68 @@ def user_diagnostics(common_name: str | None = None, hours: int = 8) -> dict[str
     rejects = Counter()
     global_rejects = Counter()
     auth_errors = Counter()
+    rejects_by_reason: Counter = Counter()
     last_errors: dict[str, str] = {}
+    last_event_ts: dict[str, float] = {}
+    events: list[dict[str, Any]] = []
     for line in _journal_lines(hours):
-        m = re.search(r"CN=([^ ]+).*?(GLOBAL_REJECT|LOCAL_REJECT|REJECT|GLOBAL_CHECK_FAILED)", line)
+        ts, message = _split_journal_line(line)
+        m = re.search(
+            r"CN=([^ ]+).*?(GLOBAL_REJECT|LOCAL_REJECT|REJECT|GLOBAL_CHECK_FAILED)", message
+        )
         if not m:
             continue
-        cn, action = m.group(1), m.group(2)
+        cn, hook_action = m.group(1), m.group(2)
         if cn_filter and cn != cn_filter:
             continue
+        action, severity, reason = _classify_reject(message)
         rejects[cn] += 1
-        if action == "GLOBAL_REJECT":
+        rejects_by_reason[reason] += 1
+        if hook_action == "GLOBAL_REJECT":
             global_rejects[cn] += 1
-        auth_errors[cn] += 1
-        last_errors[cn] = line
+        if severity == _SEVERITY_FAILURE:
+            auth_errors[cn] += 1
+        last_errors[cn] = message
+        last_event_ts[cn] = max(ts, last_event_ts.get(cn, 0.0))
+        events.append(
+            {
+                "ts": ts,
+                "cn": cn,
+                "action": action,
+                "severity": severity,
+                "reason": reason,
+                "peer": "",
+                "source": "mlogin",
+            }
+        )
+
+    # TLS/auth failures never reach the max-login hook, so they come from the
+    # OpenVPN log and are the only events that justify a danger badge.
+    tls_total = 0
+    for ev in _openvpn_log_events(hours):
+        if cn_filter:
+            continue
+        rejects_by_reason[ev["reason"]] += 1
+        auth_errors[""] += 1
+        tls_total += 1
+        events.append(ev)
+
+    events.sort(key=lambda e: float(e.get("ts") or 0), reverse=True)
+    policy_total = sum(1 for e in events if e.get("severity") == _SEVERITY_POLICY)
+    warn_total = sum(1 for e in events if e.get("severity") == _SEVERITY_WARN)
+    failure_total = sum(1 for e in events if e.get("severity") == _SEVERITY_FAILURE)
 
     # login_health_summary() looks auth counts up by username, so map CNs.
     from core.openvpn.users import display_name_for_cn
 
     auth_errors_by_cn: dict[str, int] = {}
     for cn, count in auth_errors.items():
-        key = display_name_for_cn(cn)
+        key = display_name_for_cn(cn) if cn else "(tls)"
         auth_errors_by_cn[key] = auth_errors_by_cn.get(key, 0) + count
+    rejects_by_cn: dict[str, int] = {}
+    for cn, count in rejects.items():
+        key = display_name_for_cn(cn)
+        rejects_by_cn[key] = rejects_by_cn.get(key, 0) + count
 
     return {
         "common_name": common_name,
@@ -251,9 +417,21 @@ def user_diagnostics(common_name: str | None = None, hours: int = 8) -> dict[str
         "live_count": len(live),
         "active_marker_count": len(active),
         "stale_marker_count": len(stale),
-        "auth_errors": sum(auth_errors.values()),
+        # Real authentication/TLS failures only — a disabled user's reconnect
+        # is a policy reject and must not raise this counter.
+        "auth_errors": failure_total,
         "auth_errors_by_cn": auth_errors_by_cn,
+        # Every event the panel can show: policy + warn + failure.
+        "total_events": policy_total + warn_total + failure_total,
+        "policy_rejects": policy_total,
+        "warn_rejects": warn_total,
+        "failures": failure_total,
+        "tls_failures": tls_total,
         "rejects": sum(rejects.values()),
+        "rejects_by_reason": dict(rejects_by_reason),
+        "rejects_by_cn": rejects_by_cn,
+        "last_event_ts": last_event_ts,
+        "events": events[:100],
         "global_rejects": sum(global_rejects.values()),
         "last_error": next(iter(last_errors.values()), None) if cn_filter else last_errors,
         "management_available": _management_available(),
