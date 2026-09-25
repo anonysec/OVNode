@@ -206,7 +206,12 @@ def test_missing_remote_block_is_inserted_after_client(root):
     (tmp_path / "server" / "client-common.txt").write_text("client\ndev tun\n")
     assert ports.set_extra_ports(1194, "443")[0] is True
     lines = (tmp_path / "server" / "client-common.txt").read_text().splitlines()
-    assert lines[:3] == ["client", "remote UPDATE_VIA_PANEL 1194", "remote UPDATE_VIA_PANEL 443"]
+    assert lines[0] == "client"
+    # Never the "UPDATE_VIA_PANEL" placeholder: fall back to this node's
+    # own public address so the profile is usable immediately.
+    assert all("UPDATE_VIA_PANEL" not in ln for ln in lines)
+    assert lines[1].startswith("remote ") and lines[1].endswith(" 1194")
+    assert lines[2].startswith("remote ") and lines[2].endswith(" 443")
 
 
 def test_cached_profiles_invalidated(root):
@@ -230,11 +235,10 @@ def test_template_generation_honours_state(root, monkeypatch):
     assert ports.set_extra_ports(1194, "443,8443")[0] is True
     template.unlink()
     pki._ensure_client_template()
-    assert _remotes(tmp_path) == [
-        "remote UPDATE_VIA_PANEL 1194",
-        "remote UPDATE_VIA_PANEL 443",
-        "remote UPDATE_VIA_PANEL 8443",
-    ]
+    remotes = _remotes(tmp_path)
+    assert len(remotes) == 3
+    assert all("UPDATE_VIA_PANEL" not in r for r in remotes)
+    assert [r.rsplit(" ", 1)[1] for r in remotes] == ["1194", "443", "8443"]
     # _fresh_server_conf() has no remote lines (ports live in the template);
     # it must keep generating cleanly while ports state exists.
     assert "remote " not in pki._fresh_server_conf()

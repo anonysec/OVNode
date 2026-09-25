@@ -67,7 +67,8 @@ tpl = read(CLIENT_TEMPLATE)
 ok("tls-version-min 1.3" in tpl, "tpl tls min")
 ok("cipher AES-256-GCM" not in tpl, "tpl legacy cipher dropped")
 ok("remote-cert-tls server" in tpl, "tpl remote-cert-tls")
-ok("remote UPDATE_VIA_PANEL 1194" in tpl, "tpl remote")
+ok("UPDATE_VIA_PANEL" not in tpl, "tpl remote is a real address, never the placeholder")
+ok("remote " in tpl and " 1194" in tpl, "tpl remote line present")
 
 # client .ovpn embeds tls-crypt
 from core.openvpn.users import create_user_on_server
@@ -187,3 +188,21 @@ def test_openvpn_pipeline():
         if r.stderr:
             print(r.stderr[-2000:])
         assert r.returncode == 0, f"pipeline subprocess failed (rc={r.returncode})"
+
+
+def test_generated_profile_never_contains_placeholder(monkeypatch, tmp_path):
+    """Regression: a client .ovpn shipped the literal 'UPDATE_VIA_PANEL'
+    remote when the panel had not pushed a tunnel address yet. The node
+    now falls back to its own public address."""
+    import core.openvpn.pki as pki
+
+    monkeypatch.setenv("TUNNEL_ADDRESS", "")
+    monkeypatch.setattr(pki, "_node_public_ip", lambda: "203.0.113.7")
+    monkeypatch.setattr(pki, "CLIENT_TEMPLATE", str(tmp_path / "client-common.txt"))
+    monkeypatch.setattr(pki, "_openvpn_port", lambda: 1194)
+    monkeypatch.setattr(pki, "_extra_vpn_ports", lambda: [])
+
+    pki._ensure_client_template()
+    written = (tmp_path / "client-common.txt").read_text(encoding="utf-8")
+    assert "UPDATE_VIA_PANEL" not in written
+    assert "remote 203.0.113.7 1194" in written
