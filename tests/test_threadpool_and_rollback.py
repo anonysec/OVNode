@@ -41,7 +41,8 @@ def test_cert_endpoints_offload_to_threadpool(monkeypatch):
     """Every blocking PKI worker must be invoked via run_in_threadpool."""
     from fastapi.concurrency import run_in_threadpool as real_run_in_threadpool
 
-    from core.api import auth, routes
+    from core.api import auth
+    from core.api.routes import users as routes
     from core.validation import DeleteResult
 
     threaded: list[str] = []

@@ -22,7 +22,7 @@ def _client():
 
 
 def test_renew_cert_success(monkeypatch):
-    from core.api import routes
+    from core.api.routes import config as routes
 
     calls: list[str] = []
 
