@@ -1,5 +1,24 @@
 # Changelog
 
+## 1.0.1 — 2026-09-25
+
+Everything merged after the v1.0.0 tag, validated live. The release
+tarball is the first one that actually contains it:
+
+- Installer/CLI parity with the panel flow, focused status, clear menus.
+- Generated client `.ovpn` never carries `UPDATE_VIA_PANEL`; falls back
+  to the node's own public address.
+- Connection rejects are classified (policy vs real failure); only
+  failures raise the auth-error counter. The strict max-login line
+  counts as policy. TLS/auth failures are scanned from the OpenVPN log
+  and timed by first/last-seen observation (no log-timestamp directive:
+  OpenVPN 2.7 rejects it and refuses to start).
+- Every generated server.conf directive is checked against the
+  installed OpenVPN's option list, so an invalid directive fails a test
+  instead of the node.
+
+Pairs with OVManager 1.0.2.
+
 ## 1.0.0 — unreleased
 
 Version reset: pre-publish cleanup. History was rewritten to a single identity, all prior releases/tags removed, numbering restarted at 1.0.0. Node redesign continues on `dev` before the first public release.
