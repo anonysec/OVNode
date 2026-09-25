@@ -333,11 +333,13 @@ def _openvpn_log_events(hours: int) -> list[dict[str, Any]]:
         if stamped:
             from datetime import datetime
 
+            month, day, clock, year = stamped.group(1, 2, 3, 4)
             try:
-                line_ts = datetime.strptime(
-                    f"{stamped.group(4)} {stamped.group(1)} {stamped.group(2)} {stamped.group(3)}",
-                    "%Y %b %d %H:%M:%S",
-                ).astimezone().timestamp()
+                line_ts = (
+                    datetime.strptime(f"{year} {month} {day} {clock}", "%Y %b %d %H:%M:%S")
+                    .astimezone()
+                    .timestamp()
+                )
             except ValueError:
                 line_ts = 0.0
             # A stamped line can be aged out exactly. An unstamped one cannot:
