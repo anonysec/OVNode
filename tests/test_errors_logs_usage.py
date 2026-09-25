@@ -21,7 +21,7 @@ def _client(**kwargs):
 def test_unhandled_error_returns_contract_shape_with_ref(monkeypatch):
     """Unhandled exceptions → HTTP 500 in the {success,msg,data} envelope
     with a searchable ref, never a leaked traceback."""
-    import core.api.routes as routes
+    import core.api.routes.stats as routes
 
     def boom():
         raise RuntimeError("kaboom secret-internal-detail")

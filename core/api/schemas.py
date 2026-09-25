@@ -50,6 +50,20 @@ class UserLimit(BaseModel):
     max_logins: int = Field(default=1, ge=0, le=1000)
 
 
+# Bulk limit sweep (POST /sync/users). Chunk cap keeps one panel sweep
+# from writing the store unbounded — the panel chunks before sending.
+BULK_LIMIT_MAX_ITEMS = 500
+
+
+class BulkLimitItem(BaseModel):
+    id: str
+    max_logins: int = Field(default=1, ge=0, le=1000)
+
+
+class BulkUserLimits(BaseModel):
+    users: list[BulkLimitItem] = Field(min_length=1, max_length=BULK_LIMIT_MAX_ITEMS)
+
+
 class ResponseModel(BaseModel):
     success: bool
     msg: str

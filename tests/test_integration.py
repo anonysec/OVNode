@@ -442,8 +442,13 @@ def test_status_update_without_max_logins_preserves_stored_limit(monkeypatch):
         calls.append((uid, limit))
         return True
 
-    monkeypatch.setattr("core.api.routes.set_user_limit", _fake_set_limit)
-    monkeypatch.setattr("core.api.routes.change_user_status_on_server", lambda uid, status: True)
+    # The split moved user routes to core.api.routes.users; the module that
+    # owns the function is the patch target (package namespace holds only a
+    # re-export copy — same patch-target rule as the panel's 1.0.3 lesson).
+    monkeypatch.setattr("core.api.routes.users.set_user_limit", _fake_set_limit)
+    monkeypatch.setattr(
+        "core.api.routes.users.change_user_status_on_server", lambda uid, status: True
+    )
     r = c.put("/sync/user", headers=headers, json={"id": "990001", "status": "activate"})
     assert r.status_code == 200
     assert r.json()["success"] is True
