@@ -49,3 +49,6 @@ PROJECT_PLAN.md
 *_PLAN.md
 .plan/
 .local/
+
+# Generated (recreate with `make openapi`)
+scripts/openapi.json
