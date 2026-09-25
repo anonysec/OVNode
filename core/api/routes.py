@@ -31,6 +31,7 @@ Authentication: the panel sends the node API key in the ``key`` header.
 """
 
 import os
+import subprocess
 import time
 
 import psutil
@@ -206,8 +207,6 @@ def _read_cert_expiry() -> str | None:
 
 def _openssl_enddate(cert_file: str) -> str | None:
     """Parse a PEM cert's notAfter into an ISO date (one openssl fork)."""
-    import subprocess
-
     out = subprocess.run(
         ["openssl", "x509", "-enddate", "-noout", "-in", cert_file],
         capture_output=True,

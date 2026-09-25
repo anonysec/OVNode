@@ -18,6 +18,9 @@ Responsibilities (all idempotent, safe to call on every startup):
 """
 
 import os
+import secrets
+import shutil
+import socket
 import subprocess
 from datetime import UTC
 
@@ -45,8 +48,6 @@ MGMT_PASS_FILE = os.path.join(_OPENVPN_ROOT, "server", "mgmt-pass")
 
 def ensure_mgmt_password() -> str:
     """Create the mgmt password file (0600) if missing; return its path."""
-    import secrets
-
     try:
         if os.path.exists(MGMT_PASS_FILE):
             os.chmod(MGMT_PASS_FILE, 0o600)
@@ -217,9 +218,6 @@ def _node_public_ip() -> str:
     Used when the panel has not pushed a tunnel address yet, so a generated
     .ovpn is immediately usable instead of carrying a placeholder.
     """
-    import socket
-    import subprocess
-
     try:
         out = subprocess.run(
             ["hostname", "-I"], capture_output=True, text=True, timeout=3, check=False
@@ -243,8 +241,6 @@ def _remote_lines(tunnel_addr: str, primary_port: int) -> str:
 
 def _openvpn_bin() -> str:
     """Locate the openvpn binary (PATH or common locations)."""
-    import shutil
-
     found = shutil.which("openvpn")
     if found:
         return found
