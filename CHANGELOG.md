@@ -1,5 +1,18 @@
 # Changelog
 
+## 1.0.2 — 2026-09-25
+
+Structure + sync-wave changes (pairs with OVManager 1.0.6):
+
+- `core/api/routes.py` (546 lines) split into a package:
+  system (health/status/logs + cert-expiry helpers), config
+  (config/update/restart/renew-cert), stats (usage/sessions), users
+  (user CRUD, limits, disconnect, reset, .ovpn download). Same
+  `/sync` contract, 14 routes unchanged.
+- New `POST /sync/users`: bulk max-login limits in one call
+  (cap 500; per-item failures reported in `data.failed`). Replaces the
+  panel sweep's per-user PUT fan-out (N×M → N requests per sweep).
+
 ## 1.0.1 — 2026-09-25
 
 Everything merged after the v1.0.0 tag, validated live. The release
