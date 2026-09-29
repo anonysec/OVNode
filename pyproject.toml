@@ -1,0 +1,42 @@
+# Copyright (c) 2026 anonysec
+# SPDX-License-Identifier: MIT
+
+[project]
+name = "ovnode"
+version = "1.0.0"
+description = "vpn backend manager for ovmanager"
+readme = "README.md"
+requires-python = ">=3.12"
+dependencies = [
+    "fastapi>=0.141",
+    "uvicorn[standard]>=0.52",
+    "psutil>=7.2",
+    "pydantic-settings>=2.15",
+]
+
+[project.optional-dependencies]
+dev = [
+    "pytest>=9.1",
+    "pytest-asyncio>=1.4",
+    # httpx2, not httpx: starlette.testclient imports it first — with only
+    # httpx present it emits a StarletteDeprecationWarning (same reasoning
+    # as OVManager's backend dependencies).
+    "httpx2>=0.0.4",
+    "ruff>=0.16",
+]
+
+[tool.pytest.ini_options]
+asyncio_mode = "auto"
+testpaths = ["tests"]
+pythonpath = ["."]
+
+[tool.ruff]
+line-length = 100
+target-version = "py312"
+
+[tool.ruff.lint]
+select = ["E", "F", "W", "I", "UP", "B", "C4"]
+
+[tool.ruff.format]
+quote-style = "double"
+docstring-code-format = true

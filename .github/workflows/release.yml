@@ -1,0 +1,68 @@
+# Copyright (c) 2026 anonysec
+# SPDX-License-Identifier: MIT
+
+name: Release assets
+
+# Builds the versioned install tarball and attaches it to the published
+# GitHub Release, so install.sh --from-release (the default) can install
+# without git.
+on:
+  release:
+    types: [published]
+  workflow_dispatch:
+
+jobs:
+  # Gates the upload on the suite ci.yml runs. It repeats that job rather than
+  # calling it via workflow_run, because a release can be published without a
+  # CI run on the same commit, and a workflow_run gate that never fires is a
+  # gate that never blocks.
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: System dependencies
+        run: |
+          sudo apt-get update -qq
+          sudo apt-get install -y -qq openvpn easy-rsa iptables iproute2 logrotate
+      - run: pip install uv
+      - run: uv sync --extra dev
+      - name: Create .env for tests
+        run: |
+          printf 'API_KEY=test_ci_key_for_import_only\n' > .env
+      - name: Shell syntax
+        run: bash -n install.sh manager.sh scripts/lib/*.sh
+      - name: Tests
+        # --no-sync / -rs: see the same step in ci.yml.
+        run: uv run --no-sync pytest tests/ -q -rs
+
+  assets:
+    needs: test
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Pack release tarball
+        run: |
+          VER="$(grep -m1 '^version' pyproject.toml | cut -d'"' -f2)"
+          STAGE="$(mktemp -d)"
+          git archive HEAD | tar -x -C "$STAGE"
+          # --owner/--group: the runner's uid would otherwise be baked into the
+          # archive and restored by a root extract on the target host.
+          tar --owner=0 --group=0 -czf "ovnode-${VER}.tar.gz" -C "$STAGE" .
+          sha256sum "ovnode-${VER}.tar.gz" > "ovnode-${VER}.sha256"
+          echo "VER=${VER}" >> "$GITHUB_ENV"
+
+      - name: Upload assets
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          gh release upload "v${VER}" "ovnode-${VER}.tar.gz" "ovnode-${VER}.sha256" --clobber

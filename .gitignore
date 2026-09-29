@@ -1,0 +1,57 @@
+# Python
+__pycache__/
+*.py[codz]
+*.egg-info/
+dist/
+build/
+*.egg
+
+# Virtual environments
+.venv/
+venv/
+env/
+
+# IDE
+.vscode/
+.idea/
+*.swp
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Environment
+.env
+.env.*
+
+# Database
+data/*.db
+data/*.db-shm
+data/*.db-wal
+
+# Ruff
+.ruff_cache/
+
+# uv
+.python-version
+
+# Test fixtures
+.test-openvpn/
+
+# Logs
+*.log
+
+# Pre-commit
+.pre-commit-cache/
+
+# Local planning / handoff (never publish)
+PROJECT_PLAN.md
+*_PLAN.md
+.plan/
+.local/
+
+# graphify knowledge graph output (local trial, never publish)
+graphify-out/
+
+# Generated (recreate with `make openapi`)
+scripts/openapi.json

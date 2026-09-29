@@ -1,0 +1,67 @@
+# Scheduled staleness gate for the published knowledge graph.
+#
+# The graph at https://ai.imkoris.info/graph/ovnode/ is rebuilt by hand: run
+# graphify, then copy graph.html -> index.html and GRAPH_REPORT.md into
+# /var/www/ai-graph/ovnode/. Nothing notices when a release ships and the graph
+# does not, so the published graph silently falls behind. This workflow is the
+# thing that notices.
+#
+# Why this is not just "checkout, then read graphify-out/graph.json":
+#
+#   * graphify-out/ is gitignored (.gitignore) and untracked, so a checkout does
+#     not contain graphify-out/graph.json at all.
+#   * graph.json is not published either -- /graph/ovnode/graph.json is a 404.
+#     Only index.html and GRAPH_REPORT.md are reachable, and index.html (which
+#     is byte-identical to graph.html) embeds RAW_NODES/RAW_EDGES but strips
+#     built_at_commit.
+#
+# So the reachable source of truth is resolved in this order, by
+# .github/scripts/graph_staleness.py:
+#
+#   1. graphify-out/graph.json -> built_at_commit. Exact, and the intended
+#      check, but only when the box's filesystem is visible: a self-hosted
+#      runner, or a rebuild artifact from graph-rebuild.yml unpacked first.
+#   2. the "Built from commit" line in the published GRAPH_REPORT.md. Same
+#      provenance, reachable over HTTPS from any runner. graphify's own
+#      deterministic `cluster-only --no-label` writes that section; the
+#      currently published reports predate it, which is why (3) exists.
+#   3. no provenance anywhere -> re-derive HEAD with the deterministic, keyless
+#      AST pass and require every HEAD node id to appear in the published
+#      graph. A node that exists at HEAD but not in the published graph is
+#      proof the published graph predates it.
+#
+# The script fails, naming both commits, whenever it can name them, and fails
+# with the evidence instead of passing when it cannot. Full reasoning lives in
+# the script docstring.
+#
+# Scheduled weekly rather than per-push on purpose: the graph is republished at
+# release time, so a per-push check would be red between every release by
+# construction and would be tuned out.
+
+name: Graph staleness
+
+on:
+  schedule:
+    - cron: "0 6 * * 1"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  staleness:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: Install graphify
+        # Needed for the content fallback, which runs the deterministic AST pass.
+        # No API key and no LLM is involved: `--code-only` reports "no LLM
+        # extraction" and skips every doc/paper/image.
+        run: |
+          pip install graphifyy
+          command -v graphify
+      - name: Compare the published graph against HEAD
+        run: python3 .github/scripts/graph_staleness.py --repo-root .

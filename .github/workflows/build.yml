@@ -1,0 +1,36 @@
+# Copyright (c) 2026 anonysec
+# SPDX-License-Identifier: MIT
+
+name: Build and Test OV-Node
+
+on:
+  release:
+    types: [published]
+  workflow_dispatch:
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Install uv
+        run: pip install uv
+
+      - name: Create .env file
+        run: |
+          printf 'API_KEY=test_ci_key_for_import_only\n' > .env
+
+      - name: Sync dependencies
+        run: uv sync
+
+      - name: Test project startup
+        run: |
+          timeout 5s uv run main.py || true

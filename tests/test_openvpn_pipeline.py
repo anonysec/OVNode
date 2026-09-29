@@ -1,0 +1,226 @@
+# Copyright (c) 2026 anonysec
+# SPDX-License-Identifier: MIT
+
+"""Functional test of the overhauled OpenVPN PKI/config pipeline.
+
+Runs the whole pipeline in an isolated subprocess with a dedicated
+OVNODE_OPENVPN_ROOT, so module-level path constants in core.openvpn.pki freeze
+with the correct env and no state leaks into (or from) other test modules
+which share this pytest process.
+"""
+
+import os
+import subprocess
+import sys
+import tempfile
+
+CHECK_SCRIPT = r"""
+import os, sys
+
+os.environ["OPENVPN_PORT"] = "1194"
+os.environ["API_KEY"] = "test-api-key-1234567890"
+
+from core.openvpn.pki import init_pki, SERVER_CONF, CLIENT_TEMPLATE, TLS_KEY, PKI_DIR
+
+PASS = FAIL = 0
+def ok(cond, name):
+    global PASS, FAIL
+    if cond:
+        PASS += 1
+    else:
+        FAIL += 1
+        print(f"FAIL {name}")
+def read(p):
+    with open(p, encoding="utf-8") as f:
+        return f.read()
+
+init_pki()
+
+# fresh PKI
+ok(os.path.exists(os.path.join(PKI_DIR, "ca.crt")), "ca cert")
+ok(os.path.exists(os.path.join(PKI_DIR, "issued", "server.crt")), "server cert")
+ok(os.path.exists(TLS_KEY), "tls key")
+
+conf = read(SERVER_CONF)
+ok("management 127.0.0.1 7505" in conf, "management")
+ok("management-client-user nobody" not in conf, "mgmt user dropped")
+ok("management-client-group nogroup" not in conf, "mgmt group dropped")
+ok("tls-crypt" in conf, "tls-crypt")
+ok("dh none" in conf, "dh none")
+ok("tls-version-min 1.3" in conf, "tls min 1.3")
+ok("cipher AES-256-GCM" not in conf, "legacy cipher dropped")
+ok("ncp-ciphers" not in conf, "legacy ncp dropped")
+ok("mssfix 1360" in conf, "mssfix")
+ok("allow-compression no" in conf, "no compression")
+ok('push "block-outside-dns"' in conf, "dns leak guard")
+ok("keepalive 10 60" in conf, "keepalive 60")
+ok("remote-cert-tls client" in conf, "remote-cert-tls")
+ok("status-version 3" in conf, "status-version")
+ok("writepid" in conf, "writepid")
+ok("client-connect" in conf and "client-disconnect" in conf, "hooks")
+ok("crl-verify" in conf, "crl")
+ok("duplicate-cn" in conf and "max-clients 250" in conf, "mlogin+cap")
+ok("explicit-exit-notify 0" in conf, "exit notify")
+ok("\nverb 2\n" in conf, "verb 2 fresh")
+
+tpl = read(CLIENT_TEMPLATE)
+ok("tls-version-min 1.3" in tpl, "tpl tls min")
+ok("cipher AES-256-GCM" not in tpl, "tpl legacy cipher dropped")
+ok("remote-cert-tls server" in tpl, "tpl remote-cert-tls")
+ok("UPDATE_VIA_PANEL" not in tpl, "tpl remote is a real address, never the placeholder")
+ok("remote " in tpl and " 1194" in tpl, "tpl remote line present")
+
+# client .ovpn embeds tls-crypt
+from core.openvpn.users import create_user_on_server
+from core.openvpn.store import ovpn_path, get_limit
+uid = "testuser42"
+ok(create_user_on_server(uid, "Test User", max_logins=2), "create user")
+ovpn = read(ovpn_path(uid))
+ok("<tls-crypt>" in ovpn and "</tls-crypt>" in ovpn, "ovpn tls-crypt")
+ok("BEGIN OpenVPN Static key" in ovpn, "ovpn key content")
+ok("BEGIN CERTIFICATE" in ovpn and "BEGIN PRIVATE KEY" in ovpn, "ovpn cert+key")
+import glob as _glob
+_prof_dir = os.path.dirname(ovpn_path(uid))
+ok((os.stat(ovpn_path(uid)).st_mode & 0o777) == 0o600, "ovpn mode 0600")
+ok(not _glob.glob(os.path.join(_prof_dir, ".client-ovpn-*")), "no temp profiles")
+from core.openvpn.store import get_limit
+ok(get_limit(uid) == 2, "limit state")
+
+# existing conf hardening preserves admin edits
+with open(SERVER_CONF, "w") as f:
+    f.write(conf + "\n# admin custom line\n")
+init_pki()
+tuned = read(SERVER_CONF)
+ok("# admin custom line" in tuned, "admin line kept")
+ok(tuned.count("management 127.0.0.1 7505") == 1, "no dup hardening")
+
+# missing dh file → replaced with dh none
+with open(SERVER_CONF, "w") as f:
+    f.write(conf.replace("dh none", "dh /etc/openvpn/server/pki/dh.pem") + "\n")
+import os as _os
+if _os.path.exists("/etc/openvpn/server/pki/dh.pem"):
+    _os.remove("/etc/openvpn/server/pki/dh.pem")
+init_pki()
+dh_fixed = read(SERVER_CONF)
+ok("dh none" in dh_fixed, "missing dh replaced with dh none")
+ok("dh /etc/openvpn/server/pki/dh.pem" not in dh_fixed, "broken dh reference removed")
+
+# /sync/config
+from core.api.schemas import SetSettingsModel
+from core.openvpn.control import change_config
+req = SetSettingsModel(
+    tunnel_address="vpn.example.com", protocol="udp", ovpn_port=1195, set_new_setting=True
+)
+ok(change_config(req), "change_config ok")
+after = read(SERVER_CONF)
+ok("proto udp" in after, "proto udp")
+ok("port 1195" in after, "port 1195")
+ok("explicit-exit-notify 1" in after, "exit notify 1")
+ok("remote vpn.example.com 1195" in read(CLIENT_TEMPLATE), "template remote")
+try:
+    bad = SetSettingsModel(tunnel_address="x", protocol="tcp",
+                           ovpn_port=99999, set_new_setting=True)
+except Exception:
+    bad = None
+ok(bad is None or not change_config(bad), "bad port rejected")
+
+# Failed profile builds must not leave a partial world-readable file behind.
+from core.openvpn.users import _build_ovpn, _cert_paths
+bad_uid = "testuser43"
+ok(create_user_on_server(bad_uid, "Bad Template", max_logins=1), "create user for failure test")
+_os.remove(ovpn_path(bad_uid))
+_crt, _inline = _cert_paths(bad_uid)
+# Both files are corrupted on purpose to prove bad material is rejected, and
+# both are restored afterwards. CLIENT_TEMPLATE is shared state: leaving it
+# broken made every profile built below this line fail, and the damage surfaced
+# nowhere near its cause ("create retry user" failing, with the .ovpn report
+# naming a different user entirely).
+_saved_template = read(CLIENT_TEMPLATE)
+# The inline bundle is optional — _cert_paths returns the path whether or not
+# easy-rsa produced one — so it must be restored to absent, not to empty.
+_had_inline = _os.path.exists(_inline)
+_saved_inline = read(_inline) if _had_inline else None
+with open(CLIENT_TEMPLATE, "w", encoding="utf-8") as f:
+    f.write("this is not a client config\n")
+with open(_inline, "w", encoding="utf-8") as f:
+    f.write("garbage material\n")
+ok(not _build_ovpn(bad_uid), "broken material rejected")
+ok(not os.path.exists(ovpn_path(bad_uid)), "no profile written on failure")
+_bad_dir = os.path.dirname(ovpn_path(bad_uid))
+ok(not _glob.glob(os.path.join(_bad_dir, ".client-ovpn-*")), "no temp on failure")
+with open(CLIENT_TEMPLATE, "w", encoding="utf-8") as f:
+    f.write(_saved_template)
+if _had_inline:
+    with open(_inline, "w", encoding="utf-8") as f:
+        f.write(_saved_inline)
+else:
+    _os.remove(_inline)
+ok(read(CLIENT_TEMPLATE).lstrip().startswith("client"), "template restored")
+
+# Retried delete: the cert is already revoked/moved but the CRL predates the
+# revocation — the delete must regenerate the CRL instead of reporting OK.
+from core.openvpn.users import delete_user_on_server
+from core.validation import DeleteResult
+from core.openvpn.pki import CRL_FILE, PKI_DIR, run_easyrsa as _run_easyrsa
+retry_uid = "testuser44"
+ok(create_user_on_server(retry_uid, "Retry User", max_logins=1), "create retry user")
+ok(_run_easyrsa("revoke", retry_uid), "revoke directly (simulating a crashed delete)")
+import time as _time
+_os.utime(_os.path.join(PKI_DIR, "index.txt"), (_time.time() + 5, _time.time() + 5))
+old_crl = os.stat(CRL_FILE).st_mtime
+ok(delete_user_on_server(retry_uid) == DeleteResult.OK, "retried delete reports OK")
+ok(os.stat(CRL_FILE).st_mtime > old_crl, "CRL regenerated on retried delete")
+
+print(f"RESULT: {PASS} passed, {FAIL} failed")
+sys.exit(1 if FAIL else 0)
+"""
+
+
+def test_openvpn_pipeline():
+    with tempfile.TemporaryDirectory(prefix="ovnode-pki-") as root:
+        # change_config rolls the pushed settings back when the restart fails
+        # (no service manager in the sandbox), so provide a systemctl that
+        # succeeds — the happy path for a healthy node — and exercise the
+        # rollback itself in tests/test_threadpool_and_rollback.py.
+        fake_bin = os.path.join(root, "fake-bin")
+        os.makedirs(fake_bin, exist_ok=True)
+        systemctl = os.path.join(fake_bin, "systemctl")
+        with open(systemctl, "w", encoding="utf-8") as f:
+            f.write("#!/bin/sh\nexit 0\n")
+        os.chmod(systemctl, 0o755)
+
+        env = {
+            **os.environ,
+            "OVNODE_OPENVPN_ROOT": root,
+            "PATH": fake_bin + os.pathsep + os.environ.get("PATH", ""),
+        }
+        r = subprocess.run(
+            [sys.executable, "-c", CHECK_SCRIPT],
+            capture_output=True,
+            text=True,
+            timeout=240,
+            env=env,
+        )
+        # Surface child output for debugging.
+        print(r.stdout)
+        if r.stderr:
+            print(r.stderr[-2000:])
+        assert r.returncode == 0, f"pipeline subprocess failed (rc={r.returncode})"
+
+
+def test_generated_profile_never_contains_placeholder(monkeypatch, tmp_path):
+    """Regression: a client .ovpn shipped the literal 'UPDATE_VIA_PANEL'
+    remote when the panel had not pushed a tunnel address yet. The node
+    now falls back to its own public address."""
+    import core.openvpn.pki as pki
+
+    monkeypatch.setenv("TUNNEL_ADDRESS", "")
+    monkeypatch.setattr(pki, "_node_public_ip", lambda: "203.0.113.7")
+    monkeypatch.setattr(pki, "CLIENT_TEMPLATE", str(tmp_path / "client-common.txt"))
+    monkeypatch.setattr(pki, "_openvpn_port", lambda: 1194)
+    monkeypatch.setattr(pki, "_extra_vpn_ports", lambda: [])
+
+    pki._ensure_client_template()
+    written = (tmp_path / "client-common.txt").read_text(encoding="utf-8")
+    assert "UPDATE_VIA_PANEL" not in written
+    assert "remote 203.0.113.7 1194" in written

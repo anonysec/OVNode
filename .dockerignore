@@ -1,0 +1,37 @@
+# VCS
+.git
+.github
+.gitignore
+
+# Environment / secrets
+.env
+.env.*
+!.env.example
+
+# Python
+__pycache__
+*.py[cod]
+*.egg-info
+.venv
+venv
+.pytest_cache
+.ruff_cache
+.coverage
+
+# Runtime state (mounted as a volume, never baked in)
+data
+
+# Not needed inside the image
+tests
+install.sh
+docker-compose.yml
+.pre-commit-config.yaml
+.python-version
+*.md
+LICENSE
+
+# Editor / OS
+.idea
+.vscode
+*.swp
+.DS_Store

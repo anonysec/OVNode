@@ -1,0 +1,68 @@
+# Best-effort deterministic rebuild of the knowledge graph.
+#
+# This runs the AST-only path:
+#
+#   graphify extract . --code-only      code + docstring rationale, no API key,
+#                                       no LLM ("--code-only: ... no LLM
+#                                       extraction" in the log)
+#   graphify cluster-only --no-label    GRAPH_REPORT.md with community
+#                                       placeholders instead of an LLM naming
+#                                       pass, and the "Built from commit"
+#                                       freshness stamp the staleness check
+#                                       reads
+#   graphify export html                graph.html, i.e. the published index.html
+#
+# It is NOT a drop-in replacement for the hand-built published graph: the
+# published graph also carries doc-derived nodes from the semantic pass, which
+# --code-only skips by design (16 docs here). Node/edge counts and the commit
+# stamp go to the run summary so the drift is visible between rebuilds.
+#
+# graphify-out/ is gitignored in this repo, so this job cannot push its result
+# and does not try. It uploads the output as an artifact instead: download it
+# and publish by hand, or run the same three commands on the box.
+
+name: Graph rebuild (AST-only)
+
+on:
+  schedule:
+    - cron: "30 6 * * 1"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  rebuild:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: Install graphify
+        run: |
+          pip install graphifyy
+          command -v graphify
+      - name: Rebuild (deterministic AST pass)
+        run: |
+          graphify extract . --code-only
+          graphify cluster-only . --no-label --no-viz
+          graphify export html
+      - name: Summarise node/edge counts
+        run: |
+          {
+            echo "## Graph rebuild (AST-only, no LLM)"
+            echo
+            python3 -c 'import json;g=json.load(open("graphify-out/graph.json"));print("- nodes:", len(g["nodes"]));print("- edges:", len(g["links"]));print("- built_at_commit:", g.get("built_at_commit"))'
+            echo
+            echo '`--code-only` indexes code and docstring rationale only. Docs, papers'
+            echo 'and images are skipped, so the published graph (which includes'
+            echo 'doc-derived nodes) still needs the semantic pass from /graphify.'
+            echo
+            echo 'Publishing stays manual: `graphify-out/` is gitignored, so download'
+            echo 'the artifact rather than committing it.'
+          } >> "$GITHUB_STEP_SUMMARY"
+      - uses: actions/upload-artifact@v4
+        with:
+          name: graphify-out
+          path: graphify-out/

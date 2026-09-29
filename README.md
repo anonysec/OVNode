@@ -1,0 +1,217 @@
+# OVNode
+
+[![CI](https://github.com/anonysec/OVNode/actions/workflows/ci.yml/badge.svg)](https://github.com/anonysec/OVNode/actions/workflows/ci.yml)
+[![License: MIT](https://img.shields.io/badge/License-MIT-green.svg)](LICENSE)
+[![Version](https://img.shields.io/badge/version-1.0.0-blue)](CHANGELOG.md)
+
+OpenVPN node agent for [OVManager](https://github.com/anonysec/OVManager). Manages the OpenVPN server, PKI, per-user configs, traffic accounting, and multi-login enforcement — implementing exactly the sync API OVManager's panel expects.
+
+| Node | Panel | Status |
+| ---- | ----- | ------ |
+| 1.1.x | 1.2.x | supported (sync API contract) |
+| 2.x  | ≥ 2.0 | retired |
+
+## OVManager ⇄ OVNode API
+
+Every endpoint maps 1:1 to a method of the panel's `NodeRequests` client. Auth: the panel sends the node API key in the `key` header; responses are `{success, msg, data}` envelopes.
+
+| Endpoint | Panel method | Notes |
+|---|---|---|
+| `GET /sync/health` | Docker healthcheck | No auth |
+| `GET /sync/status` | `check_node` / `get_node_info` | `cpu_usage`, `memory_usage`, `version`, `cert_expiry` |
+| `GET /sync/usage` | `get_usage` | `users` keyed by username (traffic collector), `sessions` carries CN + username keys (panel-side mlogin registry + per-session deltas) |
+| `GET /sync/sessions` | `get_sessions` | `live_sessions`, `sessions` (frontend), `stale_markers`, counters, `auth_errors_by_cn` |
+| `GET /sync/config` | `read_config` | Live endpoint settings, so the panel can detect drift |
+| `POST /sync/config` | `update_config` | `{tunnel_address, protocol, ovpn_port, set_new_setting}`; also accepts `dns1`, `dns2`, `enable_ipv6`, `ipv6_prefix`, `extra_ports` — omitted fields leave the node's values alone |
+| `POST /sync/restart` | `restart_vpn` | Restart OpenVPN on the node |
+| `POST /sync/renew-cert` | `renew_server_cert` | Renew the server certificate, then restart OpenVPN |
+| `POST /sync/user` | `create_user` | `id` optional — falls back to normalized `name` |
+| `PUT /sync/user` | `change_user_status` | `activate` / `deactivate`, optional `max_logins` |
+| `PUT /sync/user/limit` | `set_user_limit` | `id` may be numeric id or username |
+| `POST /sync/users` | `set_user_limits` (bulk) | Many users in one call, cap 500; per-item failures in `data.failed` |
+| `DELETE /sync/user/{uid}` | `delete_user` | NOT_FOUND counts as success so panel cleanup proceeds |
+| `POST /sync/user/{uid}/disconnect` | `disconnect_user` | Kills sessions + clears stale markers |
+| `POST /sync/user/{uid}/reset-usage` | `reset_user_usage` | Zero the banked counters |
+| `GET /sync/download/ovpn/{uid}` | `download_ovpn_client` / `_bytes` | Lazy creation on first download; body starts with `client` |
+| `POST /sync/update` | `trigger_update` | Ask the node to run its own self-update |
+| `GET /sync/logs` | node log viewer | `level` (default `WARNING`) and `limit` (default 200) |
+
+That is 18 routes across `config.py` (5), `users.py` (8), `system.py` (3) and
+`stats.py` (2). The same list lives in each route module's docstring and is
+pinned against the live router by `tests/test_sync_contract_surface.py`; this
+table is checked by eye, so if the two disagree, trust the test.
+
+Identity: the OpenVPN CN is the panel's numeric user id (`str(user.id)`); the display name is kept in `users/<cn>/name` so usage reports can be keyed by username, as the panel's traffic collector expects.
+
+**The node never calls the panel.** All communication is panel → node, authenticated by the node API key (over TLS when enabled). Nodes don't store the panel's address, so you can move or replace the panel at any time — just re-add the nodes with the same address, name and API key.
+
+## Version compatibility
+
+The node reports its version in `GET /sync/status` (`data.version`); the panel's node-status API returns a `version_compat` verdict per node:
+
+| Node vs panel | Verdict | Meaning |
+|---|---|---|
+| Same major (e.g. node 1.1.5, panel 1.2.7) | `compatible` | Supported. Minor drift is tolerated — both sides ignore unknown keys. |
+| Node newer, same major | `node-newer` | Not supported — the panel may not understand the node. Update the panel. |
+| Different major | `incompatible` | Not supported — update both to the same major release. |
+| Missing/garbled version | `unknown` | Never treated as compatible — investigate connectivity or version skew. |
+
+Rolling updates: update one node at a time; the others keep serving. A node briefly answers `503` on mutating calls while it verifies a candidate — reads and health keep working, and the panel reports the message verbatim.
+
+## Features
+
+- **Modern OpenVPN defaults** — ECDSA (prime256v1) PKI, `tls-crypt`, TLS ≥ 1.2, ECDHE (no static DH), GCM ciphers, CRL enforcement, `remote-cert-tls` verification on both sides.
+- **Management interface** — wired up and restricted to the runtime user so session takeover (`max_logins=1`) and disconnects work reliably.
+- **Working client configs** — generated `.ovpn` files embed the `tls-crypt` key inline.
+- **Idempotent upgrades** — existing installs get new hardening directives appended on boot without clobbering admin edits; missing `dh` files are auto-replaced with `dh none`.
+- **Local multi-login enforcement** — per-user device limits enforced at connect time (takeover for 1, reject N+1, unlimited for 0). Cross-node policy stays panel-side: OVManager aggregates `/sync/sessions` from every node and can disconnect anywhere via `/sync/user/{uid}/disconnect`.
+- **Dynamic-IP safe sessions** — session identity is CN + VPN pool IP and enforcement kills target the management client id, so users whose real IP changes on every reconnect (mobile/CGNAT) are tracked and limited correctly.
+- **Multi-port** — one OpenVPN instance reachable on several ports (`--vpn-ports 1194,443,8443`): extra ports are redirected to the listener via iptables, and every `.ovpn` lists all ports as `remote` lines for automatic failover when an ISP blocks one.
+- **Optional IPv6** — ULA pool + route push when enabled (`OVNODE_ENABLE_IPV6=1`).
+
+## Install (beginners start here)
+
+```bash
+bash <(curl -sSL https://raw.githubusercontent.com/anonysec/OVNode/main/install.sh)
+```
+
+The menu offers **Install** (recommended — host service, no questions:
+`ovnode`, port `2083`, UDP, self-signed TLS, generated API key) or
+**Install with Docker**. The `interactive` command opens the full wizard
+instead. Save the green summary (node name + API key), then register it
+in the panel: **Nodes → Add Node**.
+
+Full walkthrough: [docs/quickstart.md](docs/quickstart.md) ·
+under the hood: [docs/how-it-works.md](docs/how-it-works.md) ·
+stuck: [docs/troubleshooting.md](docs/troubleshooting.md).
+
+Advanced / unattended:
+
+Common flags:
+
+```bash
+bash <(curl -sSL URL) \
+  --name eu-1 --port 2083 --vpn-ports 1194,443,8443 \
+  --key "$(openssl rand -hex 32)" \
+  --ipv6 --tls selfsigned   # selfsigned (default) | letsencrypt | custom
+```
+
+Unattended installs never prompt — `--yes` (or simply no TTY) — and every flag
+has an `OVN_*` env equivalent (`OVN_KEY`, `OVN_TLS`, …), CLI winning over env.
+The outcome comes back as a documented exit code, so a script branches on `$?`
+instead of parsing output:
+
+```bash
+bash <(curl -sSL URL) --yes --tls selfsigned --docker
+# 0 ok · 1 error · 2 usage · 3 already installed · 4 not installed
+```
+
+See `install.sh help` for the installer's own commands (`update`, `recover-update`, `uninstall`) and TLS modes; everything else is the manager, `ovnode help`. Use the same `--name` and `--key` when adding the node in the panel (Nodes → Add Node).
+
+## Update / Uninstall
+
+```bash
+# Update (backs up data + PKI first)
+bash <(curl -sSL URL) update
+
+# Uninstall — data kept unless --purge
+bash <(curl -sSL URL) uninstall
+bash <(curl -sSL URL) --purge uninstall
+```
+
+## Terminal menu
+
+Every install adds a command — run `ovnode` (or `ovn`) on the server and
+pick from a menu: **Status · Update · Restart agent · Restart VPN · Logs ·
+Backup · TLS · Doctor · Rollback · Uninstall**. `logs -f` follows live.
+
+Every item is also a plain command for scripts (stable exit codes):
+`ovnode status | start | stop | restart | restart-vpn | logs [N|-f] |
+backup | update | tls | doctor | rollback | auto-backup | uninstall | help`.
+
+The installer is not the manager: `install.sh` does install, update and
+uninstall only, and redirects everything else here.
+
+Forks: `OVN_REPO=myorg/OVNode` points source downloads and update pulls
+at your own repo.
+
+## Docker
+
+One container runs both the sync agent **and** the OpenVPN daemon, supervised by the entrypoint: OpenVPN is started as soon as the agent has generated `server.conf` (first boot included) and is restarted with backoff if it ever crashes — without taking the API down. Host networking is used on purpose (no double NAT, honest client IPs, multi-port without port-mapping edits); the entrypoint enables forwarding and sets up MASQUERADE/multi-port NAT itself via `CAP_NET_ADMIN`.
+
+Via installer (generates a per-node compose file):
+
+```bash
+bash <(curl -sSL URL) --docker
+```
+
+Or manually with the bundled compose file:
+
+```bash
+cp .env.example .env   # set API_KEY at minimum
+docker compose up -d
+```
+
+All state (PKI + `ovnode/` store) lives in the `/etc/openvpn` volume — the container is fully replaceable. `OVNODE_SKIP_OPENVPN=1` runs the agent alone (debugging).
+
+## Configuration (env vars)
+
+All optional except `API_KEY` — see `.env.example`:
+
+| Variable | Default | Purpose |
+|---|---|---|
+| `SERVICE_PORT` | `2083` | Sync API port the panel connects to |
+| `API_KEY` | — | Shared secret with the panel (min 16 chars) |
+| `NODE_NAME` | `node-1` | Must match the node name registered in the panel |
+| `OVNODE_RUNTIME_USER` / `OVNODE_RUNTIME_GROUP` | `nobody` / `nogroup` | OpenVPN privilege drop |
+| `OVNODE_MANAGEMENT_PORT` | `7505` | Local management interface |
+| `OVNODE_VPN_NETWORK` / `OVNODE_VPN_NETMASK` | `10.8.0.0` / `255.255.255.0` | Client pool |
+| `OVNODE_VPN_DNS1` / `OVNODE_VPN_DNS2` | `1.1.1.1` / `8.8.8.8` | DNS pushed to clients |
+| `OVNODE_EXTRA_PORTS` | — | Extra VPN ports listed in every `.ovpn` (redirected to `OPENVPN_PORT` by the installer's NAT unit) |
+| `OVNODE_MAX_CLIENTS` | `250` | Connection cap |
+| `OVNODE_ENABLE_IPV6` / `OVNODE_IPV6_PREFIX` | `0` / `fd42:42:42:42::/64` | IPv6 support |
+
+## On-disk layout
+
+All node state lives in two places — backup/export is just these two paths:
+
+```
+/etc/openvpn/
+├── server/              # OpenVPN native: server.conf, PKI (CA/certs/CRL), logs
+└── ovnode/              # everything OVNode manages
+    ├── users/<cn>/      # ONE folder per user
+    │   ├── name         #   panel username
+    │   ├── state        #   max logins + the disabled marker, one file
+    │   └── client.ovpn  #   cached profile (regenerated on demand)
+    ├── sessions/        # live-session markers (runtime state, .lock.<cn> flocks)
+    ├── usage/<cn>       # banked per-user traffic counters
+    └── scripts/         # installed connect/disconnect hooks
+```
+
+Pre-existing installs with the old scattered layout (`clients/`, `limits/`, `disabled/`, `ovnode-active/`, `uid_map.json`) are migrated automatically on the next agent start — restoring an old backup onto a current build also just works.
+
+## Diagnostics
+
+- **`GET /sync/logs?level=WARNING&limit=200`** — recent node log records (in-memory ring buffer), so a node can be debugged without SSH: `curl -H "key: $API_KEY" https://node:2083/sync/logs?level=ERROR`
+- **`GET /sync/status`** also reports `openvpn_running`, `uptime_seconds`, `errors_1h`, `warnings_1h` and `last_error`.
+- **`GET /sync/usage`** additionally returns `totals` — lifetime bytes per user (completed sessions banked by the disconnect hook + live traffic). The panel-contract keys (`users`, `sessions`) are unchanged.
+- All errors come back in the `{success, msg, data}` envelope; unhandled ones carry a `ref=<id>` that links to the full traceback in `data/app.log` / `journalctl -u ovnode`.
+
+## Manual Install (developers only — beginners: use the installer above)
+
+```bash
+git clone https://github.com/anonysec/OVNode.git /opt/ovnode
+cd /opt/ovnode
+cp .env.example .env  # REQUIRED: set API_KEY (min 16 chars, see top of file)
+pip install uv && uv sync
+uv run main.py
+```
+
+Manual mode runs the API only: you must handle TLS (`ssl_certfile/keyfile`
+in `.env`), IP forwarding + NAT, firewall, and systemd yourself — the
+installer does all of that. The OpenVPN daemon is also on you
+(`OVNODE_SKIP_OPENVPN` is for debugging).
+
+## License
+
+MIT. See [LICENSE](LICENSE).

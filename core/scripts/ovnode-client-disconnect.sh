@@ -1,0 +1,98 @@
+#!/usr/bin/env bash
+# Copyright (c) 2026 anonysec
+# SPDX-License-Identifier: MIT
+#
+# OVManager local disconnect hook. Removes the local active-session marker
+# and banks the session's final byte counters into the per-user usage
+# accumulator (OpenVPN exposes bytes_received/bytes_sent to this hook —
+# without this, traffic from completed sessions would be lost between
+# status-file polls).
+
+set -euo pipefail
+
+ACTIVE_DIR="${OVNODE_SESSIONS_DIR:-/etc/openvpn/ovnode/sessions}"
+USAGE_DIR="${OVNODE_USAGE_DIR:-/etc/openvpn/ovnode/usage}"
+# Per-CN locks (assigned after safe_cn exists): the connect hook uses the
+# same names, so same-user connect/disconnect still serialize — while
+# different users never block each other. LOCK_FILE must match connect.sh.
+LOCK_FILE=""
+USAGE_LOCK=""
+LOG_TAG="ovnode-mlogin"
+
+cn="${common_name:-${1:-}}"
+
+log() { logger -t "$LOG_TAG" "$*" 2>/dev/null || true; }
+sanitize() { printf '%s' "$1" | sed 's/[^A-Za-z0-9_.-]/_/g'; }
+
+if [[ -z "$cn" ]]; then
+    log "disconnect without common_name"
+    exit 0
+fi
+
+safe_cn="$(sanitize "$cn")"
+pool_ip="${ifconfig_pool_remote_ip:-}"
+pool_ip_s="$(sanitize "${pool_ip:-noip}")"
+trusted_ip_s="$(sanitize "${trusted_ip:-unknown}")"
+trusted_port_s="$(sanitize "${trusted_port:-unknown}")"
+
+if [[ -n "$pool_ip" ]]; then
+    session_key="${safe_cn}.${pool_ip_s}"
+else
+    session_key="${safe_cn}.noip.${trusted_ip_s}.${trusted_port_s}"
+fi
+session_file="${ACTIVE_DIR}/${session_key}"
+
+LOCK_FILE="${ACTIVE_DIR}/.lock.${safe_cn}"
+USAGE_LOCK="${USAGE_DIR}/.lock.${safe_cn}"
+
+mkdir -p "$ACTIVE_DIR"
+
+# ── usage accounting ─────────────────────────────────────────────
+# Accumulate this session's final byte counters under a DEDICATED usage
+# lock (atomic tmp+rename): the global marker lock stays with marker
+# churn only, so a connect storm is never head-of-line blocked behind
+# accounting writes. Two simultaneous disconnects of the same CN still
+# cannot lose an update.
+rx="${bytes_received:-0}"
+tx="${bytes_sent:-0}"
+[[ "$rx" =~ ^[0-9]+$ ]] || rx=0
+[[ "$tx" =~ ^[0-9]+$ ]] || tx=0
+session_total=$(( rx + tx ))
+if (( session_total > 0 )) && [[ -d "$USAGE_DIR" && -w "$USAGE_DIR" ]]; then
+    usage_file="${USAGE_DIR}/${safe_cn}"
+    exec 8>"$USAGE_LOCK"
+    flock -x 8
+    old="$(cat "$usage_file" 2>/dev/null || echo 0)"
+    [[ "$old" =~ ^[0-9]+$ ]] || old=0
+    # mktemp (O_EXCL) instead of a predictable .tmp.$$ name: USAGE_DIR is
+    # writable by the runtime user, so a guessable path is symlink bait.
+    # Guarded: accounting is best-effort and must never abort the hook
+    # (marker removal below must still run) if mktemp ever fails.
+    tmp_file="$(mktemp "${usage_file}.tmp.XXXXXX" 2>/dev/null)" || tmp_file=""
+    if [[ -n "$tmp_file" ]]; then
+        echo $(( old + session_total )) > "$tmp_file"
+        # mktemp creates 0600; the usage file must stay readable by the
+        # agent like the old shell-redirect (umask-based) files were.
+        chmod 644 "$tmp_file"
+        mv -f "$tmp_file" "$usage_file"
+    else
+        log "CN=$cn usage accounting skipped (mktemp failed, rx=$rx tx=$tx)"
+    fi
+    exec 8>&-
+    log "CN=$cn session ended rx=$rx tx=$tx accumulated=$(( old + session_total ))"
+fi
+
+exec 9>"$LOCK_FILE"
+flock -x 9
+
+if [[ -f "$session_file" ]]; then
+    rm -f "$session_file"
+    log "CN=$cn disconnect removed session=$session_key"
+else
+    # Legacy layouts: CN.ip.port.pool (pre pool-IP keying).
+    rm -f "${ACTIVE_DIR}/${safe_cn}."*".${pool_ip_s}" 2>/dev/null || true
+    rm -f "${ACTIVE_DIR}/${safe_cn}.${trusted_ip_s}.${trusted_port_s}."* 2>/dev/null || true
+    log "CN=$cn disconnect fallback cleanup session=$session_key"
+fi
+
+exit 0
