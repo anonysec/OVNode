@@ -55,3 +55,6 @@ graphify-out/
 
 # Generated (recreate with `make openapi`)
 scripts/openapi.json
+
+# runtime log + node state written beside the source (core/logger.py uses <repo>/data)
+/data/
