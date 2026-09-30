@@ -67,6 +67,13 @@ def test_the_retired_output_helpers_are_gone():
     line/step/info/warn/field/sep/kv each printed a glyph or a colour inline,
     which is the duplication render.sh exists to remove: the node card and the
     panel card were two copies of one idea, and they had already drifted.
+
+    The match is a single-pass command-boundary pattern. It used to be
+    ``^\\s*(?:[^#\\n]*?(?:&&|\\|\\||\\{|;)\\s*)*NAME`` — a lazy ``*?`` inside a
+    ``*``, exponential in the number of separators on a line, which cost 8.9s
+    here. It was also *wrong*: it could not match ``then step``, so a retired
+    helper called after `then` slipped through. On the panel the same broken
+    pattern was hiding a live `step` call in backup.sh.
     """
     import re
 
@@ -75,17 +82,18 @@ def test_the_retired_output_helpers_are_gone():
     for path in FILES:
         if path.name == "render.sh":
             continue
-        lines = path.read_text(encoding="utf-8").splitlines()
         hits = {}
         for name in retired:
-            pat = re.compile(
-                r"^\s*(?:[^#\n]*?(?:&&|\|\||\{|;)\s*)*" + re.escape(name) + r'\s+(?:"|\$\(|e )'
-            )
-            found = [i for i, ln in enumerate(lines, 1) if pat.search(ln)]
+            pat = re.compile(r"(?:^|[;&|{()\s])" + re.escape(name) + r'\s+(?:"|\$\(|e )')
+            found = [
+                i
+                for i, ln in enumerate(path.read_text(encoding="utf-8").splitlines(), 1)
+                if pat.search(ln.split("#", 1)[0])
+            ]
             if found:
                 hits[name] = found
-        if hits:
-            offenders[path.name] = hits
+        if found_hits := hits:
+            offenders[path.name] = found_hits
     assert not offenders, f"retired output helpers back in use: {offenders}"
 
 
