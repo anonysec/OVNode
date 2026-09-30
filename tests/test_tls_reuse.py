@@ -26,6 +26,11 @@ INSTALLER = REPO / "install.sh"
 MANAGER = REPO / "manager.sh"
 LIB = REPO / "scripts" / "lib" / "common.sh"
 
+# Real system paths the node used to write to. /etc/ssl/self-signed is OVManager's
+# panel certificate on a shared host: writing there, and chmod 600'ing the key,
+# stopped the panel from starting. See the module docstring.
+SHARED_PANEL_PATHS = ("/etc/ssl/self-signed",)
+
 
 def _shell(script: str) -> subprocess.CompletedProcess:
     """Run a snippet with the shared lib sourced, the way manager.sh does."""
@@ -150,3 +155,50 @@ def test_regeneration_is_still_reachable_on_request():
         "`ovn tls selfsigned` must bypass reuse — asking for a new certificate is "
         "asking for a new certificate, and the panel has pinned the old one"
     )
+
+
+def test_the_node_never_writes_the_panels_certificate_directory():
+    """The panel's key must not be reachable from a node code path at all.
+
+    This is the guard that was missing. Reusing an intact pair protected the
+    shared directory only while the pair stayed intact; once it did not, the
+    fallback regenerated into it and chmod 600'd the key, and the panel stopped
+    starting. On this host that is not hypothetical — the panel sat in a
+    restart loop for a day, and the node wrote the path on 2026-09-30 while
+    sweeping its own commands.
+
+    Fixed by giving the node its own directory and reading any declared paths
+    from .env, so the shared one is not a default any more.
+    """
+    body = _body("generate_selfsigned", INSTALLER, LIB)
+    for path in SHARED_PANEL_PATHS:
+        assert path not in body, f"generate_selfsigned still writes {path}"
+    # And the 600 must be applied to a path this node chose, not to whatever
+    # happened to be in a shared directory.
+    assert 'chmod 600 "$key"' in body, "the key is still owner-only, at a path we chose"
+
+
+def test_the_default_certificate_directory_is_the_nodes_own():
+    """Not the shared convention, and not under the data dir.
+
+    A backup, a data-directory wipe or a container mount must not be able to
+    take the server's private key with it — which is the reason /etc/ovnode/tls
+    rather than DATA_DIR.
+    """
+    source = LIB.read_text(encoding="utf-8")
+    assert "/etc/ovnode/tls/privkey.pem" in source
+    paths = _body("node_tls_paths", INSTALLER, LIB)
+    for path in SHARED_PANEL_PATHS:
+        assert path not in paths, f"the default path is still {path}"
+
+
+def test_a_declared_path_wins_over_the_default():
+    """.env is the declaration, and an existing install already has one.
+
+    Changing the default must not move a certificate an operator is already
+    serving — only installs that never declared a path get /etc/ovnode/tls.
+    """
+    paths = _body("node_tls_paths", INSTALLER, LIB)
+    assert "SSL_KEYFILE" in paths and "SSL_CERTFILE" in paths
+    # ${key:-...} not ${key=...}: the declaration wins, the default only fills a gap.
+    assert "${key:-" in paths and "${cert:-" in paths, "the default must be a fallback"

@@ -242,15 +242,34 @@ _existing_tls_pair_usable() {  # <key> <cert> → 0 when an intact, unexpired pa
     [[ -n "$key_pub" && "$key_pub" == "$cert_pub" ]]
 }
 
+# Where this node's own key and certificate live.
+#
+# It used to be /etc/ssl/self-signed, which is a *shared* convention: OVManager
+# keeps its panel certificate in exactly those two files on the same host. The
+# node then wrote over the panel's identity and chmod 600'd the key, which
+# drops the group read the panel's non-root service account needs — so the panel
+# stopped starting, and nothing in either project's doctor said why.
+#
+# Reusing an intact pair mitigated that only while the pair stayed intact. Once
+# it was not — a mismatched key, an unreadable file, anything — the fallback
+# regenerated into the shared path and did the damage again, which is how the
+# panel on this host spent a day in a restart loop.
+#
+# So the node writes to its own directory. An install that already declares
+# SSL_KEYFILE/SSL_CERTFILE keeps using them, which is what the .env is for.
+node_tls_paths() {
+    local key cert
+    key="$(env_get "$APP_DIR/.env" SSL_KEYFILE)"
+    cert="$(env_get "$APP_DIR/.env" SSL_CERTFILE)"
+    printf '%s\n%s\n' "${key:-/etc/ovnode/tls/privkey.pem}" "${cert:-/etc/ovnode/tls/fullchain.pem}"
+}
+
 generate_selfsigned() {
-    local key="/etc/ssl/self-signed/privkey.pem"
-    local cert="/etc/ssl/self-signed/fullchain.pem"
-    mkdir -p /etc/ssl/self-signed
-    # /etc/ssl/self-signed is a shared convention: OVManager keeps its panel
-    # certificate in these same two files. Regenerating replaces the panel's
-    # identity, and the chmod 600 below drops the group read its non-root service
-    # account needs, so an intact pair is reused untouched — permissions included.
-    # `ovn tls` option 1 is the explicit way to ask for a new one.
+    local key cert
+    { read -r key; read -r cert; } < <(node_tls_paths)
+    mkdir -p "$(dirname "$key")" "$(dirname "$cert")"
+    # Reuse an intact pair, permissions included. `ovn tls selfsigned` is the
+    # explicit way to ask for a new one, and only that sets TLS_REGENERATE.
     if [[ "${TLS_REGENERATE:-0}" != "1" ]] && _existing_tls_pair_usable "$key" "$cert"; then
         TLS_KEY="$key"
         TLS_CERT="$cert"
@@ -262,12 +281,14 @@ generate_selfsigned() {
         -keyout "$key" \
         -out "$cert" \
         -subj "/C=US/ST=Local/L=Local/O=OVNode/CN=${cn:-ovnode}" >/dev/null 2>&1
-    # The sync API TLS key is a secret: owner-only (the agent runs as root).
+    # The sync API TLS key is a secret, so it is owner-only — but only ever at a
+    # path this node owns. The 600 used to be applied to whatever sat in the
+    # shared directory, which is what took the panel down.
     chmod 600 "$key"
     chmod 644 "$cert"
     TLS_KEY="$key"
     TLS_CERT="$cert"
-    render_ok "self-signed certificate generated"
+    render_ok "self-signed certificate generated at $cert"
 }
 
 ensure_acme() {
