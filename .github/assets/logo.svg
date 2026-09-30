@@ -1,0 +1,8 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 128 128" role="img" aria-labelledby="logoTitle">
+  <title id="logoTitle">OVNode</title>
+  <rect width="128" height="128" rx="30" fill="#ff6a1a"/>
+  <g aria-hidden="true">
+    <circle cx="64" cy="64" r="39" fill="none" stroke="#15110a" stroke-width="11"/>
+    <circle cx="64" cy="64" r="14" fill="#15110a"/>
+  </g>
+</svg>

@@ -1,0 +1,29 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1280 320" role="img" aria-labelledby="bannerTitle">
+  <title id="bannerTitle">OVNode — node agent for OpenVPN servers</title>
+  <style>
+    .card { fill: #ffffff; stroke: #e6e8ec; }
+    .deco { fill: none; stroke: #ff6a1a; stroke-width: 2; opacity: .10; }
+    .word { fill: #0e1116; }
+    .sub  { fill: #606a78; }
+    .word, .sub { font-family: system-ui, -apple-system, 'Segoe UI', Roboto, sans-serif; }
+    @media (prefers-color-scheme: dark) {
+      .card { fill: #131722; stroke: #2f343f; }
+      .deco { opacity: .18; }
+      .word { fill: #f7f8fa; }
+      .sub  { fill: #9aa1ad; }
+    }
+  </style>
+  <clipPath id="bannerClip"><rect x="1" y="1" width="1278" height="318" rx="28"/></clipPath>
+  <rect x="1" y="1" width="1278" height="318" rx="28" class="card" stroke-width="2"/>
+  <g clip-path="url(#bannerClip)" aria-hidden="true">
+    <circle cx="1180" cy="160" r="180" class="deco"/>
+    <circle cx="1180" cy="160" r="118" class="deco"/>
+  </g>
+  <g transform="translate(88 96)" aria-hidden="true">
+    <rect width="128" height="128" rx="30" fill="#ff6a1a"/>
+    <circle cx="64" cy="64" r="39" fill="none" stroke="#15110a" stroke-width="11"/>
+    <circle cx="64" cy="64" r="14" fill="#15110a"/>
+  </g>
+  <text x="264" y="160" font-size="76" font-weight="700" letter-spacing="-2" class="word">OVNode</text>
+  <text x="266" y="208" font-size="26" font-weight="400" letter-spacing="0.3" class="sub">Node agent for OpenVPN servers</text>
+</svg>

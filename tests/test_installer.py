@@ -604,13 +604,28 @@ def test_entry_points_are_executable():
 
 
 def test_no_pages_url():
-    """The installer is bootstrapped from raw.githubusercontent.com — the
-    anonysec.github.io Pages URL is retired (it served stale scripts)."""
+    """Pages serves the documentation, never the installer.
+
+    The installer is bootstrapped from raw.githubusercontent.com because the
+    anonysec.github.io host once served stale scripts, so install.sh and
+    manager.sh must not point at it at all. README.md may link the published
+    guides — and only the guides: never a script, an archive or a checksum.
+    """
     import pathlib
+    import re
 
     repo = pathlib.Path(INSTALLER).parent
-    for rel in ("README.md", "install.sh", "manager.sh"):
+    for rel in ("install.sh", "manager.sh"):
         assert "github.io" not in (repo / rel).read_text(encoding="utf-8"), rel
+
+    readme = (repo / "README.md").read_text(encoding="utf-8")
+    for url in re.findall(r"https://[\w./-]*github\.io[\w./-]*", readme):
+        assert url.startswith("https://anonysec.github.io/OVManager/"), (
+            f"README links a Pages host that is not the docs site: {url}"
+        )
+        assert not url.endswith((".sh", ".txt", ".tar.gz", ".json")), (
+            f"README points at Pages for an artifact, not a guide: {url}"
+        )
     for doc in (repo / "docs").glob("*.md"):
         assert "github.io" not in doc.read_text(encoding="utf-8"), doc.name
 

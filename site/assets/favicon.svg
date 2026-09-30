@@ -1,0 +1,8 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 32 32" role="img" aria-labelledby="faviconTitle">
+  <title id="faviconTitle">OVNode</title>
+  <rect width="32" height="32" rx="7.5" fill="#ff6a1a"/>
+  <g aria-hidden="true">
+    <circle cx="16" cy="16" r="10.4" fill="none" stroke="#15110a" stroke-width="3"/>
+    <circle cx="16" cy="16" r="4.4" fill="#15110a"/>
+  </g>
+</svg>
