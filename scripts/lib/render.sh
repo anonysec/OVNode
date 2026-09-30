@@ -613,6 +613,17 @@ render_kv() {
     _render_cursor_advanced
 }
 
+# render_kv_w <width> <label> <value> — a row in a column this caller computed.
+#
+# A fixed width only works when every label is shorter than it. At 14, a
+# 44-character backup filename printed whole and dropped its date a column right
+# of every other row's, so a table of timestamps lined up with nothing. Pass the
+# width the set actually needs and the values line up.
+render_kv_w() {
+    printf '   %b%-*s%b %s\n' "$GY" "$1" "$2" "$NC" "$3" >&2
+    _render_cursor_advanced
+}
+
 # render_key — a secret. The only thing in the installer that gets bold white,
 # because it is the only thing that must not be skimmed past.
 render_key() {

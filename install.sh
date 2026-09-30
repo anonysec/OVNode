@@ -96,7 +96,10 @@ YL=$'\033[33m'; CY=$'\033[36m'; GY=$'\033[90m'
 # The ref is the subtlety: the installer's own tag should pin the libs, but a
 # curl-piped installer comes from a branch and may name a tag whose lib predates
 # helpers this file needs. Tag first, main as fallback, result checked.
-LIB_FILES=(common.sh render.sh)   # one entry per file in scripts/lib
+# doctor.sh is the health check. The installer never calls it, but keeping one
+# directory and one rule beats a second source path: a lib here is fetchable by
+# name, and tests/test_no_duplicate_functions.py holds both repos to it.
+LIB_FILES=(common.sh render.sh doctor.sh)   # one entry per file in scripts/lib
 # render_menu, not tui_select: the alias survives for older callers, and a lib set
 # that only defines the old name means the libs predate this renderer.
 LIBS_NEEDED=(die render_banner render_card render_line render_ok render_warn render_menu

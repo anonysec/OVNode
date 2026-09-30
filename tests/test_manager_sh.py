@@ -25,7 +25,10 @@ MANAGER_PATH = Path(MANAGER)
 LIB_DIR = REPO / "scripts" / "lib"
 # manager.sh sources every lib it needs, so the sandbox copies the whole set
 # rather than one file — a missing render.sh fails the same way on a real box.
-LIBS = ("common.sh", "render.sh")
+# Every file manager.sh sources. Kept in step with the `for _lib in ...` loop in
+# manager.sh: a lib missing from this list makes every sandbox test fail with a
+# "not found" error instead of the assertion it was written for.
+LIBS = ("common.sh", "render.sh", "doctor.sh")
 INSTALLER = REPO / "install.sh"
 
 
@@ -77,21 +80,28 @@ def test_help_documents_manager_surface():
         "status",
         "update",
         "restart",
-        "restart-vpn",
+        "restart core",
         "logs",
         "backup",
         "tls",
+        "auth",
         "uninstall",
         "ovn",
     ):
         assert token in output, f"help missing {token}"
 
 
-def test_bare_run_without_terminal_is_usage_error():
-    """Bare `ovn` with no tty must not start doing things."""
+def test_bare_run_prints_the_command_list():
+    """Bare `ovn` lists and exits 0, tty or not — the same as `ovm`.
+
+    It used to open an interactive menu on a tty and die without one. Both were
+    wrong: a bare invocation in a provisioning script must not wait for input,
+    and dying with "No terminal" made the tool look broken in a pipeline.
+    """
     r = mgr()
-    assert r.returncode != 0
-    assert "No terminal" in r.stderr
+    assert r.returncode == 0
+    assert "USAGE" in r.stderr
+    assert "Select" not in r.stderr, "nothing may prompt"
 
 
 def test_unknown_option_fails():
@@ -99,22 +109,21 @@ def test_unknown_option_fails():
     assert r.returncode == 2
 
 
-def test_numbered_menu_lists_core_ops():
-    """x-ui style: numbered entries for every core op, 0 exits."""
+def test_every_core_op_is_reachable_without_a_menu():
+    """The menu was a second hand-maintained list of the tool's own commands.
+
+    It had ten entries against thirteen verbs, and one arm still called a
+    function that had been deleted — a runtime failure no test caught. So the
+    requirement is now the inverse: every core op is a verb, and there is no
+    menu to fall out of step.
+    """
     with open(MANAGER, encoding="utf-8") as f:
         content = f.read()
-    assert "manager_menu()" in content
-    for label in (
-        "Status",
-        "Update node",
-        "Restart agent",
-        "Restart VPN",
-        "Logs",
-        "Backup now",
-        "TLS certificate",
-        "Uninstall node",
-    ):
-        assert label in content, f"menu missing {label}"
+    assert "manager_menu" not in content
+    help_out = mgr("help")
+    text = help_out.stdout + help_out.stderr
+    for label in ("status", "update", "restart", "logs", "backup", "tls", "doctor", "uninstall"):
+        assert f"ovn {label}" in text, f"no verb for {label}"
 
 
 def test_update_delegates_to_installer(tmp_path):
@@ -145,10 +154,10 @@ def test_status_not_installed_reports_and_exits_4(tmp_path):
     # already host a node (dev boxes, this repo's own CI sandbox, prod).
     r = mgr("status", env={**os.environ, "OVN_APP_DIR": str(tmp_path / "empty")})
     assert r.returncode == 4  # EX_NOTINSTALLED
-    assert any(
-        ln.strip().startswith("Installed") and ln.strip().endswith("no")
-        for ln in r.stderr.splitlines()
-    )
+    # A failure line, not a row. "Installed: no" read as one more fact on a
+    # working node, and the exit code is what a script checks anyway.
+    failed = [ln for ln in r.stderr.splitlines() if ln.strip().startswith("\u2717 not installed")]
+    assert failed, r.stderr
     assert r.stdout == ""
 
 
@@ -249,11 +258,17 @@ def test_no_function_ends_with_a_failing_test():
 
 
 def test_doctor_checks_agent_vpn_disk_api_cert_backups():
-    """doctor covers the node-critical checks, each with its fix hint."""
-    with open(MANAGER, encoding="utf-8") as f:
+    """doctor covers the node-critical checks, each with its fix hint.
+
+    Read from scripts/lib/doctor.sh, where the checks now live, not manager.sh.
+    The split was deliberate: the report is a self-contained unit and the file
+    was the one thing in this tool that kept growing past the point where a
+    reader could hold it.
+    """
+    with open(LIB_DIR / "doctor.sh", encoding="utf-8") as f:
         content = f.read()
     assert "do_doctor()" in content
-    for token in ("Node health", "Certificate", "Backup", "Disk", "Agent", "OpenVPN", "API"):
+    for token in ("Certificate", "Backup", "Disk", "Agent", "OpenVPN", "API", "PKI"):
         assert token in content, f"doctor missing {token}"
     for fix in ("ovn restart", "ovn backup", "ovn tls", "ovn logs"):
         assert fix in content, f"doctor missing fix hint {fix}"
@@ -292,11 +307,14 @@ def test_recover_update_delegates_to_installer():
 def test_doctor_covers_update_snapshot_pki():
     """doctor must see interrupted transactions, snapshot validity and
     VPN PKI expiry — not just agent/disk/API."""
-    content = MANAGER_PATH.read_text(encoding="utf-8")
+    content = (LIB_DIR / "doctor.sh").read_text(encoding="utf-8")
     tokens = (
-        "ovn recover-update",
+        # `ovn update`, not the retired `ovn recover-update`: a fix hint naming
+        # a name that is no longer in the help is a dead end for whoever follows
+        # it, and `ovn update` recovers an interrupted one before starting.
+        "ovn update",
         "latest_snapshot node",
-        "PKI ",
+        "PKI",
         ".operation.lock",
         "repair-unit",
     )
@@ -328,10 +346,19 @@ def test_status_is_concise_and_all_is_opt_in():
     )
 
 
-def test_manager_menu_clears_between_screens():
+def test_there_is_no_menu_to_clear_between_screens():
+    """The menu is gone, so there is nothing to clear.
+
+    It was a second hand-maintained list of the tool's own commands: ten
+    entries against thirteen verbs, with one arm still calling a deleted
+    function. Bare `ovn` prints the list and exits, exactly like `ovm`.
+    """
     with open(MANAGER, encoding="utf-8") as f:
         content = f.read()
-    assert "command clear" in content.split("manager_menu()")[1].split("\n}")[0]
+    assert "manager_menu" not in content
+    assert "backup_submenu" not in content
+    r = mgr()
+    assert r.returncode == 0 and "USAGE" in r.stderr
 
 
 def test_credentials_reports_not_installed_without_needing_root(tmp_path):
@@ -521,7 +548,8 @@ def test_restore_without_a_name_lists_the_backups(tmp_path):
         assert name in r.stderr, (name, r.stderr)
     assert re.search(r"\d{4}-\d{2}-\d{2} \d{2}:\d{2}", r.stderr), r.stderr  # a date
     assert re.search(r"\d+(\.\d+)?[KMGT]?B?", r.stderr), r.stderr  # a size
-    assert "Restore one with: ovn restore <name>" in r.stderr
+    # Lowercase, like the panel's hint rows: it is an instruction, not a heading.
+    assert "restore one with: ovn restore <name>" in r.stderr
 
     # Listing changes nothing anywhere: no safety copy, no data, no PKI.
     assert sorted(path.name for path in backups.iterdir()) == sorted([older.name, newer.name])

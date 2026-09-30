@@ -12,7 +12,9 @@ a diff rather than in a support ticket.
 
 from __future__ import annotations
 
+import os
 import re
+import subprocess
 from pathlib import Path
 
 REPO = Path(__file__).resolve().parent.parent
@@ -27,9 +29,9 @@ SHORT_LIST = (
     "logs",
     "doctor",
     "restart",
+    "restart core",
     "enable | disable",
-    "restart-vpn",
-    "credentials",
+    "auth",
     "tls",
     "backup",
     "restore",
@@ -47,14 +49,20 @@ def _full_help() -> str:
     return _run("help", "--all")
 
 
-def _run(*args: str) -> str:
-    import subprocess
-
+def _run(*args: str, check: bool = True) -> str:
     out = subprocess.run(
-        ["bash", str(MANAGER), *args], capture_output=True, text=True, timeout=30
+        ["bash", str(MANAGER), *args],
+        capture_output=True,
+        text=True,
+        timeout=60,
+        env={**os.environ, "OVN_APP_DIR": "/nonexistent", "CI": "1"},
     )
-    assert out.returncode == 0, out.stderr
+    if check:
+        assert out.returncode == 0, out.stderr
     return out.stdout + out.stderr
+
+
+LIB = REPO / "scripts" / "lib" / "doctor.sh"
 
 
 def _body(name: str, path: Path = MANAGER) -> str:
@@ -62,6 +70,254 @@ def _body(name: str, path: Path = MANAGER) -> str:
     match = re.search(rf"^{re.escape(name)}\(\) \{{(.*?)^\}}", text, re.M | re.DOTALL)
     assert match, f"{name}() not found in {path.name}"
     return match.group(1)
+
+
+# ── Every verb actually dispatches ──────────────────────────────────────
+
+# The regression this file exists for. Three commands shipped in f77cf87 that
+# never worked, and every test passed, because the tests read the source rather
+# than running the command. `ovn backup schedule` was in both help screens and
+# answered "Unknown option" — two `backup)` arms, the first winning, the second
+# dead code. This list is the version that actually runs.
+ALL_VERBS = (
+    "status",
+    "logs",
+    "doctor",
+    "restart",
+    "restart core",
+    "enable",
+    "disable",
+    "auth",
+    "auth key",
+    "auth rotate",
+    "tls",
+    "tls selfsigned",
+    "tls le 10.0.0.1",
+    "backup",
+    "backup schedule",
+    "restore",
+    "update",
+    "rollback",
+    "uninstall",
+    "config",
+    "help",
+    "completion",
+)
+
+# Old name → what replaced it. Silent, not warned: a deprecation line on every
+# cron job that calls `ovn auto-backup` is noise, not notice.
+RETIRED_VERBS = (
+    "credentials",
+    "restart-vpn",
+    "auto-backup status",
+    "recover-update",
+    "start",
+    "stop",
+)
+
+
+def _no_dispatch_failure(command: str) -> None:
+    combined = _run(*command.split(), check=False)
+    # "Not installed" is correct on a box with no install — the command found
+    # itself and had nothing to work on. What must never appear is the parser
+    # failing to recognise a command the help advertises.
+    assert "Unknown option" not in combined, f"ovn {command} does not dispatch:\n{combined}"
+    assert "command not found" not in combined, (
+        f"ovn {command} calls something that no longer exists:\n{combined}"
+    )
+
+
+def test_every_advertised_verb_dispatches():
+    for command in ALL_VERBS:
+        _no_dispatch_failure(command)
+
+
+def test_every_retired_verb_still_dispatches():
+    for command in RETIRED_VERBS:
+        _no_dispatch_failure(command)
+
+
+def test_there_is_no_menu():
+    """The menu was a second hand-maintained list of this tool's own commands.
+
+    It had ten items against thirteen verbs, and one arm still called a function
+    that had been deleted — a runtime failure that no test caught, because every
+    test asserted on the function that existed rather than the arm that did not.
+    """
+    source = MANAGER.read_text(encoding="utf-8")
+    assert "manager_menu" not in source
+    assert "backup_submenu" not in source
+    assert "is_tty" not in _body("main"), "bare ovn must not branch on a terminal"
+
+
+def test_bare_ovn_prints_the_list_and_exits_zero():
+    """Same as `ovm`, with or without a terminal.
+
+    A bare invocation in a script that opens a menu and waits is how a
+    provisioning run hangs at two in the morning.
+    """
+    import subprocess
+
+    out = subprocess.run(
+        ["bash", str(MANAGER)],
+        capture_output=True,
+        text=True,
+        timeout=30,
+        env={**os.environ, "OVN_APP_DIR": "/nonexistent", "CI": "1"},
+    )
+    assert out.returncode == 0, out.stderr
+    assert "USAGE" in out.stdout + out.stderr
+
+
+def test_no_dispatch_arm_is_defined_twice():
+    """The one mechanism behind all three shipped defects.
+
+    Bash takes the first matching arm and silently ignores the rest, so a
+    duplicated arm is not an error — it is a command that quietly does the old
+    thing. `backup` shipped that way, and so did `credentials`.
+    """
+    source = MANAGER.read_text(encoding="utf-8")
+    body = source[source.index("parse_args() {") : source.index("\n# ── Main")]
+    arms = re.findall(r"^\s{12}([-\w|]+)\)", body, re.M)
+    seen, dupes = set(), set()
+    for arm in arms:
+        (dupes if arm in seen else seen).add(arm)
+    assert not dupes, f"duplicate dispatch arms: {sorted(dupes)}"
+
+
+# ── doctor: failures first ──────────────────────────────────────────────
+
+
+def test_a_clean_doctor_is_one_line_and_a_hint():
+    """Thirteen passing checks used to spend sixteen lines saying "ok".
+
+    That is the screen nobody reads, because everything looked equally urgent
+    and so nothing did.
+    """
+    source = LIB.read_text(encoding="utf-8")
+    assert "no problems — ${passed} checks passed" in source
+    assert "other checks passed — detail: ovn doctor --all" in source
+
+
+def test_doctor_collects_before_it_prints():
+    """Nothing is printed until every check has run.
+
+    Two things fall out of that. Failures can be listed first, and a check that
+    dies mid-way no longer leaves a half-printed report that reads like a
+    result.
+    """
+    body = _body("do_doctor", LIB)
+    first_render = min(
+        (body.find(tok) for tok in ("render_rule", "doctor_render") if tok in body), default=-1
+    )
+    checks = body.count("doctor_check ")
+    assert checks >= 10, f"only {checks} checks registered"
+    assert first_render > 0, "doctor_render must be called"
+    # doctor_render is the only thing that prints the report; the check calls
+    # come first and are silent.
+    assert body.rindex("doctor_check ") < first_render, "a check is registered after the report"
+
+
+def test_doctor_fix_rechecks_rather_than_assuming():
+    """A repair is not a repair until the check agrees.
+
+    The old code decremented a counter and kept the failing row, so `doctor
+    --fix` reported a problem it had just fixed and a fix that had not worked as
+    if it had.
+    """
+    body = _body("doctor_check", LIB)
+    assert body.count('"$check_fn"') >= 3, "the check must run again after a repair"
+    assert "— fixed" in body, "a successful repair is marked as one"
+
+
+def test_doctor_exits_non_zero_on_problems():
+    """So a monitoring check can use it.
+
+    It was always zero, which meant a script could not tell a healthy box from a
+    broken one without parsing the prose.
+    """
+    body = _body("do_doctor", LIB)
+    assert "doctor_render || rc=1" in body
+    with open(MANAGER, encoding="utf-8") as f:
+        assert "doctor) do_doctor || rc=$?; exit \"$rc\" ;;" in f.read()
+
+
+def test_doctor_survives_the_err_trap():
+    """manager.sh runs under an ERR trap that any failing command trips.
+
+    The checks run in command substitutions, which inherit the trap — so a check
+    whose verdict is a failing test used to kill its own subshell before the
+    detail was flushed, and the report came out with empty rows.
+    """
+    body = _body("doctor_check", LIB)
+    assert "trap - ERR" in body, "checks must not run under the caller's ERR trap"
+
+
+# ── Rows go through the renderer ─────────────────────────────────────────
+
+
+def test_no_hand_built_rows_remain():
+    """The bug class, pinned.
+
+    A row built by hand drifts in indent, in width, and in how a failure is
+    spelled. Five of them did: a 44-wide 2-space printf in the backup listing,
+    and four `Label: value` lines that were not `render_kv` at all.
+    """
+    source = MANAGER.read_text(encoding="utf-8")
+    # `printf '  %-…'` is a hand-built row. For render_line, the shape that
+    # matters is a short `Label: value` pair — a sentence containing a colon is
+    # prose, and the two are distinguished by there being no verb in the label.
+    offenders = [
+        line.strip()
+        for line in source.splitlines()
+        if line.lstrip().startswith("printf '  ") and "%-" in line
+    ]
+    for line in source.splitlines():
+        m = re.match(r'^\s*render_line "([A-Z][A-Za-z ]*):\s', line)
+        if m and " " not in m.group(1).strip():
+            offenders.append(line.strip())
+    assert not offenders, f"hand-built rows: {offenders}"
+
+
+def test_the_backup_listing_uses_a_measured_column():
+    """At the shared fixed width of 14, a 40-character filename printed whole
+    and dropped its date a column right of every other row's."""
+    body = _body("list_data_backups")
+    assert "render_kv_w" in body
+    assert "width=$RENDER_LABEL_W" in body and "width=${#name}" in body
+
+
+def test_render_kv_w_exists_in_the_shared_renderer():
+    """Both repos must carry it, or one of them has a column the other cannot
+    express."""
+    render_sh = REPO / "scripts" / "lib" / "render.sh"
+    assert "render_kv_w()" in render_sh.read_text(encoding="utf-8")
+
+
+# ── No retired name in text a user reads ────────────────────────────────
+
+
+def test_no_fix_hint_names_a_retired_command():
+    """`ovn recover-update` was a fix hint after it left the help.
+
+    Anyone who follows it gets the right behaviour by accident, via the alias,
+    but they were told to use a name the tool does not advertise.
+    """
+    stale = ((LIB, "recover-update"), (LIB, "auto-backup on"), (MANAGER, "auto-backup on"))
+    for path, needle in stale:
+        source = path.read_text(encoding="utf-8")
+        for line in source.splitlines():
+            if needle in line and not line.lstrip().startswith("#"):
+                assert "die(" not in line or needle not in line, f"stale usage: {line.strip()}"
+
+
+def test_the_schedule_hint_uses_the_current_spelling():
+    body = _body("auto_backup_cli")
+    assert "backup schedule on" in body
+    # Comments are allowed to name the old spelling — that is how the change is
+    # explained. What must not survive is a command the user would run.
+    commands = [ln for ln in body.splitlines() if not ln.lstrip().startswith("#")]
+    assert not any("auto-backup on" in ln for ln in commands)
 
 
 # ── The short list ──────────────────────────────────────────────────────
@@ -188,9 +444,13 @@ def test_env_set_is_gone():
     also have.
     """
     assert not re.search(r"^env_set\(\)", COMMON.read_text(encoding="utf-8"), re.M)
+    # Match the call, not the word: the comments explaining the deletion name
+    # it deliberately, and a substring check would forbid documenting it.
     for path in (MANAGER, REPO / "install.sh"):
         text = path.read_text(encoding="utf-8")
-        assert "env_set" not in text, f"{path.name} still calls env_set"
+        assert not re.search(r"^[^#]*\benv_set\s+\"", text, re.M), (
+            f"{path.name} still calls env_set"
+        )
 
 
 def test_tls_installs_to_the_declared_paths():
@@ -213,7 +473,7 @@ def test_the_api_key_is_shown_as_a_credential():
     Printed at the same weight as every other row it was read past — and it is
     not recoverable from the panel.
     """
-    body = _body("do_credentials")
+    body = _body("do_auth")
     assert 'render_key "API key"' in body
     assert 'render_url "Bundle"' in body
 

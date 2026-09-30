@@ -40,6 +40,9 @@ RESTORE_NAME=""
 # tls's subcommand. Empty means the bare form: report the certificate, then
 # list what can replace it, without asking anything.
 TLS_ACTION="" TLS_DOMAIN="" TLS_KEY="" TLS_CERT="" TLS_REGENERATE=0
+# auth's action. Empty means the bare form: show the credential, then list what
+# can be done about it.
+AUTH_ACTION=""
 NODE_NAME="${OVN_NAME:-}"
 
 # Shared helpers (output, prompts, TLS, menus), all defined in
@@ -53,7 +56,7 @@ NODE_NAME="${OVN_NAME:-}"
 # newer manager.sh against an older installed lib calls helpers that lib has
 # never heard of and dies with "<name>: command not found".
 _SELF_DIR="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
-for _lib in common.sh render.sh; do
+for _lib in common.sh render.sh doctor.sh; do
     if [[ -f "$_SELF_DIR/scripts/lib/$_lib" ]]; then
         _libdir="$_SELF_DIR/scripts/lib"
     elif [[ -f "$APP_DIR/scripts/lib/$_lib" ]]; then
@@ -181,7 +184,11 @@ do_status() {
             render_kv "OpenVPN cfg" "$OPENVPN_ROOT/server"
         fi
     else
-        render_kv "Installed" "no"
+        # A failure line, not a row. "Installed: no" reads as one more fact on a
+        # working node, and the exit code is what a script checks anyway — this
+        # is for the person, and a person should not have to notice a missing
+        # subject in a table of values.
+        render_fail "not installed" "$APP_DIR/.env missing"
     fi
 
     [[ "$installed" == "true" ]] || exit "$EX_NOTINSTALLED"
@@ -295,18 +302,31 @@ list_data_backups() {
     while IFS= read -r f; do
         [[ -n "$f" ]] && files+=("$f")
     done < <(data_backup_files)
+    render_line ""
     if (( ${#files[@]} == 0 )); then
-        render_line "No data backups in /var/backups — create one with: ${CLI_ALIAS} backup"
+        render_line "${B}Data backups${NC} in /var/backups"
+        render_line "    none — create one with: ${CLI_ALIAS} backup"
         return 0
     fi
-    render_line ""
     render_line "${B}Data backups${NC} in /var/backups"
+    # render_kv_w at a width computed from the filenames. This listing hand-
+    # rolled its own 2-space indent and its own 44-wide column, which put it out
+    # of line with every render_kv row on every other screen; and at the shared
+    # fixed width of 14, a 40-character filename dropped its date a column right
+    # of every other row's. The column has to fit the labels actually present.
+    local name when size width=$RENDER_LABEL_W
     for f in "${files[@]}"; do
-        printf '  %-44s %s  %s\n' "$(basename "$f")" \
-            "$(date -r "$f" '+%Y-%m-%d %H:%M')" "$(du -h "$f" 2>/dev/null | cut -f1)" >&2
+        name="$(basename "$f")"
+        (( ${#name} > width )) && width=${#name}
     done
-    render_line ""
-    render_line "  Restore one with: ${CLI_ALIAS} restore <name>"
+    for f in "${files[@]}"; do
+        name="$(basename "$f")"
+        when="$(date -r "$f" '+%Y-%m-%d %H:%M')"
+        size="$(du -h "$f" 2>/dev/null | cut -f1)"
+        render_kv_w "$width" "$name" "$when  $size"
+    done
+    render_blank
+    render_line "    restore one with: ${CLI_ALIAS} restore <name>"
 }
 
 # Where an archive is unpacked. Its name decides, so the PKI backup cannot
@@ -340,7 +360,7 @@ do_restore() {
     tls="$(env_get "$APP_DIR/.env" TLS_METHOD)"; : "${tls:=selfsigned}"
     scheme="http"; [[ "$tls" != "none" ]] && scheme="https"
 
-    render_line "Restoring: $name"
+    render_kv "Restoring" "$name"
     confirm "Replace the current node data with this backup?" n || die "Cancelled."
 
     # Safety copy first, through the same helper `ovn backup` uses.
@@ -354,7 +374,7 @@ do_restore() {
         if ! grep -qxF "$f" <<< "$before"; then safety+=("$f"); fi
     done <<< "$after"
     (( ${#safety[@]} )) || die "Could not back up the current state — refusing to restore without a safety copy" "$EX_ERROR"
-    for f in "${safety[@]}"; do render_line "Safety copy: $(basename "$f")"; done
+    for f in "${safety[@]}"; do render_kv "Safety copy" "$(basename "$f")"; done
 
     # Point of no return: nothing may write while the tree is replaced.
     if is_docker_node; then
@@ -427,27 +447,27 @@ auto_backup_cli() {
             render_ok "Auto backup disabled (host timer removed)"
             ;;
         status|"")
+            # render_kv, not a "Label: value" line built by hand, and the last
+            # row says the command that changes it — using the current spelling.
+            # The old text told you to run `auto-backup on`, a name that is
+            # retired and no longer in the short help.
             if [[ -f "$timer" ]]; then
-                render_line "Host timer: enabled ($(systemctl is-active ovnode-backup.timer 2>/dev/null || echo unknown))"
-                systemctl list-timers ovnode-backup.timer --no-pager 2>/dev/null | sed -n '2p' || true
+                render_kv "Auto backup" "enabled"
+                render_kv "Timer" "$(systemctl is-active ovnode-backup.timer 2>/dev/null || echo unknown)"
+                render_kv "Next" "$(systemctl list-timers ovnode-backup.timer --no-pager 2>/dev/null | sed -n '2p' | awk '{print $1, $2, $3}')"
             else
-                render_line "Host timer: disabled  (enable: ${CLI_NAME} auto-backup on)"
+                render_kv "Auto backup" "disabled"
+                render_kv "Enable" "${CLI_ALIAS} backup schedule on"
             fi
             ;;
         *)
-            die "Usage: $CLI_NAME auto-backup on [--time HH:MM] [--keep N] | off | status" "$EX_USAGE" ;;
+            die "Usage: $CLI_NAME backup schedule on [--time HH:MM] [--keep N] | off | status" "$EX_USAGE" ;;
     esac
 }
 
 node_tls() {
     local envfile="$APP_DIR/.env"
-    [[ -f "$envfile" ]] || die "Not installed ($envfile missing)"
-    local method keyfile certfile expiry
-    method="$(env_get "$envfile" TLS_METHOD)"; : "${method:=selfsigned}"
-    keyfile="$(env_get "$envfile" SSL_KEYFILE)"
-    certfile="$(env_get "$envfile" SSL_CERTFILE)"
-    expiry="$(openssl x509 -enddate -noout -in "$certfile" 2>/dev/null | cut -d= -f2 || true)"
-
+    local method="selfsigned" keyfile="" certfile="" expiry=""
     # Bare, it reports and lists. The numbered menu it used to open is the one
     # thing a script cannot answer, and the two questions it asked — what am I
     # running, how do I change it — are both answered here without a prompt.
@@ -456,6 +476,14 @@ node_tls() {
     # the read does. An operator who came to find out what `ovn tls` can do must
     # not be met with an error from the thing it was about to offer.
     if [[ -z "$TLS_ACTION" ]]; then
+        if [[ -f "$envfile" ]]; then
+            method="$(env_get "$envfile" TLS_METHOD)"; : "${method:=selfsigned}"
+            keyfile="$(env_get "$envfile" SSL_KEYFILE)"
+            certfile="$(env_get "$envfile" SSL_CERTFILE)"
+            expiry="$(openssl x509 -enddate -noout -in "$certfile" 2>/dev/null | cut -d= -f2 || true)"
+        else
+            render_warn "not installed — the paths below are where the installer would put them"
+        fi
         render_line ""
         render_line "${B}TLS certificate — panel ↔ node API${NC}"
         render_kv "Mode"      "$method"
@@ -469,6 +497,10 @@ node_tls() {
         render_line "  the paths come from .env — this writes the certificate, never the file"
         return 0
     fi
+
+    # Past the listing, a missing install is fatal — there is nothing to
+    # operate on and quietly returning success would be worse than an error.
+    [[ -f "$envfile" ]] || die "Not installed ($envfile missing)" "$EX_NOTINSTALLED"
 
     case "$TLS_ACTION" in
         selfsigned)
@@ -515,260 +547,8 @@ node_tls_install_to_declared() {
     secure_tls_files "$decl_key" "$decl_cert"
 }
 
-backup_submenu() {
-    while true; do
-        render_line ""
-        render_line "${B}Backup${NC}"
-        render_line "  ${WH}1${NC}) Backup now"
-        render_line "  ${WH}2${NC}) Restore from backup"
-        render_line "  ${WH}3${NC}) Auto-backup status"
-        render_line "  ${WH}4${NC}) Enable daily auto-backup"
-        render_line "  ${WH}5${NC}) Disable auto-backup"
-        render_line "  ${WH}0${NC}) Back"
-        render_line ""
-        local c
-        c="$(ask "Select" "0")"
-        case "${c:-0}" in
-            1) check_root; do_node_backup ;;
-            2) list_data_backups; do_restore "$(ask "Restore which backup" "")" ;;
-            3) auto_backup_cli status ;;
-            4) check_root; auto_backup_cli on ;;
-            5) check_root; auto_backup_cli off ;;
-            0|*) return 0 ;;
-        esac
-    done
-}
 
-manager_menu() {
-    while true; do
-        # Clear between menus, but never when output is piped.
-        if is_tty; then command clear >/dev/null 2>&1 || true; fi
-        render_line ""
-        render_line "  ${B}ovnode — node manager${NC}  ${GY}v${VERSION}${NC}"
-        render_line "  ${WH}1${NC}) Status"
-        render_line "  ${WH}2${NC}) Update node"
-        render_line "  ${WH}3${NC}) Restart agent"
-        render_line "  ${WH}4${NC}) Restart VPN"
-        render_line "  ${WH}5${NC}) Logs"
-        render_line "  ${WH}6${NC}) Backup"
-        render_line "  ${WH}7${NC}) TLS certificate"
-        render_line "  ${WH}8${NC}) Health check (doctor)"
-        render_line "  ${WH}9${NC}) Roll back update"
-        render_line "  ${WH}10${NC}) Uninstall node"
-        render_line "  ${WH}0${NC}) Exit"
-        render_line ""
-        local c
-        c="$(ask "Select" "0")"
-        case "${c:-0}" in
-            1) do_status ;;
-            2) delegate_update ;;
-            3) check_root; node_service_action restart ;;
-            4) check_root; restart_vpn ;;
-            5) do_node_logs "${LOGS_ARG:-100}" ;;
-            6) backup_submenu ;;
-            7) check_root; node_tls_menu ;;
-            8) do_doctor ;;
-            9) check_root; do_rollback ;;
-            10) delegate_uninstall ;;
-            0|*) return 0 ;;
-        esac
-    done
-}
 
-# ── Health check (doctor) ────────────────────────────────────────────
-# Read-only by default; --fix restarts a dead agent.
-do_doctor() {
-    [[ -d "$APP_DIR" ]] || die "Not installed ($APP_DIR missing)" "$EX_NOTINSTALLED"
-    # Up front, so the report is not half-printed before the error: step 4 below
-    # reads .env, and everything before it would look like a result.
-    if [[ -f "$APP_DIR/.env" && ! -r "$APP_DIR/.env" ]]; then
-        die "Cannot read $APP_DIR/.env — run with sudo." "$EX_ERROR"
-    fi
-    local problems=0
-    render_rule
-    render_line "  ${B}Node health${NC}"
-    # 1. Agent service.
-    local agent="unknown"
-    if is_docker_node; then
-        agent="docker"
-    elif has_systemd; then
-        agent="$(systemctl is-active "$SYSTEMD_SERVICE" 2>/dev/null || echo unknown)"
-    fi
-    if [[ "$agent" == "active" || "$agent" == "docker" ]]; then
-        render_kv "Agent" "$agent"
-    else
-        render_kv "Agent" "$agent"
-        render_warn "Fix: ovn restart"
-        problems=$((problems + 1))
-        if [[ "$FIX" -eq 1 ]]; then
-            render_line "Restarting the agent…"
-            node_service_action restart && problems=$((problems - 1)) || true
-        fi
-    fi
-    # 2. OpenVPN daemon.
-    local ovpn="unknown"
-    if is_docker_node; then
-        ovpn="in-container"
-        render_kv "OpenVPN" "$ovpn"
-    elif has_systemd; then
-        ovpn="$(systemctl is-active openvpn-server@server 2>/dev/null || echo unknown)"
-        if [[ "$ovpn" == "active" ]]; then
-            render_kv "OpenVPN" "$ovpn"
-        else
-            render_kv "OpenVPN" "$ovpn"
-            render_warn "Fix: ovn restart-vpn"
-            problems=$((problems + 1))
-        fi
-    fi
-    # 3. Disk.
-    local disk
-    disk="$(df "$DATA_BASE" 2>/dev/null | awk 'NR==2 {print $5}' | tr -d '%' || echo 0)"
-    if (( disk < 80 )); then
-        render_kv "Disk" "${disk}% used"
-    else
-        render_kv "Disk" "${disk}% used"
-        render_warn "Fix: ovn backup --keep 7, then remove old tarballs in /var/backups"
-        problems=$((problems + 1))
-    fi
-    # 4. API answers (values from the installed .env).
-    local port tls scheme
-    port="$(env_get "$APP_DIR/.env" SERVICE_PORT)"; : "${port:=$DEFAULT_PORT}"
-    tls="$(env_get "$APP_DIR/.env" TLS_METHOD)"; : "${tls:=selfsigned}"
-    scheme="http"; [[ "$tls" != "none" ]] && scheme="https"
-    if wait_health "${scheme}://127.0.0.1:${port}/sync/health" 5; then
-        render_kv "API" "ok"
-    else
-        render_kv "API" "unreachable"
-        render_warn "Fix: ovn logs 50, then ovn restart"
-        problems=$((problems + 1))
-    fi
-    # 5. Server certificate expiry.
-    local cert days_left
-    cert="$(env_get "$APP_DIR/.env" SSL_CERTFILE)"; : "${cert:=/etc/ssl/self-signed/fullchain.pem}"
-    if [[ -f "$cert" ]]; then
-        days_left=$(( ($(date -d "$(openssl x509 -enddate -noout -in "$cert" 2>/dev/null | cut -d= -f2)" +%s 2>/dev/null || echo 0) - $(date +%s)) / 86400 ))
-        render_kv "Certificate" "expires in ${days_left}d"
-        if (( days_left <= 30 )); then
-            render_warn "Fix: ovn tls"
-            problems=$((problems + 1))
-        fi
-    else
-        render_kv "Certificate" "not found"
-        problems=$((problems + 1))
-    fi
-    # 6. Backup age.
-    local newest age
-    newest="$(ls -t /var/backups/node-*.tar.gz 2>/dev/null | head -1 || true)"
-    if [[ -n "$newest" ]]; then
-        age=$(( ($(date +%s) - $(stat -c %Y "$newest" 2>/dev/null || echo 0)) / 86400 ))
-        render_kv "Backup" "${age}d old"
-        if (( age > 7 )); then
-            render_warn "Fix: ovn backup"
-            problems=$((problems + 1))
-        fi
-    else
-        render_kv "Backup" "none yet"
-        render_warn "Fix: ovn backup"
-        problems=$((problems + 1))
-    fi
-    # 7. Interrupted update transaction.
-    local update_interrupted=0 node_dir="$DATA_BASE/$(node_name_from_env)"
-    [[ -f "$node_dir/update-maintenance" ]] && update_interrupted=1
-    if [[ "$update_interrupted" -eq 0 && -f "$DATA_BASE/update-state.json" ]]; then
-        python3 - "$DATA_BASE/update-state.json" <<'PY' >/dev/null 2>&1 || update_interrupted=1
-import json, sys
-phase = json.load(open(sys.argv[1])).get("phase")
-raise SystemExit(0 if phase in {"committed", "failed_over"} else 1)
-PY
-    fi
-    if [[ "$update_interrupted" -eq 1 ]]; then
-        render_kv "Update" "recovery required"
-        render_warn "Fix: ovn recover-update"
-        problems=$((problems + 1))
-        if [[ "$FIX" -eq 1 ]]; then
-            render_line "Recovering the interrupted update…"
-            if run_installer recover-update; then
-                problems=$((problems - 1))
-            else
-                render_warn "Update recovery needs manual attention"
-            fi
-        fi
-    else
-        render_kv "Update" "no interrupted transaction"
-    fi
-    # 8. Code snapshot usable for explicit rollback.
-    local snap
-    snap="$(latest_snapshot node 2>/dev/null || true)"
-    if [[ -n "$snap" ]]; then
-        if tar -tzf "$snap" >/dev/null 2>&1; then
-            render_kv "Snapshot" "ok"
-        else
-            render_kv "Snapshot" "corrupt ($snap)"
-            render_warn "Fix: ovn update (creates a fresh snapshot)"
-            problems=$((problems + 1))
-        fi
-    else
-        render_kv "Snapshot" "none yet (created on first update)"
-    fi
-    # 9. VPN PKI expiry (CA + server cert): a lapsed CA silently kills
-    # every client, and the API-TLS check above does not cover it.
-    local pki_dir="$OPENVPN_ROOT/server/pki"
-    for cert_label in "ca:ca.crt" "server:issued/server.crt"; do
-        local label="${cert_label%%:*}" file="$pki_dir/${cert_label#*:}"
-        if [[ -f "$file" ]]; then
-            local pki_days
-            pki_days=$(( ($(date -d "$(openssl x509 -enddate -noout -in "$file" 2>/dev/null | cut -d= -f2)" +%s 2>/dev/null || echo 0) - $(date +%s)) / 86400 ))
-            if (( pki_days > 30 )); then
-                render_kv "PKI $label" "expires in ${pki_days}d"
-            else
-                render_kv "PKI $label" "expires in ${pki_days}d — plan renewal"
-                render_warn "VPN $label certificate expires in ${pki_days}d"
-                problems=$((problems + 1))
-            fi
-        fi
-    done
-    # 10. Stale operation lock (update/recover/uninstall coordination).
-    if [[ -d "$DATA_BASE/.operation.lock" ]]; then
-        local lock_pid
-        lock_pid="$(cat "$DATA_BASE/.operation.lock/pid" 2>/dev/null || true)"
-        if [[ "$lock_pid" =~ ^[0-9]+$ ]] && kill -0 "$lock_pid" 2>/dev/null; then
-            render_kv "Op lock" "held by process $lock_pid"
-        else
-            render_kv "Op lock" "stale — safe to clear"
-            render_warn "Fix: ovn doctor --fix"
-            problems=$((problems + 1))
-            if [[ "$FIX" -eq 1 ]]; then
-                rm -rf "$DATA_BASE/.operation.lock" \
-                    && render_kv "Op lock" "stale lock cleared" && problems=$((problems - 1)) \
-                    || render_warn "Could not clear the operation lock"
-            fi
-        fi
-    fi
-    # 11. Host integration files (unit / NAT / logrotate present).
-    if ! is_docker_node && has_systemd; then
-        if [[ -f "/etc/systemd/system/$SYSTEMD_SERVICE" ]]; then
-            render_kv "Unit" "present"
-        else
-            render_kv "Unit" "missing"
-            render_warn "Fix: ovn doctor --fix"
-            problems=$((problems + 1))
-            if [[ "$FIX" -eq 1 ]]; then
-                if run_installer repair-unit; then
-                    problems=$((problems - 1))
-                else
-                    render_warn "Unit repair failed"
-                fi
-            fi
-        fi
-    fi
-    render_rule
-    if (( problems == 0 )); then
-        render_ok "Healthy — nothing to fix"
-    else
-        render_warn "$problems problem(s) found"
-    fi
-    return 0
-}
 
 # Roll back to the newest pre-update code snapshot (update failover).
 do_rollback() {
@@ -781,7 +561,7 @@ do_rollback() {
     snap="$(latest_snapshot node)"
     [[ -n "$snap" ]] || die "No code snapshot in /var/backups — nothing to roll back to" "$EX_ERROR"
     check_root
-    render_line "Rolling back to: $snap"
+    render_kv "Snapshot" "$snap"
     [[ "$YES" -eq 1 ]] || confirm "Restore the pre-update tree and restart?" || exit "$EX_OK"
     local port tls scheme
     port="$(env_get "$APP_DIR/.env" SERVICE_PORT)"; : "${port:=$DEFAULT_PORT}"
@@ -801,8 +581,11 @@ do_rollback() {
 # Node registration values, re-readable at any time — the installer shows them
 # once on the Ready card, and this is how they come back after --quiet or a
 # closed terminal. Read from the same .env the agent loads, so they cannot drift.
-do_credentials() {
-    # Installed-check first, so the root gate stays about the secret.
+# `ovn auth`. The node has one credential and two states — before the panel
+# has it, and after — and the right action differs between them, so the state
+# comes first and the action follows from it. Same shape as the panel's
+# `ovm auth`, so the rule is learned once for both tools.
+do_auth() {
     [[ -f "$APP_DIR/.env" ]] || die "OVNode is not installed." "$EX_NOTINSTALLED"
     check_root
 
@@ -824,20 +607,51 @@ do_credentials() {
     # Same shape as the installer's Ready card, or the panel cannot register it.
     bundle="ovnode://${node}@${host}:${port}?key=${key}&tls=${tls_flag}"
 
-    render_kv "Node"     "$node"
-    render_kv "Service"  "${scheme}://${host}:${port}"
-    # Bold, and one line of prose under it, because this is the one value on
-    # screen that gets copied out of it. Printed at the same weight as every
-    # other row it was read past, and the key is not recoverable from the panel
-    # — losing it means re-enrolling the node.
-    render_key "API key" "$key"
-    render_url "Bundle"  "$bundle"
-    render_line "  paste the bundle into the panel to register this node"
-    # Worth saying out loud, because there is no command that hides it: .env is
-    # user-owned, so a rotated key is one the operator edits in. Saying that is
-    # better than letting them look for a `rotate` that does not exist.
-    render_line "  to rotate: change API_KEY in $APP_DIR/.env, then ovn restart"
-    render_line "  the panel must be given the new key too — there is one credential"
+    case "$AUTH_ACTION" in
+        key)
+            render_kv "Node"     "$node"
+            render_kv "Service"  "${scheme}://${host}:${port}"
+            # Bold, and one line of prose under it, because this is the one value
+            # on screen that gets copied out of it. Printed at the same weight as
+            # every other row it was read past, and the key is not recoverable
+            # from the panel — losing it means re-enrolling the node.
+            render_key "API key" "$key"
+            render_url "Bundle"  "$bundle"
+            render_line "  paste the bundle into the panel to register this node"
+            return 0 ;;
+        rotate) auth_rotate; return $? ;;
+    esac
+
+    render_kv "Owner"     "$node"
+    render_kv "Service"   "${scheme}://${host}:${port}"
+    render_kv "API key"   "set — see: ovn auth key"
+    render_blank
+    render_kv "Key"    "ovn auth key — print the key and the registration bundle"
+    render_kv "Rotate" "ovn auth rotate — generate a new key"
+}
+
+# Generate a replacement key, print it, and tell the operator the one line to
+# change. It does not edit .env.
+#
+# .env is written once by the installer and belongs to the operator afterwards —
+# the same rule that retired env_set. A command that quietly rewrote the file
+# would reopen exactly the split-brain that rule exists to prevent, and the
+# operator would have no way to see that the file their backups carry had
+# changed under them. So the key is generated, shown, and left for them.
+auth_rotate() {
+    local envfile="$APP_DIR/.env" new
+    # Same generator and length the installer uses, so a rotated key is
+    # indistinguishable from an installed one — anything that validates length
+    # or shape keeps working.
+    new="$(openssl rand -hex 32)" || die "Could not generate a key" "$EX_ERROR"
+    [[ ${#new} -ge 16 ]] || die "Could not generate a key" "$EX_ERROR"
+
+    render_ok "new API key"
+    render_key "API key" "$new"
+    render_line "  change one line in $envfile:"
+    render_line "    API_KEY=$new"
+    render_line "  then: ovn restart, and give the panel the same key"
+    render_line "  the old key stops working the moment the agent restarts"
 }
 
 # `ovn config` — every effective setting and where it comes from. Read-only.
@@ -911,7 +725,7 @@ do_completion() {
 
 # ── Help / args ────────────────────────────────────────────────────────
 show_help() {
-    # Eleven verbs, one screen, and the same shape as the panel's so the two
+    # Twelve verbs, one screen, and the same shape as the panel's so the two
     # read as one product. Everything else is one flag away.
     cat << 'EOF' >&2
   ovnode — node manager  (alias: ovn)
@@ -921,10 +735,12 @@ show_help() {
     ovn logs [N|-f]         Last N lines, or follow live
     ovn doctor [--fix]      Health checks; --fix applies the safe ones
     ovn restart             Restart the node agent
+    ovn restart core        Restart the OpenVPN server
     ovn enable | disable    Automatic start on or off
-    ovn restart-vpn         Restart or reload OpenVPN
 
-    ovn credentials         Node name, service address, API key, bundle
+    ovn auth                Owner credential — lists the options
+    ovn auth key            API key and the panel registration bundle
+    ovn auth rotate         Generate a new API key
     ovn tls                 Certificate — lists the options
 
     ovn backup [--keep N]   Write a state + PKI backup now
@@ -952,10 +768,12 @@ show_help_full() {
     ovn doctor [--all]      Health checks; --all lists every one
     ovn doctor --fix        Same checks, plus safe automatic repairs
     ovn restart             Restart the node agent
+    ovn restart core        Restart the OpenVPN server process
     ovn enable | disable    Turn automatic start on or off
-    ovn restart-vpn         Restart or reload OpenVPN
 
-    ovn credentials         Node name, service address, API key, bundle
+    ovn auth                Credential state, and what to do about it
+    ovn auth key            API key and the panel registration bundle
+    ovn auth rotate         Generate a new API key, printed not stored
     ovn tls                 Certificate: method, key, cert, expiry
     ovn tls selfsigned      New self-signed certificate
     ovn tls le IP|DOMAIN    Let's Encrypt — ip or domain, detected
@@ -971,6 +789,8 @@ show_help_full() {
     ovn config              Every effective setting and where it comes from
 
   RETIRED NAMES — still work, no longer in the short help
+    ovn credentials         → ovn auth key
+    ovn restart-vpn         → ovn restart core
     ovn auto-backup         → ovn backup schedule
     ovn recover-update      → ovn update (it recovers first)
     ovn start | stop        → ovn restart
@@ -998,9 +818,12 @@ show_help_full() {
     state without DATA_DIR and cannot bind without the ports. Edit it freely;
     changes take effect on restart.
 
-    The API key lives here, not in the panel. It is printed once by the
-    installer and by `ovn credentials`; neither can be recovered elsewhere, so
-    losing .env means re-enrolling the node.
+    `ovn auth rotate` prints a new key and the line to change rather than
+    writing it, for the same reason. Nothing edits this file after install.
+
+    The API key lives here, not in the panel. It is printed by the installer and
+    by `ovn auth key`; neither can be recovered elsewhere, so losing .env means
+    re-enrolling the node.
 
   Update and uninstall are implemented in install.sh — this script delegates to
   $APP_DIR/install.sh so there is exactly one copy of each.
@@ -1013,7 +836,6 @@ parse_args() {
     while [[ $# -gt 0 ]]; do
         case "$1" in
             status)       ACTION="status"; shift ;;
-            credentials)  ACTION="credentials"; shift ;;
             update)       ACTION="update"; shift ;;
             uninstall|--uninstall) ACTION="uninstall"; shift ;;
             help|--help|-h)
@@ -1024,19 +846,20 @@ parse_args() {
                           show_help ;;
             start)        ACTION="start"; shift ;;
             stop)         ACTION="stop"; shift ;;
-            restart)      ACTION="restart"; shift ;;
+            restart)      ACTION="restart"; shift
+                          # `restart core` is the OpenVPN server process, named
+                          # here rather than as a second verb so the two restarts
+                          # sit next to each other and cannot drift apart.
+                          if [[ "${1:-}" == "core" ]]; then ACTION="restart-core"; shift; fi ;;
             enable|disable) ACTION="$1"; shift ;;
-            restart-vpn)  ACTION="restart-vpn"; shift ;;
-            backup)       ACTION="backup"; shift ;;
             auto-backup)  ACTION="auto-backup"; shift
                           if [[ $# -ge 1 && "$1" != -* ]]; then AUTO_BACKUP_ACTION="$1"; shift; fi ;;
             --keep)       eval "$need2"; BACKUP_KEEP="$2"; shift 2 ;;
+            --time)       eval "$need2"; BACKUP_TIME="$2"; shift 2 ;;
             restore)      ACTION="restore"; shift
                           if [[ $# -ge 1 && "$1" != -* ]]; then RESTORE_NAME="$1"; shift; fi ;;
-            tls)          ACTION="tls"; shift ;;
             doctor)       ACTION="doctor"; shift ;;
             rollback)     ACTION="rollback"; shift ;;
-            recover-update) ACTION="recover-update"; shift ;;
             completion)   ACTION="completion"; shift ;;
             logs)         ACTION="logs"
                           if [[ $# -ge 2 && ( "$2" == "-f" || "$2" =~ ^[0-9]+$ ) ]]; then
@@ -1045,8 +868,31 @@ parse_args() {
                               shift
                           fi ;;
             backup)       ACTION="backup"; shift
-                          if [[ "$1" == "schedule" ]]; then
-                              ACTION="auto-backup"; AUTO_BACKUP_ACTION="status"; shift 2
+                          if [[ "${1:-}" == "schedule" ]]; then
+                              # One shift, not `shift 2`: the arm already consumed
+                              # "backup", so only "schedule" is left. `shift 2` on
+                              # one argument is an error under the ERR trap, which
+                              # is what made this print a trap warning and nothing
+                              # else.
+                              ACTION="auto-backup"; AUTO_BACKUP_ACTION="status"
+                              shift
+                              # Then the action, if there is one. Without this the
+                              # word after "schedule" fell through to the next
+                              # arm: `backup schedule on` said "Unknown option:
+                              # on", and `backup schedule status` ran the full
+                              # status screen instead.
+                              if [[ $# -ge 1 && "$1" != -* ]]; then
+                                  AUTO_BACKUP_ACTION="$1"; shift
+                              fi
+                          fi ;;
+            auth)         ACTION="auth"; shift
+                          AUTH_ACTION=""
+                          if [[ $# -ge 1 && "$1" != -* ]]; then
+                              case "$1" in
+                                  key)    AUTH_ACTION="key"; shift ;;
+                                  rotate) AUTH_ACTION="rotate"; shift ;;
+                                  *) die "ovn auth: unknown option '$1'  (see: ovn auth)" "$EX_USAGE" ;;
+                              esac
                           fi ;;
             # ── the two grouped commands ──
             # Bare, each prints what it can do; a subcommand acts. Same rule as
@@ -1062,12 +908,19 @@ parse_args() {
                                   *) die "ovn tls: unknown option '$1'  (see: ovn tls)" "$EX_USAGE" ;;
                               esac
                           fi ;;
-            credentials)  ACTION="credentials"; shift ;;
             config)       ACTION="config"; shift ;;
 
             # ── retired names ──
-            # Still dispatched, out of the short help. Nothing warns, because a
-            # deprecation line on every nightly backup job is noise, not notice.
+            # Still dispatched, out of the short help, and mapped in
+            # `ovn help --all`. Nothing warns, because a deprecation line on
+            # every nightly backup job is noise rather than notice.
+            #
+            # One block, one arm per old name. They used to be scattered through
+            # the case, which is how `credentials` ended up defined twice with
+            # the first one winning and `ovn backup schedule` becoming dead
+            # code — both shipped, both invisible to the tests.
+            restart-vpn)  ACTION="restart-core"; shift ;;
+            credentials)  ACTION="auth"; AUTH_ACTION="key"; shift ;;
             recover-update) ACTION="recover-update"; shift ;;
 
             --yes|-y)     YES=1; shift ;;
@@ -1084,27 +937,31 @@ parse_args() {
 # ── Main ───────────────────────────────────────────────────────────────
 main() {
     parse_args "$@"
-    if [[ -z "$ACTION" ]]; then
-        if is_tty; then
-            manager_menu
-            exit "$EX_OK"
-        fi
-        die "No terminal — run 'ovn help' for the command list." "$EX_USAGE"
-    fi
+    # Bare, it lists. There is no menu.
+    #
+    # The menu was a second hand-maintained list of this tool's own commands,
+    # and it drifted twice: it had ten items against thirteen verbs, and one arm
+    # still called a function that had been deleted. Every new command had to be
+    # wired into it and nothing failed when someone forgot.
+    #
+    # The list is the same text as `ovn help`, so there is one place a verb is
+    # written down rather than two, and `ovm` behaves this way too.
+    [[ -z "$ACTION" ]] && { show_help; exit "$EX_OK"; }
+    local rc=0
     case "$ACTION" in
         status)    do_status; exit "$EX_OK" ;;
-        credentials) do_credentials; exit "$EX_OK" ;;
+        auth)      do_auth; exit $? ;;
         config)    do_config; exit "$EX_OK" ;;
         update|recover-update) delegate_update; exit "$EX_OK" ;;
         start|stop|restart) check_root; node_service_action "$ACTION"; exit "$EX_OK" ;;
         enable|disable) check_root; node_autostart "$ACTION"; exit "$EX_OK" ;;
-        restart-vpn) check_root; restart_vpn; exit "$EX_OK" ;;
+        restart-core) check_root; restart_vpn; exit "$EX_OK" ;;
         logs) do_node_logs "$LOGS_ARG"; exit "$EX_OK" ;;
         backup) check_root; do_node_backup; exit "$EX_OK" ;;
         restore) do_restore "$RESTORE_NAME"; exit "$EX_OK" ;;
         auto-backup) check_root; auto_backup_cli "$AUTO_BACKUP_ACTION"; exit "$EX_OK" ;;
         tls) check_root; node_tls; exit $? ;;
-        doctor) do_doctor; exit "$EX_OK" ;;
+        doctor) do_doctor || rc=$?; exit "$rc" ;;
         rollback) do_rollback; exit "$EX_OK" ;;
         completion) do_completion; exit "$EX_OK" ;;
         uninstall) delegate_uninstall; exit "$EX_OK" ;;

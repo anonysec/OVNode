@@ -640,11 +640,28 @@ def test_render_takes_no_arguments_that_could_be_injected():
     the one place a secret is printed.
     """
     render = (LIB / "render.sh").read_text(encoding="utf-8")
-    for fn in ("render_kv", "render_key", "render_card", "render_note", "render_warn"):
+    fns = ("render_kv", "render_kv_w", "render_key", "render_card", "render_note", "render_warn")
+    for fn in fns:
         start = render.index(f"{fn}() {{")
         end = render.index("\n}\n", start)
         body = render[start:end]
         assert "eval" not in body, fn
+
+
+def test_render_kv_w_takes_the_column_it_is_given():
+    """A fixed width only works while every label is shorter than it.
+
+    At 14, a 40-character backup filename printed whole and dropped its value a
+    column right of every other row's — the same failure ``Service account``
+    caused in the CLI, in the other direction. A caller that knows its own
+    labels passes the width they need.
+    """
+    text = strip(run("render_kv_w 30 short x\nrender_kv_w 30 a-much-longer-label y", tty=False))
+    rows = [ln for ln in text.splitlines() if ln.strip()]
+    assert len(rows) == 2, text
+    # The value is the last word on the row, so its offset is the column.
+    columns = {ln.rindex(ln.split()[-1]) for ln in rows}
+    assert len(columns) == 1, f"values do not share a column: {rows}"
 
 
 def test_render_sh_is_byte_identical_to_the_panels():
