@@ -22,7 +22,10 @@ import pytest
 REPO = Path(__file__).resolve().parent.parent
 MANAGER = os.path.join(os.path.dirname(__file__), "..", "manager.sh")
 MANAGER_PATH = Path(MANAGER)
-LIB = REPO / "scripts" / "lib" / "common.sh"
+LIB_DIR = REPO / "scripts" / "lib"
+# manager.sh sources every lib it needs, so the sandbox copies the whole set
+# rather than one file — a missing render.sh fails the same way on a real box.
+LIBS = ("common.sh", "render.sh")
 INSTALLER = REPO / "install.sh"
 
 
@@ -43,7 +46,8 @@ def sandbox(tmp_path):
     app = tmp_path / "opt"
     (app / "scripts" / "lib").mkdir(parents=True)
     shutil.copy(MANAGER_PATH, app / "manager.sh")
-    shutil.copy(LIB, app / "scripts" / "lib" / "common.sh")
+    for lib in LIBS:
+        shutil.copy(LIB_DIR / lib, app / "scripts" / "lib" / lib)
     (app / "install.sh").write_text('#!/bin/sh\necho "STUB-INSTALLER $@"\n', encoding="utf-8")
     (app / "install.sh").chmod(0o755)
     env = {**os.environ, "OVN_APP_DIR": str(app)}
@@ -237,7 +241,7 @@ def test_no_function_ends_with_a_failing_test():
 
     offenders = [
         (str(path), name, tail, line)
-        for path in (MANAGER_PATH, LIB)
+        for path in (MANAGER_PATH, *(LIB_DIR / lib for lib in LIBS))
         for name, tail, line in tails(path)
         if re.match(r"^\[\[.*\]\]\s*&&", tail)
     ]
@@ -313,8 +317,15 @@ def test_status_is_concise_and_all_is_opt_in():
     src = content.split("do_status()")[1].split("\n}")[0]
     assert '[[ "$SHOW_ALL" -eq 1 ]]' in src
     assert "-a|--all" in content
-    for row in ('field "Agent"', 'field "Health"', 'field "Version"', 'field "OpenVPN"'):
+    rows = ('render_kv "Agent"', 'render_kv "Health"', 'render_kv "Version"', 'render_kv "OpenVPN"')
+    for row in rows:
         assert row in src, row
+    # The rows a task-ordered success card offloads: operator paths live behind
+    # --all, not on the card. Both must sit inside the SHOW_ALL block.
+    after_guard = src.split('"$SHOW_ALL" -eq 1')[1]
+    assert 'render_kv "Data"' in after_guard and 'render_kv "OpenVPN cfg"' in after_guard, (
+        "the offloaded rows must live inside the SHOW_ALL block"
+    )
 
 
 def test_manager_menu_clears_between_screens():
@@ -364,18 +375,31 @@ def test_the_ready_card_note_reads_the_generation_flag():
 
 
 def test_the_generated_note_is_conditional_on_that_flag():
-    card = INSTALLER.read_text(encoding="utf-8").split("Ready — save this login")[1]
-    card = card.split("# ── Update")[0]
+    """A supplied key is not news; a generated one is the only copy there is."""
+    source = INSTALLER.read_text(encoding="utf-8")
+    card = source.split("node_success_card()")[1].split("\n# ── ")[0]
     assert 'if [[ "${KEY_GENERATED:-0}" -eq 1 ]]' in card
+    assert "generated — save this" in card
+    assert "the key you supplied" in card
 
 
-def test_quiet_still_names_the_credentials_command():
-    """-q suppresses the card, and the key with it, so one line must survive the
-    suppression — carrying no secret — or a scripted install loses the key."""
-    card = INSTALLER.read_text(encoding="utf-8").split("Ready — save this login")[1]
-    card = card.split("# ── Update")[0]
-    assert 'if [[ "$QUIET" -eq 1 ]]' in card
-    assert "ovn credentials" in card
+def test_the_api_key_is_printed_whatever_the_output_mode():
+    """-q no longer suppresses the card, and must not suppress the key.
+
+    The old -q path printed the card's shape without the key and added a line
+    naming `ovn credentials`. That is a credential nobody ever saw, on a run
+    that was explicit about being unattended: the key exists nowhere else. One
+    renderer, one output, and the key is in it.
+    """
+    source = INSTALLER.read_text(encoding="utf-8")
+    # Everything up to the next top-level definition, not to the update section:
+    # the card is one function and must be read as one.
+    card = source.split("node_success_card()")[1].split("\n# ── ")[0]
+    assert "QUIET" not in card, "the card must not depend on the output mode"
+    assert 'render_card "ready" "api key"' in card
+    # And the reprint path is named, since the key is the only credential and a
+    # lost one has to be recoverable without a reinstall.
+    assert "%s credentials" in card, card
 
 
 @pytest.mark.skipif(
@@ -431,7 +455,7 @@ def restore_sandbox(tmp_path):
         # backup_dir — the helper that takes the safety copy — resolves the
         # backup root itself, so the lib needs the same redirection or the
         # test would write to the host's /var/backups.
-        (app / "scripts" / "lib" / "common.sh", ()),
+        *((app / "scripts" / "lib" / lib, ()) for lib in LIBS),
     )
     for path, replacements in copies:
         text = path.read_text(encoding="utf-8")

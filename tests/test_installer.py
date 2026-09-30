@@ -244,11 +244,20 @@ def test_success_output_includes_panel_bundle():
 
 
 def test_tls_wizard_defaults_to_selfsigned():
-    """TLS is always on: self-signed is the default and plain HTTP is gone."""
+    """TLS is always on: self-signed is the default and plain HTTP is gone.
+
+    Three options, and the Let's Encrypt one is a single free-text field — the
+    old wizard asked "domain or this IP?" as its own question, which made the
+    operator decide a distinction the installer can make for itself.
+    """
     content = installer_source()
-    assert 'tls_choice="$(ask "TLS mode" "1")"' in content
+    assert 'tls_choice="$(ask "1 self-signed · 2 lets encrypt · 3 custom" "1")"' in content
     assert "None (HTTP)" not in content
     assert 'TLS_METHOD="${OVN_TLS:-selfsigned}"' in content
+    # The branch happens after the answer, from what was typed.
+    assert "is_ip_literal" in content
+    assert 'TLS_METHOD="letsencrypt-ip"' in content
+    assert 'TLS_METHOD="letsencrypt"' in content
 
 
 def test_plain_http_is_rejected():
@@ -274,14 +283,17 @@ def test_start_menu_offers_install_or_docker():
     panel installer."""
     content = installer_source()
     assert "start_menu" in content
-    assert "OVNode Setup" in content
-    assert "1.${NC} Install" in content
-    assert "2.${NC} Install with Docker" in content
-    assert "0.${NC} Exit" in content
-    assert "Cancelled. No changes were made." in content
+    assert 'host   "install  ·  systemd on this box"' in content
+    assert 'docker "install  ·  agent + openvpn in a container"' in content
+    assert 'quit   "exit"' in content
+    assert "nothing was changed" in content
     assert "How do you want to install?" not in content
     # Host install is the default; Docker is explicit.
     assert "DOCKER=1; apply_express_defaults" in content
+    # And the wizard does not ask the mode again — the answer could be given
+    # twice and the two did not always agree.
+    wizard = _extract_function("interactive_setup")
+    assert "Deployment" not in wizard
     # Install still uses safe generated defaults with TLS on.
     assert "apply_express_defaults()" in content
     assert 'TLS_METHOD="selfsigned"' in content
@@ -292,10 +304,15 @@ def test_already_installed_menu_is_installer_only():
     """The installer's already-installed menu offers update/uninstall/quit —
     day-to-day ops moved to ovn."""
     content = installer_source()
-    assert 'tui_select "OVNode — installer"' in content
-    assert 'quit        "Quit")' in content
-    assert "*)           return 0 ;;" in content
-    assert "Manage the node with: ovn" in content
+    assert "installed_menu" in content
+    assert 'update    "update to v${VERSION}"' in content
+    assert 'uninstall "uninstall"' in content
+    assert 'quit      "quit"' in content
+    assert "render_menu" in content
+    # tui_select survives only as a one-line alias into render_menu; a caller
+    # reaching for it is fine, a second implementation of it is not.
+    lib = installer_source().split("tui_select() {")[-1].lstrip()
+    assert lib.startswith('render_menu "$@"'), lib
 
 
 def test_env_recovery_survives_missing_keys(tmp_path):
@@ -370,7 +387,7 @@ def test_installer_deploys_the_manager():
     assert 'local src="${APP_DIR}/manager.sh"' in content
     assert content.count("install_cli") >= 3  # definition + do_install + do_update
     assert content.count("remove_cli") >= 2  # definition + do_uninstall
-    assert "command -v whiptail" in content and "tui_select" in content
+    assert "render_menu" in content
 
 
 def test_no_function_ends_with_a_failing_test():
@@ -457,8 +474,19 @@ confirm_no "Delete data?"
 
 
 def test_uninstall_asks_about_data():
-    content = installer_source()
-    assert 'confirm_no "Also delete data and backups?" && PURGE=1' in content
+    """The list of what goes comes first, and the destructive answer is a word.
+
+    A y/N prompt put "yes, delete the CA and every issued client cert" one
+    keystroke from the default. The PKI is not regenerable without reissuing
+    every client, so Enter must keep it and --purge must be the only other way.
+    """
+    uninstall = _extract_function("do_uninstall")
+    typed = 'confirm_word "delete the data and the PKI as well? type purge" "purge"'
+    assert f"{typed} && PURGE=1" in uninstall
+    assert 'confirm "remove the app and stop all services?"' in uninstall
+    # Sizes before the question: "210 MB" and "84 MB" make the decision.
+    assert "dir_size" in uninstall
+    assert uninstall.index("dir_size") < uninstall.index("confirm_word")
 
 
 def test_tls_numbers_map_to_methods():
@@ -474,11 +502,19 @@ def test_tls_numbers_map_to_methods():
 
 
 def test_default_node_name_is_ovnode():
+    """One node per host, so the name is generated and never asked for.
+
+    The wizard used to prompt for it and default it to ovnode. One question
+    removed: a name is a decision nobody has an opinion about, and the value
+    only ever names the data directory on a box that runs exactly one node.
+    """
     content = installer_source()
     assert "node-1" not in content
     assert ': "${NODE_NAME:=ovnode}"' in content
-    assert '"${NODE_NAME:-ovnode}"' in content
     assert "OVN_NAME, ovnode]" in content
+    assert 'ask "Node name"' not in content
+    # The fallback still has to hold where the name is read back off disk.
+    assert "${NODE_NAME:-ovnode}" in content
 
 
 def test_detect_os_preserves_app_version(tmp_path):
@@ -565,7 +601,7 @@ def test_snapshot_rotation_keeps_two(tmp_path):
     harness = (
         "set -Eeuo pipefail\n"
         'die() { echo "DIE: $1" >&2; exit 1; }\n'
-        "step() { :; }\ninfo() { :; }\nwarn() { :; }\n"
+        "render_ok() { :; }\nrender_line() { :; }\nrender_warn() { :; }\n"
         + src
         + f"\nmkdir -p {tmp_path}/app\n"
         + f"\nsnapshot_code {tmp_path}/app node 2 >/dev/null\nsleep 1.1\n"
@@ -648,13 +684,18 @@ def test_release_stub_is_rejected_before_checksum(tmp_path):
 
 
 def test_installer_menu_copy_is_stepped():
-    """One menu dialect: step counters in setup, a single front-door
-    question."""
+    """One menu dialect: the progress block counts, the wizard does not.
+
+    The step counters moved out of the wizard and into render.sh's progress
+    block. Two counters competing on one screen — the menu's numbers and the
+    wizard's "Step 2/4" — is what made the old flow hard to read.
+    """
     content = installer_source()
     assert "How do you want to install?" not in content
-    assert "Ready — save this login" in content
     assert "verified release" in content
-    for token in ("Step 1/4", "Step 4/4"):
+    for retired in ("Step 1/4", "Step 4/4", "Ready — save this login", "Setup${NC}"):
+        assert retired not in content, retired
+    for token in ('render_begin "preflight"', 'render_card "ready" "api key"', "render_menu"):
         assert token in content, token
 
 
@@ -688,7 +729,10 @@ def test_native_wording_is_gone_from_installer_text():
         "|| echo Native",
     ):
         assert token not in content, f"stale wording: {token}"
-    assert "|| echo Host" in content
+    # "host" is the word, not "native" — the mode is chosen on the front-door
+    # menu now, so nothing prints the mode's name in prose any more.
+    assert 'host   "install  ·  systemd on this box"' in content
+    assert "systemd on this box" in content
 
 
 def test_version_constants_are_synchronized():
@@ -729,7 +773,10 @@ def test_transactional_update_core_present():
         "recover-update",
     ):
         assert token in content, f"missing: {token}"
-    assert "Step 1/6" in content and "Step 6/6" in content
+    # The six update phases are six numbered progress steps, not six
+    # "Step N/6" headings: one counter per run, and it lives in the block.
+    for phase in ("backup", "stage", "maintenance", "activate", "verify", "commit"):
+        assert f'render_begin "{phase}" 6' in content, phase
 
 
 def test_docker_uses_published_image_only():
@@ -768,16 +815,13 @@ def test_installer_design_language_matches_panel():
     Update both suites together."""
     content = installer_source()
     for token in (
-        "Setup${NC}",
-        "1.${NC} Install",
-        "2.${NC} Install with Docker",
-        "0.${NC} Exit",
-        "Cancelled. No changes were made.",
-        "installer${NC}",
-        "up and running in a few minutes",
-        "Step 1/4",
+        'host   "install  ·  systemd on this box"',
+        'docker "install  ·  agent + openvpn in a container"',
+        'tls_choice="$(ask "1 self-signed · 2 lets encrypt · 3 custom" "1")"',
+        'render_begin "preflight"',
+        'render_card "ready" "api key"',
+        "render_menu",
         "verified release",
-        "Ready — save this login",
         "Options (every option has an OVN_* env equivalent; CLI wins):",
     ):
         assert token in content, f"design drift: {token}"
@@ -786,18 +830,39 @@ def test_installer_design_language_matches_panel():
         "Installation complete!",
         "Choose every option yourself",
         "v$VERSION ($SRC)",
+        "Setup${NC}",
+        "1.${NC} Install",
+        "Step 1/4",
+        "Step 1/6",
+        "Ready — save this login",
+        "up and running in a few minutes",
     ):
         assert retired not in content, f"retired wording back: {retired}"
 
 
-def test_banner_tagline_only_for_fresh_install():
-    """The tagline advertises a fresh install, not an update or uninstall."""
+def test_the_banner_is_one_line_and_a_rule():
+    """Name, version, repo — then a rule. No tagline.
+
+    The old banner carried a second line whose only job was to advertise a fresh
+    install, and it had to be suppressed on update/uninstall because "up and
+    running in a few minutes" over an update reads as a lie. One line has no
+    context to get wrong.
+    """
     content = installer_source()
-    assert 'install) subtitle="Secure VPN node — up and running in a few minutes"' in content
-    assert '*)      subtitle="Secure VPN node"' in content
+    assert 'render_banner "OVNode"' in content
+    assert "subtitle" not in content
+    assert "up and running in a few minutes" not in content
 
 
 def test_no_extra_install_confirmation():
-    """The panel asks no extra question; the review card is the confirmation."""
+    """No extra question, and the review is a line rather than a card.
+
+    A nine-row card restated every value the operator had just been asked for,
+    one screen back. What was worth keeping is the part that catches a mistake —
+    a mistyped port, the wrong transport — so those two are what remain.
+    """
     content = installer_source()
     assert "Proceed with installation?" not in content
+    assert "this will install" in content
+    for retired in ('render_kv "OS"', 'render_kv "Version"', 'render_kv "Install"'):
+        assert retired not in content, retired

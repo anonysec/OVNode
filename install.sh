@@ -88,16 +88,19 @@ YL=$'\033[33m'; CY=$'\033[36m'; GY=$'\033[90m'
 [[ -t 2 ]] || { NC=''; B=''; WH=''; GR=''; RD=''; YL=''; CY=''; GY=''; }
 
 # ── Shared helpers (scripts/lib) ───────────────────────────────────────
-# line/step/info/warn/field/sep/die and the prompts are defined only in
-# scripts/lib/*.sh, never copied here. A copy beside this script is used when
-# there is one (an installed node, a checkout); the curl-piped installer has
-# none and fetches from GitHub.
+# Output, prompts and the shared probes are defined only in scripts/lib/*.sh,
+# never copied here. A copy beside this script is used when there is one (an
+# installed node, a checkout); the curl-piped installer has none and fetches
+# from GitHub.
 #
 # The ref is the subtlety: the installer's own tag should pin the libs, but a
 # curl-piped installer comes from a branch and may name a tag whose lib predates
 # helpers this file needs. Tag first, main as fallback, result checked.
-LIB_FILES=(common.sh)   # one entry per file in scripts/lib
-LIBS_NEEDED=(die line info warn field sep ask confirm check_root compose_file has_systemd is_docker_node)
+LIB_FILES=(common.sh render.sh)   # one entry per file in scripts/lib
+# render_menu, not tui_select: the alias survives for older callers, and a lib set
+# that only defines the old name means the libs predate this renderer.
+LIBS_NEEDED=(die render_banner render_card render_line render_ok render_warn render_menu
+             ask confirm check_root compose_file has_systemd is_docker_node)
 LIB_REFS=("v${VERSION}" main)
 
 _libs_are_usable() {  # _libs_are_usable <dir> → 0 when it defines what we call
@@ -152,7 +155,7 @@ done
 unset _lib _try _ref _url _ok _l _f
 
 trap 'echo -e "\n  ${RD}Interrupted.${NC}" >&2; exit 130' INT TERM
-trap 'warn "Command failed near line $LINENO (running: ${BASH_COMMAND:0:80})"' ERR
+trap 'render_warn "Command failed near line $LINENO (running: ${BASH_COMMAND:0:80})"' ERR
 
 # ── OS / package manager ───────────────────────────────────────────────
 OS_ID="" OS_NAME="" PKG_INSTALL="" PKG_UPDATE=""
@@ -180,7 +183,7 @@ detect_os() {
 }
 
 pkg_install() {
-    info "Installing: $*"
+    render_line "Installing: $*"
     $PKG_UPDATE >/dev/null 2>&1 || true
     $PKG_INSTALL "$@" >/dev/null 2>&1 || die "Failed to install: $*"
 }
@@ -408,16 +411,16 @@ vpn_ports_label() {
 UV_BIN=""
 ensure_uv() {
     if command -v uv >/dev/null 2>&1; then
-        UV_BIN="$(command -v uv)"; step "uv found: $UV_BIN"; return
+        UV_BIN="$(command -v uv)"; render_ok "uv found: $UV_BIN"; return
     fi
-    info "Installing uv (Python package manager)..."
+    render_line "Installing uv (Python package manager)..."
     curl -LsSf https://astral.sh/uv/install.sh | sh >/dev/null 2>&1 || \
         python3 -m pip install --quiet uv >/dev/null 2>&1 || \
         die "Could not install uv."
     UV_BIN="$(command -v uv 2>/dev/null || true)"
     [[ -n "$UV_BIN" ]] || UV_BIN="$HOME/.local/bin/uv"
     [[ -x "$UV_BIN" ]] || die "uv not found after install"
-    step "uv installed: $UV_BIN"
+    render_ok "uv installed: $UV_BIN"
 }
 
 # Reproducible dependency install: the lockfile pins exact versions.
@@ -440,7 +443,7 @@ SYSCTL
         echo "net.ipv6.conf.all.forwarding = 1" >> "$SYSCTL_CONF"
     fi
     sysctl -p "$SYSCTL_CONF" >/dev/null 2>&1 || true
-    step "IP forwarding enabled ($SYSCTL_CONF)"
+    render_ok "IP forwarding enabled ($SYSCTL_CONF)"
 }
 
 write_nat_files() {
@@ -531,20 +534,20 @@ UNIT
     systemctl enable "$NAT_SERVICE" >/dev/null 2>&1
     if systemctl restart "$NAT_SERVICE" >/dev/null 2>&1; then
         if [[ -n "$EXTRA_PORTS" ]]; then
-            step "NAT enabled, ports ${EXTRA_PORTS} → ${VPN_PORT}"
+            render_ok "NAT enabled, ports ${EXTRA_PORTS} → ${VPN_PORT}"
         else
-            step "NAT enabled"
+            render_ok "NAT enabled"
         fi
     else
-        warn "Could not start NAT service — VPN clients may not route traffic"
+        render_warn "Could not start NAT service — VPN clients may not route traffic"
     fi
 }
 
 setup_nat() {
-    if [[ "$NO_NAT" -eq 1 ]]; then info "Skipping NAT setup (--no-nat)"; return 0; fi
+    if [[ "$NO_NAT" -eq 1 ]]; then render_line "Skipping NAT setup (--no-nat)"; return 0; fi
     write_sysctl
     if [[ "$DOCKER" -eq 1 ]]; then
-        info "Docker mode: NAT/redirect rules are applied inside the container (CAP_NET_ADMIN)"
+        render_line "Docker mode: NAT/redirect rules are applied inside the container (CAP_NET_ADMIN)"
         return 0
     fi
     if ! command -v iptables >/dev/null 2>&1; then
@@ -563,7 +566,7 @@ setup_logrotate() {
         if [[ -n "$PKG_INSTALL" ]]; then
             pkg_install logrotate
         else
-            warn "logrotate not found — install it so openvpn.log gets rotated"
+            render_warn "logrotate not found — install it so openvpn.log gets rotated"
             return 0
         fi
     fi
@@ -592,7 +595,7 @@ ${OPENVPN_ROOT}/server/openvpn.log {
 }
 ROTATE
     fi
-    step "Log rotation configured ($LOGROTATE_CONF)"
+    render_ok "Log rotation configured ($LOGROTATE_CONF)"
 }
 
 # ── OpenVPN scaffolding ────────────────────────────────────────────────
@@ -609,9 +612,9 @@ ensure_openvpn_dirs() {
         chmod 600 /dev/net/tun 2>/dev/null || true
     fi
     if [[ -e /dev/net/tun ]]; then
-        step "OpenVPN directories ready ($OPENVPN_ROOT), /dev/net/tun present"
+        render_ok "OpenVPN directories ready ($OPENVPN_ROOT), /dev/net/tun present"
     else
-        warn "/dev/net/tun is missing — OpenVPN cannot start (Docker: mount it, bare-metal: modprobe tun)"
+        render_warn "/dev/net/tun is missing — OpenVPN cannot start (Docker: mount it, bare-metal: modprobe tun)"
     fi
 }
 
@@ -620,13 +623,13 @@ start_openvpn_service() {
     if has_systemd; then
         systemctl enable openvpn-server@server >/dev/null 2>&1 || true
         systemctl restart openvpn-server@server >/dev/null 2>&1 && \
-            step "OpenVPN server service started" || \
-            warn "Could not start openvpn-server@server — check: journalctl -u openvpn-server@server -n 50"
+            render_ok "OpenVPN server service started" || \
+            render_warn "Could not start openvpn-server@server — check: journalctl -u openvpn-server@server -n 50"
     elif command -v rc-service >/dev/null 2>&1; then
         rc-update add openvpn default >/dev/null 2>&1 || true
-        rc-service openvpn start >/dev/null 2>&1 && step "OpenVPN started (OpenRC)" || warn "Start OpenVPN manually"
+        rc-service openvpn start >/dev/null 2>&1 && render_ok "OpenVPN started (OpenRC)" || render_warn "Start OpenVPN manually"
     else
-        warn "No init system detected — start OpenVPN manually: openvpn --config $OPENVPN_ROOT/server/server.conf"
+        render_warn "No init system detected — start OpenVPN manually: openvpn --config $OPENVPN_ROOT/server/server.conf"
     fi
 }
 
@@ -637,9 +640,9 @@ check_container_openvpn() {
     local cid=""
     cid="$(docker compose -f "$(compose_file)" ps -q 2>/dev/null | head -n 1)"
     if [[ -n "$cid" ]] && docker exec "$cid" pgrep -x openvpn >/dev/null 2>&1; then
-        step "OpenVPN running in container"
+        render_ok "OpenVPN running in container"
     else
-        warn "OpenVPN not detected in container — check: docker logs ${NODE_NAME}; host stray check: ss -tlnp | grep -E '1194|7505'"
+        render_warn "OpenVPN not detected in container — check: docker logs ${NODE_NAME}; host stray check: ss -tlnp | grep -E '1194|7505'"
     fi
 }
 
@@ -669,7 +672,7 @@ open_firewall_ports() {
             ufw allow "$p/udp" >/dev/null 2>&1
             ufw allow "$p/tcp" >/dev/null 2>&1
         done
-        step "UFW: allowed $PORT/tcp + VPN port(s) ${vpn_all// /, }"
+        render_ok "UFW: allowed $PORT/tcp + VPN port(s) ${vpn_all// /, }"
     elif command -v firewall-cmd >/dev/null 2>&1 && firewall-cmd --state >/dev/null 2>&1; then
         firewall-cmd --permanent --add-port="$PORT/tcp" >/dev/null 2>&1
         for p in $vpn_all; do
@@ -677,7 +680,7 @@ open_firewall_ports() {
             firewall-cmd --permanent --add-port="$p/tcp" >/dev/null 2>&1
         done
         firewall-cmd --reload >/dev/null 2>&1
-        step "firewalld: allowed $PORT/tcp + VPN port(s) ${vpn_all// /, }"
+        render_ok "firewalld: allowed $PORT/tcp + VPN port(s) ${vpn_all// /, }"
     fi
 }
 
@@ -696,7 +699,7 @@ close_firewall_ports() {
             ufw delete allow "$p/udp" >/dev/null 2>&1 || true
             ufw delete allow "$p/tcp" >/dev/null 2>&1 || true
         done
-        step "UFW: removed $svc/tcp + VPN port(s) ${vpn_all// /, }"
+        render_ok "UFW: removed $svc/tcp + VPN port(s) ${vpn_all// /, }"
     elif command -v firewall-cmd >/dev/null 2>&1 && firewall-cmd --state >/dev/null 2>&1; then
         firewall-cmd --permanent --remove-port="$svc/tcp" >/dev/null 2>&1 || true
         for p in $vpn_all; do
@@ -704,7 +707,7 @@ close_firewall_ports() {
             firewall-cmd --permanent --remove-port="$p/tcp" >/dev/null 2>&1 || true
         done
         firewall-cmd --reload >/dev/null 2>&1 || true
-        step "firewalld: removed $svc/tcp + VPN port(s) ${vpn_all// /, }"
+        render_ok "firewalld: removed $svc/tcp + VPN port(s) ${vpn_all// /, }"
     fi
 }
 
@@ -733,7 +736,7 @@ WantedBy=multi-user.target
 UNIT
     systemctl daemon-reload >/dev/null 2>&1
     systemctl enable "$SYSTEMD_SERVICE" >/dev/null 2>&1
-    step "systemd unit written: /etc/systemd/system/$SYSTEMD_SERVICE"
+    render_ok "systemd unit written: /etc/systemd/system/$SYSTEMD_SERVICE"
 }
 
 # ── Source / environment ───────────────────────────────────────────────
@@ -769,7 +772,7 @@ operation_begin() {
     if ! mkdir "$OP_LOCK" 2>/dev/null; then
         owner="$(cat "$OP_LOCK/pid" 2>/dev/null || true)"
         if [[ "$owner" =~ ^[0-9]+$ ]] && ! kill -0 "$owner" 2>/dev/null; then
-            warn "Removing stale operation lock from process $owner"
+            render_warn "Removing stale operation lock from process $owner"
             rm -rf "$OP_LOCK"
             mkdir "$OP_LOCK" || die "Another maintenance operation is running" "$EX_ERROR"
         else
@@ -838,7 +841,7 @@ fetch_release() {
         || { rm -rf "$work"; die "Release checksum file is missing for v${VERSION}" "$EX_ERROR"; }
     ( cd "$work" && sha256sum -c "$base.sha256" >/dev/null ) \
         || { rm -rf "$work"; die "Release checksum mismatch for v${VERSION}" "$EX_ERROR"; }
-    step "Checksum ok"
+    render_ok "Checksum ok"
     mkdir -p "$dest"
     # --no-same-owner: an archive from an older release still carries whatever
     # uid built it, and extracting as root would restore that. The install runs
@@ -847,7 +850,7 @@ fetch_release() {
     # Root-owned explicitly, so the tree does not depend on how it was built.
     chown -R root:root "$dest"
     rm -rf "$work"
-    step "Release extracted"
+    render_ok "Release extracted"
 }
 
 fetch_source() {
@@ -1021,14 +1024,14 @@ $( if [[ -n "$TLS_KEY" ]]; then echo "SSL_KEYFILE=${TLS_KEY}"; fi )
 $( if [[ -n "$TLS_CERT" ]]; then echo "SSL_CERTFILE=${TLS_CERT}"; fi )
 EOF
     chmod 600 "$APP_DIR/.env"
-    step ".env written"
+    render_ok ".env written"
 }
 
 # ── Docker ─────────────────────────────────────────────────────────────
 
 ensure_docker() {
     if ! command -v docker >/dev/null 2>&1; then
-        info "Installing Docker Engine..."
+        render_line "Installing Docker Engine..."
         if [[ "$PKG_INSTALL" == apt* ]]; then
             $PKG_UPDATE >/dev/null 2>&1 || true
             $PKG_INSTALL docker.io >/dev/null 2>&1 \
@@ -1041,7 +1044,7 @@ ensure_docker() {
     fi
     docker compose version >/dev/null 2>&1 || command -v docker-compose >/dev/null 2>&1 \
         || die "Docker Compose v2 is required (docker compose plugin)"
-    step "Docker present"
+    render_ok "Docker present"
 }
 
 setup_docker() {
@@ -1052,7 +1055,7 @@ setup_docker() {
     if [[ ! -c /dev/net/tun ]]; then
         mkdir -p /dev/net && mknod /dev/net/tun c 10 200 2>/dev/null || true
     fi
-    [[ -c /dev/net/tun ]] || warn "/dev/net/tun missing — the VPN cannot start until the tun module is available"
+    [[ -c /dev/net/tun ]] || render_warn "/dev/net/tun missing — the VPN cannot start until the tun module is available"
 
     write_compose_file
 
@@ -1114,7 +1117,7 @@ $( [[ -n "$tls_mounts" ]] && printf '%s' "$tls_mounts" )
 COMPOSE
     # The compose file embeds the API key — keep it root-only, like .env.
     chmod 600 "$compose"
-    step "Compose file written: $compose (image ${IMAGE_REPO}:${tag})"
+    render_ok "Compose file written: $compose (image ${IMAGE_REPO}:${tag})"
 }
 
 # ── Install ────────────────────────────────────────────────────────────
@@ -1123,17 +1126,22 @@ do_install() {
     check_deps
     [[ "$DOCKER" -eq 1 ]] || ensure_uv
 
-    sep; info "Step 1/4 — Download verified release v${VERSION}"
+    render_begin "preflight" 6
+    render_done "$(preflight_summary)"
+
+    render_begin "release" 6
     fetch_release "$APP_DIR"
 
-    info "Step 2/4 — Certificate and configuration"
+    render_begin "certificate" 6
     if [[ "$DOCKER" -eq 0 ]]; then
         cd "$APP_DIR"
-        run "Installing Python dependencies" uv_sync
+        render_note "python dependencies"
+        uv_sync >/dev/null 2>&1 || die "Could not install the node agent's Python packages"
+        render_note "$(tls_summary)"
     fi
-
     setup_tls
     write_env
+    render_done "$(tls_summary)"
 
     local scheme="http"
     [[ "$TLS_METHOD" != "none" ]] && scheme="https"
@@ -1142,26 +1150,35 @@ do_install() {
     mkdir -p "$DATA_BASE/$NODE_NAME"
     ensure_openvpn_dirs
 
-    info "Step 3/4 — Runtime and service"
+    render_begin "runtime" 6
     if [[ "$DOCKER" -eq 1 ]]; then
         setup_docker
+        render_done "container"
     else
         if ! has_systemd; then
-            warn "systemd not found — start the agent manually: cd $APP_DIR && .venv/bin/python main.py"
+            render_done "no systemd — start the agent by hand"
+            render_warn "systemd not found — start the agent manually: cd $APP_DIR && .venv/bin/python main.py"
         else
             write_systemd_unit
-            run "Starting node agent service" systemctl_bounded restart "$SYSTEMD_SERVICE"
+            render_note "$SYSTEMD_SERVICE"
+            systemctl_bounded restart "$SYSTEMD_SERVICE" >/dev/null 2>&1 \
+                || die "Could not start $SYSTEMD_SERVICE"
+            render_done "active"
         fi
     fi
 
     # First boot generates the PKI + server.conf, so wait for /sync/health
     # before bringing up OpenVPN.
-    info "Step 4/4 — Health check and finish"
-    if ! wait_health "${scheme}://127.0.0.1:${PORT}/sync/health" 60; then
-        warn "Agent did not answer /sync/health — check: journalctl -u $SYSTEMD_SERVICE -n 50"
+    render_begin "health" 6
+    if ! wait_health_live "${scheme}://127.0.0.1:${PORT}/sync/health" 60; then
+        render_fail "health" "no answer on /sync/health after 60s"
+        render_next "ovn logs 50" "$(installer_uninstall_command)"
+        return 1
     fi
+    render_done "200"
     [[ "$DOCKER" -eq 1 ]] && check_container_openvpn
 
+    render_begin "vpn" 6
     # Docker runs the daemon inside the container (entrypoint-supervised) and
     # evicts any host daemon holding the VPN/management ports.
     if [[ "$DOCKER" -eq 0 ]]; then
@@ -1172,36 +1189,67 @@ do_install() {
     setup_nat
     setup_logrotate
     open_firewall_ports
-    install_cli
+    render_done "$(vpn_ports_label)/$VPN_PROTO"
 
-    local tls_flag=0; [[ "$TLS_METHOD" != "none" ]] && tls_flag=1
-    local bundle="ovnode://${NODE_NAME}@${host}:${PORT}?key=${API_KEY}&tls=${tls_flag}"
-    line ""
-    line "  ${GR}Ready — save this login${NC}"
-    sep
-    field "Node"        "${WH}${NODE_NAME}${NC}"
-    field "Mode"        "$([ "$DOCKER" -eq 1 ] && echo Docker || echo Host)"
-    field "Service"     "${WH}${scheme}://${host}:${PORT}${NC}"
-    field "OpenVPN"     "$(vpn_ports_label)"
-    local key_note="  ${GY}(the key you supplied)${NC}"
-    if [[ "${KEY_GENERATED:-0}" -eq 1 ]]; then key_note="  ${GY}(generated — save this)${NC}"; fi
-    field "API key"     "${GR}${API_KEY}${NC}${key_note}"
-    field "Bundle"      "${CY}${bundle}${NC}"
-    field "Manage"      "ovn  (status, credentials, logs, backup, TLS)"
-    field "Data"        "$DATA_BASE/$NODE_NAME"
-    field "OpenVPN cfg" "$OPENVPN_ROOT/server"
-    line ""
-    info "Add this node in the panel: Nodes → Add Node → paste the Bundle above"
-    if [[ -n "$EXTRA_PORTS" ]]; then
-        info "Clients get all VPN ports (${VPN_PORT},${EXTRA_PORTS}) in their .ovpn"
-        info "and fail over automatically if one is blocked."
+    render_begin "command" 6
+    install_cli
+    render_done "$BIN_DIR/$CLI_ALIAS"
+
+    node_success_card "$scheme" "$host"
+}
+
+# The machine's own state, as the first line of the run. Nobody chose any of it
+# and it decides whether the install can succeed, which is exactly what the
+# preflight line is for. The port and TLS mode the operator DID choose are on
+# the wizard's own screens.
+preflight_summary() {
+    local os="${OS_NAME:-linux}" free
+    free="$(df -h --output=avail /opt 2>/dev/null | tail -1 | tr -d ' ')"
+    printf '%s · %s free at /opt · :%s free' "$os" "${free:-?}" "$PORT"
+}
+
+installer_uninstall_command() {
+    printf 'bash <(curl -sSL https://raw.githubusercontent.com/%s/main/install.sh) uninstall --purge -y' "$REPO"
+}
+
+node_success_card() {
+    local scheme="$1" host="$2" tls_flag=0 key_note bundle where
+    [[ "$TLS_METHOD" != "none" ]] && tls_flag=1
+    bundle="ovnode://${host}:${PORT}?key=${API_KEY}&tls=${tls_flag}"
+    # Name what the panel will reach: the public IP, or the domain when the
+    # certificate names one. A node has no URL of its own — it is an address, a
+    # key, and a place to read logs — so the card says exactly that.
+    if [[ -n "${TLS_DOMAIN:-}" && "$TLS_METHOD" == "letsencrypt" ]]; then
+        where="$TLS_DOMAIN:$PORT"
+    else
+        where="$host:$PORT"
     fi
-    # -q suppresses the card, but a credential nobody ever saw is a credential
-    # lost.
-    if [[ "$QUIET" -eq 1 ]]; then
-        printf '  API key not shown (--quiet). Recover it with: ovn credentials\n' >&2
+    if [[ "${KEY_GENERATED:-0}" -eq 1 ]]; then
+        key_note="  $(printf '%sgenerated — save this%s' "$GY" "$NC")"
+    else
+        key_note="  $(printf '%sthe key you supplied%s' "$GY" "$NC")"
     fi
-    line ""
+    render_card "ready" "api key" "${API_KEY}${key_note}" \
+        "node|$where" \
+        "tls|$(tls_summary)" \
+        "data|$DATA_BASE/$NODE_NAME" \
+        "logs|$CLI_ALIAS logs -f"
+    render_line "  $(printf '%slost it?  %s credentials%s' "$GY" "$CLI_ALIAS" "$NC")"
+    render_line "  $(printf '%bpanel%s  Nodes → Add Node → paste the bundle below' "$GY" "$NC")"
+    render_kv "bundle" "$bundle"
+    render_line "  uninstall: $(installer_uninstall_command)"
+    render_blank
+}
+
+tls_summary() {
+    case "$TLS_METHOD" in
+        selfsigned)     printf 'self-signed · turn TLS on in the panel' ;;
+        letsencrypt)    printf "lets encrypt · %s" "$TLS_DOMAIN" ;;
+        letsencrypt-ip) printf 'lets encrypt · %s · short-lived' "$TLS_DOMAIN" ;;
+        custom)         printf 'custom · %s' "$TLS_CERT" ;;
+        none)           printf 'none' ;;
+        *)              printf '%s' "$TLS_METHOD" ;;
+    esac
 }
 
 # ── Update ─────────────────────────────────────────────────────────────
@@ -1242,13 +1290,13 @@ do_update() {
         [[ "$(env_get OVNODE_ENABLE_IPV6)" == "1" ]] && IPV6=1
     fi
 
-    line ""; info "Updating OVNode to v${VERSION}…"
+    render_line ""; render_line "Updating OVNode to v${VERSION}…"
     detect_os
     # A compose file means the install was --docker, even when `update` is
     # called without the flag.
     if [[ -f "$(compose_file)" ]]; then
         DOCKER=1
-        info "Detected Docker deployment (compose file present)"
+        render_line "Detected Docker deployment (compose file present)"
     fi
     local from_version safety snapshot scheme activated=0 identity
     from_version="$(grep -Eo '"[0-9]+\.[0-9]+\.[0-9]+"' "$APP_DIR/core/version.py" 2>/dev/null | head -1 | tr -d '"' || true)"
@@ -1257,13 +1305,14 @@ do_update() {
     scheme="http"; [[ "$TLS_METHOD" != "none" ]] && scheme="https"
     update_state preflight "$from_version" "$VERSION" "" "$identity"
 
-    info "Step 1/6 — Verified safety snapshot"
+    render_begin "backup" 6
     safety="$(state_safety_bundle "$from_version")" || die "Could not create the mandatory state safety snapshot" "$EX_ERROR"
     [[ -n "$safety" && -f "$safety" ]] || die "The state safety snapshot was not created" "$EX_ERROR"
     snapshot="$(snapshot_code "$APP_DIR" "node" 2)"
+    render_done "$(basename "$safety" 2>/dev/null)"
     update_state staging "$from_version" "$VERSION" "$safety" "$identity"
 
-    info "Step 2/6 — Stage verified release"
+    render_begin "stage" 6
     rm -rf "$UPDATE_STAGE"
     mkdir -p "$UPDATE_STAGE"
     if [[ "$DOCKER" -eq 1 ]]; then
@@ -1280,8 +1329,9 @@ do_update() {
             || die "Could not prepare the staged release; current version is still running" "$EX_ERROR"
         [[ -f "$UPDATE_STAGE/core/version.py" ]] || die "Staged release is incomplete" "$EX_ERROR"
     fi
+    render_done ""
 
-    info "Step 3/6 — Enter maintenance mode"
+    render_begin "maintenance" 6
     : > "$(update_marker)"
     chmod 600 "$(update_marker)"
     update_state activating "$from_version" "$VERSION" "$safety" "$identity"
@@ -1291,8 +1341,9 @@ do_update() {
         # The OpenVPN daemon keeps serving clients; only the agent stops.
         systemctl_bounded stop "$SYSTEMD_SERVICE" >/dev/null 2>&1 || true
     fi
+    render_done "agent paused"
 
-    info "Step 4/6 — Activate candidate"
+    render_begin "activate" 6
     if [[ "$DOCKER" -eq 1 ]]; then
         IMAGE_TAG="$VERSION" write_compose_file
         ( cd "$APP_DIR" && docker compose -f "$(compose_file)" up -d ) >/dev/null 2>&1 \
@@ -1322,8 +1373,9 @@ do_update() {
         has_systemd && write_systemd_unit
         run "Candidate agent started" systemctl_bounded restart "$SYSTEMD_SERVICE" && start_ok=1 || true
     fi
+    render_done ""
 
-    info "Step 5/6 — Verify candidate"
+    render_begin "verify" 6
     update_state verifying "$from_version" "$VERSION" "$safety" "$identity"
     if [[ "$start_ok" -eq 1 ]] && wait_health "${scheme}://127.0.0.1:${PORT}/sync/health" 60; then
         local reported vpn_ok ident_ok
@@ -1332,7 +1384,7 @@ do_update() {
         if [[ "$reported" == "$VERSION" && "$vpn_ok" == "true" && "$ident_ok" == "$identity" ]]; then
             start_ok=1
         else
-            warn "Candidate verification mismatch (version='${reported:-unknown}' openvpn='${vpn_ok:-unknown}' identity-preserved=$([[ "$ident_ok" == "$identity" ]] && echo yes || echo no))"
+            render_warn "Candidate verification mismatch (version='${reported:-unknown}' openvpn='${vpn_ok:-unknown}' identity-preserved=$([[ "$ident_ok" == "$identity" ]] && echo yes || echo no))"
             start_ok=0
         fi
     else
@@ -1340,12 +1392,12 @@ do_update() {
     fi
 
     if [[ "$start_ok" -ne 1 ]]; then
-        warn "Candidate verification failed — failing over to v${from_version}"
+        render_warn "Candidate verification failed — failing over to v${from_version}"
         update_state failing_over "$from_version" "$VERSION" "$safety" "$identity"
         node_failover "$from_version" "$VERSION" "$safety" "$identity" "$snapshot"
     fi
 
-    info "Step 6/6 — Commit update"
+    render_begin "commit" 6
     rm -f "$(update_marker)"
     if [[ "$DOCKER" -eq 0 ]]; then
         setup_nat
@@ -1358,11 +1410,11 @@ do_update() {
         die "Candidate passed verification but failed its final check. Writes are blocked; run: ovn recover-update" "$EX_ERROR"
     fi
     update_state committed "$from_version" "$VERSION" "$safety" "$identity"
+    render_done "v${from_version} → v${VERSION}"
     operation_end
     install_cli
-    step "Update complete  v${from_version} → v${VERSION}"
-    [[ "$DOCKER" -eq 1 ]] || step "Failover release kept at $UPDATE_PREVIOUS"
-    line ""
+    [[ "$DOCKER" -eq 1 ]] || render_line "  rollback: $CLI_ALIAS rollback"
+    render_blank
 }
 
 # Read a key from the CURRENT (possibly just activated) install .env.
@@ -1405,7 +1457,7 @@ node_failover() {
 do_recover_update() {
     if [[ ! -f "$UPDATE_STATE" ]]; then
         [[ -f "$(update_marker)" ]] && die "Update maintenance marker exists but its state journal is missing" "$EX_ERROR"
-        step "No interrupted update needs recovery"
+        render_ok "No interrupted update needs recovery"
         return 0
     fi
     local phase from target safety identity
@@ -1419,7 +1471,7 @@ PY
     case "$phase" in
         committed|failed_over)
             if [[ ! -f "$(update_marker)" ]]; then
-                step "No interrupted update needs recovery"
+                render_ok "No interrupted update needs recovery"
                 return 0
             fi
             ;;
@@ -1432,7 +1484,7 @@ PY
             rm -f "$(update_marker)"
             update_state failed_over "$from" "$target" "$safety" "$identity"
             operation_end
-            step "Cleared an interrupted pre-activation update; v${from} remains active"
+            render_ok "Cleared an interrupted pre-activation update; v${from} remains active"
             return 0
             ;;
         activating|verifying|failing_over|recovery_required) ;;
@@ -1444,7 +1496,7 @@ PY
     if [[ ! -f "$(update_marker)" ]]; then
         : > "$(update_marker)"
         chmod 600 "$(update_marker)"
-        warn "Re-created the missing update maintenance marker"
+        render_warn "Re-created the missing update maintenance marker"
     fi
     [[ -f "$(compose_file)" ]] && DOCKER=1 || DOCKER=0
     local env_get; env_get() { grep -E "^$1=" "$APP_DIR/.env" 2>/dev/null | head -1 | cut -d= -f2- | tr -d '"' || true; }
@@ -1466,14 +1518,14 @@ PY
         rm -f "$(update_marker)"
         update_state committed "$from" "$target" "$safety" "$identity"
         operation_end
-        step "Recovered update journal — v${target} is healthy"
+        render_ok "Recovered update journal — v${target} is healthy"
         return 0
     fi
     if [[ "${reported:-}" == "$from" && "${vpn_ok:-}" == "true" && "${ident_ok:-}" == "$identity" && ! -d "$UPDATE_PREVIOUS" ]]; then
         rm -f "$(update_marker)"
         update_state failed_over "$from" "$target" "$safety" "$identity"
         operation_end
-        step "Recovered update journal — previous v${from} is healthy"
+        render_ok "Recovered update journal — previous v${from} is healthy"
         return 0
     fi
     if [[ ! -d "$UPDATE_PREVIOUS" ]]; then
@@ -1488,14 +1540,14 @@ PY
             rm -f "$(update_marker)"
             update_state failed_over "$from" "$target" "$safety" "$identity"
             operation_end
-            step "Interrupted update never activated — v${from} restarted, staging discarded"
+            render_ok "Interrupted update never activated — v${from} restarted, staging discarded"
             return 0
         fi
         update_state recovery_required "$from" "$target" "$safety" "$identity"
         operation_end
         die "Interrupted update never activated and v${from} does not answer health. Run: ovn logs 100" "$EX_ERROR"
     fi
-    info "Interrupted candidate is unhealthy — failing over to v${from}"
+    render_line "Interrupted candidate is unhealthy — failing over to v${from}"
     if [[ "$DOCKER" -eq 1 ]]; then
         ( cd "$APP_DIR" && docker compose -f "$(compose_file)" down ) >/dev/null 2>&1 || true
         [[ -n "$safety" ]] && state_restore "$safety" \
@@ -1517,7 +1569,7 @@ PY
         rm -f "$(update_marker)"
         update_state failed_over "$from" "$target" "$safety" "$identity"
         operation_end
-        step "Interrupted update failed over safely to v${from}"
+        render_ok "Interrupted update failed over safely to v${from}"
         return 0
     fi
     update_state recovery_required "$from" "$target" "$safety" "$identity"
@@ -1547,7 +1599,7 @@ do_repair_unit() {
         DOCKER=1
         ensure_docker
         write_compose_file
-        step "Compose file regenerated (image ${IMAGE_REPO}:${IMAGE_TAG:-$VERSION})"
+        render_ok "Compose file regenerated (image ${IMAGE_REPO}:${IMAGE_TAG:-$VERSION})"
     else
         DOCKER=0
         has_systemd || die "systemd not found — cannot install the agent unit" "$EX_ERROR"
@@ -1556,7 +1608,7 @@ do_repair_unit() {
         setup_logrotate
     fi
     operation_end
-    step "Host integration repaired — restart the agent if it is stopped: ovn restart"
+    render_ok "Host integration repaired — restart the agent if it is stopped: ovn restart"
 }
 
 # ── Uninstall ──────────────────────────────────────────────────────────
@@ -1567,10 +1619,26 @@ do_uninstall() {
     trap operation_end EXIT
     [[ -n "$NODE_NAME" ]] || NODE_NAME="$(grep -E '^NODE_NAME=' "$APP_DIR/.env" 2>/dev/null | head -1 | cut -d= -f2- | tr -d '"' || true)"
     : "${NODE_NAME:=ovnode}"
-    # Defaults to NO, matching OVManager. Removing a node is destructive and a
-    # bare Enter should not do it; the -y path and --purge are unaffected.
-    confirm "Remove OVNode and stop all services?" n || die "Cancelled."
+    # The list of what goes comes before the question, and the question is not
+    # yes/no: the destructive answer is a word, so a stray Enter keeps the PKI.
+    # A y/N prompt put "yes, delete the CA" one keystroke from the default.
+    render_screen
+    render_line "  $(printf '%bthis removes%b' "$B" "$NC")"
+    render_rule
+    render_kv "services" "$SYSTEMD_SERVICE, $NAT_SERVICE, openvpn-server@server"
+    render_kv "files" "$(dir_size "$APP_DIR")   $APP_DIR"
+    if [[ "$PURGE" -eq 1 ]]; then
+        render_kv "data" "$(printf '%s%s%s   %s← users, keys, the CA private key' "$RD" "$DATA_BASE" "$NC" "$GY")"
+        render_kv "openvpn" "$(printf '%s%s%s   %s← server config and every issued client cert' "$RD" "$OPENVPN_ROOT" "$NC" "$GY")"
+    else
+        render_kv "data" "$(dir_size "$DATA_BASE")   $DATA_BASE"
+        render_kv "openvpn" "$(dir_size "$OPENVPN_ROOT")   $OPENVPN_ROOT"
+    fi
+    render_rule
+    confirm_word "delete the data and the PKI as well? type purge" "purge" && PURGE=1
+    confirm "remove the app and stop all services?" n || die "Cancelled."
 
+    render_begin "uninstall" 1
     # Stopping the NAT unit runs its ExecStop cleanup (rules removed).
     systemctl_bounded stop "$SYSTEMD_SERVICE"
     systemctl_bounded stop "$NAT_SERVICE"
@@ -1593,64 +1661,86 @@ do_uninstall() {
         rm -rf "$DATA_BASE"
         backup_dir "$OPENVPN_ROOT" "openvpn-pre-purge"
         rm -rf "$OPENVPN_ROOT"
-        step "Data and OpenVPN configuration removed (backups in /var/backups)"
+        render_done "data and PKI removed · backups in /var/backups"
     else
-        step "App removed. Data kept at $DATA_BASE and $OPENVPN_ROOT (use --purge to remove them too)"
+        render_done "app removed · data kept at $DATA_BASE"
     fi
-    step "OVNode uninstalled"
-    line ""
+    render_blank
+}
+
+# Sizes a directory for the uninstall list. Present because "210 MB" and "84 MB"
+# read very differently, and an operator deciding whether to purge needs the
+# number in front of them, not after.
+dir_size() {
+    local kb
+    kb="$(du -sk "$1" 2>/dev/null | awk '{print $1}')"
+    if [[ -n "$kb" ]]; then
+        awk -v k="$kb" 'BEGIN { printf "%.0f MB", k/1024 }'
+    fi
+    return 0
 }
 
 # ── Interactive setup (humans on a TTY) ────────────────────────────────
+# Two questions: the port the agent answers on, and the certificate. Everything
+# else — the VPN transport, the deployment mode — is either chosen on the front
+# door menu or owned by the panel.
+#
+# The transport used to be asked here and defaulted to UDP interactively while
+# unattended installs silently got TCP. One question with two possible defaults
+# is a question with a bug in it, and the panel can change the transport on a
+# live node (POST /sync/config rewrites proto and restarts OpenVPN), so the
+# installer only has to write something valid to start from.
 interactive_setup() {
-    local api_default
-    api_default="$(openssl rand -hex 32)"
-    line "${B}Step 1/4 — Node identity${NC}"
-    NODE_NAME="$(ask "Node name" "${NODE_NAME:-ovnode}")"
-    PORT="$(ask "Service port" "${PORT:-$(find_free_port "$DEFAULT_PORT")}")"
-    VPN_PORTS="$(ask "OpenVPN port(s), comma sep." "${VPN_PORTS:-$DEFAULT_VPN}")"
-    API_KEY="$(ask "API key (blank=generate)" "${API_KEY:-$api_default}")"
+    render_screen
+    render_line "  $(printf '%bport%s' "$B" "$NC")"
+    PORT="$(ask "" "${PORT:-$(find_free_port "$DEFAULT_PORT")}")"
 
-    # Transport: UDP is faster (no TCP-over-TCP meltdown); TCP only where
-    # DPI/firewalls block UDP. Interactive default is UDP; unattended
-    # installs stay on TCP (previous behavior, zero surprise).
-    if [[ -z "$VPN_PROTO" ]]; then
-        if is_tty && [[ "$YES" -eq 0 ]]; then
-            line ""
-            line "${B}Step 2/4 — VPN transport${NC}"
-            line "  ${WH}1${NC})  UDP — faster, recommended"
-            line "  ${WH}2${NC})  TCP — only where UDP is blocked"
-            local proto_choice; proto_choice="$(ask "Transport" "1")"
-            [[ "$proto_choice" == "2" ]] && VPN_PROTO="tcp" || VPN_PROTO="udp"
-        else
-            VPN_PROTO="tcp"
-        fi
-    fi
-
-    if [[ "$DOCKER" -eq 0 ]]; then
-        line ""
-        line "${B}Step 3/4 — Deployment${NC}"
-        line "  ${WH}1${NC})  Host — systemd service (recommended)"
-        line "  ${WH}2${NC})  Docker — agent + OpenVPN in one container"
-        local dep; dep="$(ask "Mode" "1")"
-        [[ "$dep" == "2" ]] && DOCKER=1
-    fi
-
-    line ""
-    line "${B}Step 4/4 — Certificate (always encrypted)${NC}"
-    line "  ${WH}1${NC})  Self-signed (default)     encrypted; turn TLS *on* in the panel"
-    line "  ${WH}2${NC})  Let's Encrypt (domain)    needs a domain pointed here + free port 80"
-    line "  ${WH}3${NC})  Let's Encrypt (this IP)   short-lived cert, no domain needed"
-    line "  ${WH}4${NC})  Custom cert path          bring your own key + cert files"
+    render_screen
+    render_line "  $(printf '%btls%s' "$B" "$NC")"
     local tls_choice
-    tls_choice="$(ask "TLS mode" "1")"
+    tls_choice="$(ask "1 self-signed · 2 lets encrypt · 3 custom" "1")"
     case "${tls_choice:-1}" in
-        1) TLS_METHOD="selfsigned" ;;
-        2) TLS_METHOD="letsencrypt"; TLS_DOMAIN="$(ask "Domain" "")"; [[ -n "$TLS_DOMAIN" ]] || die "Domain required for Let's Encrypt" ;;
-        3) TLS_METHOD="letsencrypt-ip"; TLS_DOMAIN="$(primary_ip)" ;;
-        4) TLS_METHOD="custom"; TLS_KEY="$(ask "Key file" "")"; TLS_CERT="$(ask "Cert file" "")" ;;
+        2) ask_lets_encrypt ;;
+        3) TLS_METHOD="custom"
+            TLS_CERT="$(ask "cert" "${TLS_CERT:-}")"
+            TLS_KEY="$(ask "key" "${TLS_KEY:-}")"
+            [[ -f "$TLS_CERT" && -f "$TLS_KEY" ]] || die "Custom TLS files not found" ;;
         *) TLS_METHOD="selfsigned" ;;
     esac
+    return 0
+}
+
+# One free-text field for Let's Encrypt. The old wizard asked "domain or this
+# IP?" as its own question, which made the operator decide a distinction the
+# installer can make for itself: what they type says which it is.
+ask_lets_encrypt() {
+    local here detected others answer resolved
+    here="$(public_ip || true)"
+    detected="${TLS_DOMAIN:-${here:-}}"
+    others="$(public_ips)"
+    if [[ -n "$others" && "$others" != "$here" && "$others" != "$here "* ]]; then
+        render_ask_note "this box answers on ${others// /, }"
+    fi
+    render_ask_note "Let's Encrypt sees whatever you type here — an IP gets a short-lived cert, a name gets a normal one"
+    answer="$(ask "ip or domain" "$detected")"
+    [[ -n "$answer" ]] || answer="$detected"
+    [[ -n "$answer" ]] || die "Let's Encrypt needs an IP or a domain"
+
+    if is_ip_literal "$answer"; then
+        TLS_METHOD="letsencrypt-ip"; TLS_DOMAIN="$answer"
+        return 0
+    fi
+    TLS_METHOD="letsencrypt"; TLS_DOMAIN="$answer"
+    # Say what the name resolves to before spending a rate-limited issuance on
+    # it. A wrong record fails the request and burns one of Let's Encrypt's
+    # weekly attempts, which is the expensive way to learn a typo.
+    resolved="$(resolve_host "$answer")"
+    if [[ -z "$resolved" ]]; then
+        render_warn "$answer does not resolve yet — DNS has to point here before the certificate can be issued"
+    elif [[ -n "$here" && "$resolved" != "$here" ]]; then
+        render_warn "$answer resolves to $resolved, not $here — Let's Encrypt will refuse it"
+    fi
+    return 0
 }
 
 # Express install: safe defaults, no further questions. TLS is always on.
@@ -1666,24 +1756,20 @@ apply_express_defaults() {
 
 # Friendly front door: shown only for a bare interactive invocation.
 # Host install is the default; Docker is the explicit second choice.
+# The front door. The deployment mode is chosen here and nowhere else — the
+# wizard used to ask it again as "Step 3/4", so the answer could be given twice
+# and the two did not always agree.
 start_menu() {
-    line "  ${B}OVNode Setup${NC}"
-    sep
-    line ""
-    line "  ${GR}1.${NC} Install              ${GY}Recommended${NC}"
-    line "  ${WH}2.${NC} Install with Docker"
-    line ""
-    line "  ${WH}0.${NC} Exit"
-    line ""
-    local choice
-    choice="$(ask "Select" "1")"
-    case "${choice:-1}" in
-        1) apply_express_defaults ;;
-        2) DOCKER=1; apply_express_defaults ;;
-        0) line "Cancelled. No changes were made."; exit "$EX_OK" ;;
-        *) warn "Choose 0, 1, or 2."; start_menu ;;
+    local tag
+    tag="$(render_menu "" \
+        host   "install  ·  systemd on this box" \
+        docker "install  ·  agent + openvpn in a container" \
+        quit   "exit")"
+    case "$tag" in
+        host)   apply_express_defaults ;;
+        docker) DOCKER=1; apply_express_defaults ;;
+        *)      render_line "  cancelled — nothing was changed"; exit "$EX_OK" ;;
     esac
-    line ""
 }
 
 
@@ -1696,35 +1782,36 @@ start_menu() {
 STOP_TIMEOUT="${OVN_STOP_TIMEOUT:-20}"
 
 installed_menu() {
-    warn "OVNode is already installed"
-    info "Manage the node with: ovn  (status, logs, backup, TLS)"
-    while true; do
-        local tag
-        tag="$(tui_select "OVNode — installer" \
-            update      "Update" \
-            uninstall   "Uninstall" \
-            quit        "Quit")"
-        case "$tag" in
-            update)      do_update || warn "Update failed" ;;
-            uninstall)
-                confirm_no "Also delete data and backups?" && PURGE=1
-                do_uninstall
-                return 0 ;;
-            *)           return 0 ;;
-        esac
-    done
+    render_warn "OVNode is already installed at $APP_DIR"
+    if ! is_tty; then
+        # Exit 3, the documented "already installed" code, not die's 1: this is a
+        # state the caller asked about, so a provisioning script can tell it
+        # apart from a real failure.
+        render_fail "already installed" "$APP_DIR — re-run with: $0 update"
+        exit "$EX_ALREADY"
+    fi
+    local tag
+    tag="$(render_menu "" \
+        update    "update to v${VERSION}" \
+        uninstall "uninstall" \
+        quit      "quit")"
+    case "$tag" in
+        update)    do_update || render_warn "update failed" ;;
+        uninstall) do_uninstall ;;
+        *)         render_line "  nothing was changed" ;;
+    esac
 }
 
 install_cli() {
     # Refreshed on every update, so a box whose ovn is an old copy gets swapped.
     local src="${APP_DIR}/manager.sh"
     [[ -f "$src" ]] || return 0
-    mkdir -p "$BIN_DIR" 2>/dev/null || { warn "Could not create $BIN_DIR"; return 0; }
+    mkdir -p "$BIN_DIR" 2>/dev/null || { render_warn "Could not create $BIN_DIR"; return 0; }
     if cp -f "$src" "$BIN_DIR/$CLI_NAME" 2>/dev/null && chmod 0755 "$BIN_DIR/$CLI_NAME"; then
         ln -sf "$CLI_NAME" "$BIN_DIR/$CLI_ALIAS" 2>/dev/null || true
-        step "Command  ${BIN_DIR}/${CLI_NAME}  (alias: ${CLI_ALIAS})"
+        render_ok "Command  ${BIN_DIR}/${CLI_NAME}  (alias: ${CLI_ALIAS})"
     else
-        warn "Could not install the $CLI_NAME command into $BIN_DIR"
+        render_warn "Could not install the $CLI_NAME command into $BIN_DIR"
     fi
 }
 
@@ -1746,10 +1833,10 @@ check_deps() {
     fi
     [[ ${#missing[@]} -eq 0 ]] || pkg_install "${missing[@]}"
     if [[ "$DOCKER" -eq 0 ]] && ! command -v openvpn >/dev/null 2>&1; then
-        info "Installing OpenVPN + easy-rsa (for client PKI)..."
+        render_line "Installing OpenVPN + easy-rsa (for client PKI)..."
         pkg_install openvpn easy-rsa
     fi
-    step "System dependencies present"
+    render_ok "System dependencies present"
 }
 
 # ── Main ───────────────────────────────────────────────────────────────
@@ -1767,16 +1854,7 @@ main() {
         VERSION="${PIN#v}"
     fi
     if fancy; then command clear >/dev/null 2>&1 || true; fi
-    # The tagline advertises a fresh install, so only show it for install.
-    local subtitle
-    case "$ACTION" in
-        install) subtitle="Secure VPN node — up and running in a few minutes" ;;
-        *)      subtitle="Secure VPN node" ;;
-    esac
-    line ""
-    line "  ${B}OVNode installer${NC}  ${GY}v${VERSION}${NC}"
-    line "  ${GY}${subtitle}${NC}"
-    line ""
+    render_banner "OVNode" "v${VERSION}"
 
     case "$ACTION" in
         uninstall) do_uninstall; exit "$EX_OK" ;;
@@ -1824,18 +1902,16 @@ main() {
     fi
     validate_input
 
-    field "OS"        "$OS_NAME"
-    field "Version"   "v$VERSION (verified release)"
-    field "Mode"      "$([ "$DOCKER" -eq 1 ] && echo Docker || echo Host)"
-    field "Node"      "$NODE_NAME"
-    field "Service"   "$PORT"
-    field "OpenVPN"   "$(vpn_ports_label)/$VPN_PROTO"
-    field "TLS"       "$TLS_METHOD"
-    field "Install"   "$APP_DIR"
-    field "Data"      "$DATA_BASE/$NODE_NAME"
-    sep
-    # No extra confirm: the review card above is the confirmation, same as
-    # the panel installer.
+    # One line, not a nine-row card. A mistyped port or the wrong transport is
+    # the thing worth catching before the box changes, and both fit in a line
+    # the operator can read at a glance; the rest restated the wizard's own
+    # answers one screen back.
+    render_line "  $(printf '%bthis will install%b' "$B" "$NC")"
+    render_kv "node" "$(printf '%s· systemd on this box' "$PORT")"
+    render_kv "vpn" "$(vpn_ports_label)/$VPN_PROTO"
+    render_kv "tls" "$TLS_METHOD"
+    render_kv "data" "$DATA_BASE/$NODE_NAME"
+    render_blank
 
     do_install
 }

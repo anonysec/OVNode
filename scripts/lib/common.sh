@@ -5,73 +5,66 @@
 # OVNode shared shell library — sourced by install.sh and manager.sh, and the
 # only copy of every function below (tests/test_no_duplicate_functions.py).
 
-# ── Output ─────────────────────────────────────────────────────────────
-# All human-readable output goes to stderr, so stdout stays clean for callers.
-NC=$'\033[0m'; B=$'\033[1m'
+# ── Colour / TTY ───────────────────────────────────────────────────────
+# Every renderer writes to fd 2, so the gate tests fd 2. NO_COLOR removes the
+# colour; TERM=dumb removes the motion too, because a dumb terminal honours
+# neither. render.sh reads these globals — it does not define them.
+NC=$'\033[0m'; B=$'\033[1m'; D=$'\033[2m'
 WH=$'\033[97m'; GR=$'\033[32m'; RD=$'\033[31m'
 YL=$'\033[33m'; CY=$'\033[36m'; GY=$'\033[90m'
-[[ -t 2 ]] || { NC=''; B=''; WH=''; GR=''; RD=''; YL=''; CY=''; GY=''; }
+OR=$'\033[38;5;208m'
+[[ -t 2 && -z "${NO_COLOR:-}" && "${TERM:-dumb}" != "dumb" ]] \
+    || { NC=''; B=''; D=''; WH=''; GR=''; RD=''; YL=''; CY=''; GY=''; OR=''; }
 : "${QUIET:=0}"
 
-line()  { [[ "$QUIET" -eq 1 ]] || echo -e "  $1" >&2; }
-
-step()  { line "${GR}  ✓${NC} $1"; }
-
-info()  { line "${CY}  →${NC} $1"; }
-
-warn()  { line "${YL}  ⚠${NC} $1"; }
-
-field() { [[ "$QUIET" -eq 1 ]] || printf "  ${GY}%-18s${NC} %s\n" "$1" "$2" >&2; }
-
-sep()   { line "${GY}$(printf '%.0s─' {1..56})${NC}"; }
-
 # die <message> [exit-code]  — single error path.
+#
+# Deliberately not a render helper: this is the exit path, not decoration, and
+# it must keep working when the terminal is unusable and when render.sh failed
+# to source. QUIET does not silence it — an error nobody sees is a silent
+# failure.
 die() {
     local msg="$1" code="${2:-$EX_ERROR}"
-    echo -e "\n  ${RD}Error:${NC} $msg\n" >&2
+    printf '\n  %bError:%b %s\n\n' "$RD" "$NC" "$msg" >&2
     exit "$code"
 }
 
+# is_tty asks for a terminal on BOTH ends: this is the prompt predicate, and a
+# prompt nobody can answer is worse than no prompt. The renderer asks only about
+# stderr, because `curl … | bash -s` has a pipe on stdin and a terminal an
+# operator is watching — the wrong answer here would degrade the most common
+# install path.
 is_tty() { [[ -t 0 && -t 2 ]]; }
 
 # Spinners/prompts only for interactive humans.
 fancy()  { is_tty && [[ "$QUIET" -eq 0 ]]; }
 
-spinner() {
-    local msg="$1" pid=$2 chars='⠋⠙⠹⠸⠼⠴⠦⠧⠇⠏' i=0 rc=0
-    while kill -0 "$pid" 2>/dev/null; do
-        printf "\r  ${CY}%s${NC} %-46s" "${chars:$((i%9)):1}" "$msg" >&2
-        sleep 0.1; i=$(( i + 1 ))
-    done
-    wait "$pid" 2>/dev/null || rc=$?
-    printf "\r\033[K" >&2
-    if [[ $rc -eq 0 ]]; then step "$msg"; else line "${RD}  ✗${NC} $msg"; fi
-    return $rc
-}
-
-# run <label> <cmd...> — required step: spinner on a TTY, plain logs otherwise.
+# run <label> <cmd...> — required step. A failure is fatal: continuing would
+# leave a half-installed node the operator believes is whole.
 run() {
     local label="$1"; shift
-    if fancy; then
-        ( "$@" ) >/dev/null 2>&1 &
-        spinner "$label" $! || die "Step failed: $label"
-    else
-        "$@" >/dev/null 2>&1 || die "Step failed: $label"
-        step "$label"
+    render_begin "$label"
+    render_watch
+    if "$@" >/dev/null 2>&1; then
+        render_done ""
+        return 0
     fi
+    render_fail "$label" "command failed"
+    die "Step failed: $label"
 }
 
 # try_run <label> <cmd...> — best-effort step: warns instead of dying.
 try_run() {
     local label="$1"; shift
-    if fancy; then
-        ( "$@" ) >/dev/null 2>&1 &
-        spinner "$label" $! || { warn "$label — failed (continuing)"; return 1; }
-    else
-        if "$@" >/dev/null 2>&1; then step "$label"; else
-            warn "$label — failed (continuing)"; return 1
-        fi
+    render_begin "$label"
+    render_watch
+    if "$@" >/dev/null 2>&1; then
+        render_done ""
+        return 0
     fi
+    render_fail "$label" "continuing"
+    render_warn "$label failed — continuing"
+    return 1
 }
 
 # Masked input: one * per char on stderr, backspace works; value goes to stdout.
@@ -92,7 +85,7 @@ _masked_read() {
 ask() {
     local label="$1" default="$2" hidden="${3:-}" val=""
     if is_tty && [[ "$YES" -eq 0 ]]; then
-        printf "  ${WH}%-24s${NC} ${GY}[%s]${NC} : " "$label" "$default" >&2
+        render_ask "$label" "$default"
         if [[ "$hidden" == "h" ]]; then
             val="$(_masked_read)"
         else
@@ -113,11 +106,11 @@ confirm() {
         return
     fi
     if [[ "$default" == "y" ]]; then
-        printf "  %s [${GR}Y${NC}/n] : " "$1" >&2
+        render_ask "$1" "Y/n"
         read -r c
         [[ ! "$c" =~ ^[Nn]$ ]]
     else
-        printf "  %s [y/${GR}N${NC}] : " "$1" >&2
+        render_ask "$1" "y/N"
         read -r c
         [[ "$c" =~ ^[Yy]$ ]]
     fi
@@ -127,10 +120,23 @@ confirm() {
 confirm_no() {
     [[ "$YES" -eq 1 ]] && return 1
     is_tty || return 1
-    printf "  %s [y/${GR}N${NC}] : " "$1" >&2
+    render_ask "$1" "y/N"
     local c=""
     read -r c
     [[ "$c" =~ ^[Yy]$ ]]
+}
+
+# confirm_word <question> <word> — the destructive default. `uninstall` asks for
+# the word "purge" before it deletes a node's PKI and key material, and Enter
+# keeps them. A plain y/N made the destructive answer one stray keystroke from
+# the default.
+confirm_word() {
+    local question="$1" word="$2" reply=""
+    [[ "$YES" -eq 1 ]] && return 0
+    is_tty || return 1
+    render_ask "$question" "press enter to keep it"
+    read -r reply
+    [[ "$reply" == "$word" ]]
 }
 
 is_port() { [[ "$1" =~ ^[0-9]+$ ]] && (( $1 >= 1 && $1 <= 65535 )); }
@@ -149,10 +155,10 @@ backup_dir() {
     if tar -czf "$file" -C "$(dirname "$src")" "$base" 2>/dev/null; then
         umask "$old_umask"
         chmod 600 "$file" 2>/dev/null || true
-        step "Backup saved: $file"
+        render_ok "Backup saved: $file"
     else
         umask "$old_umask"
-        warn "Backup failed for $src — continuing anyway"
+        render_warn "Backup failed for $src — continuing anyway"
     fi
 }
 
@@ -161,6 +167,27 @@ wait_health() {
     for i in $(seq 1 "$tries"); do
         curl -fsSk -o /dev/null --max-time 3 "$url" 2>/dev/null && return 0
         sleep 1
+    done
+    return 1
+}
+
+# wait_health_live — wait_health, but the running step counts the attempts.
+#
+# The old wait was a minute of complete silence on first boot, which is
+# indistinguishable from a hang: first boot generates the PKI, so it is the
+# slowest and the most normal part of a node install. Each poll updates the step
+# line, so the operator sees it is trying and how long it has been trying.
+wait_health_live() {  # wait_health_live <url> <tries>
+    local url="$1" tries="${2:-30}" i code="" ms=0
+    for (( i = 1; i <= tries; i++ )); do
+        code="$(curl -fsSk -o /dev/null -w '%{http_code}' --max-time 3 "$url" 2>/dev/null || true)"
+        if [[ "$code" == "200" ]]; then
+            render_note "200 in ${ms}ms"
+            return 0
+        fi
+        render_note "waiting · attempt ${i}/${tries}"
+        sleep 1
+        ms=$(( ms + 1000 ))
     done
     return 1
 }
@@ -207,7 +234,7 @@ systemctl_bounded() {  # systemctl_bounded stop|restart <unit>
     if timeout "$STOP_TIMEOUT" systemctl "$action" "$unit" 2>/dev/null; then
         return 0
     fi
-    warn "systemctl $action $unit did not finish in ${STOP_TIMEOUT}s — forcing it"
+    render_warn "systemctl $action $unit did not finish in ${STOP_TIMEOUT}s — forcing it"
     systemctl kill -s SIGKILL "$unit" >/dev/null 2>&1 || true
     sleep 1
     if [[ "$action" == "restart" ]]; then
@@ -216,31 +243,13 @@ systemctl_bounded() {  # systemctl_bounded stop|restart <unit>
     return 0
 }
 
-# Boxed menu when whiptail is already installed; colored menu otherwise.
-tui_select() {  # tui_select "Title" tag label [tag label ...] → prints the tag
-    local title="$1"; shift
-    local tags=() labels=() tag i=0
-    while [[ $# -ge 2 ]]; do tags+=("$1"); labels+=("$2"); shift 2; done
-    if command -v whiptail >/dev/null 2>&1 && is_tty; then
-        local args=() out
-        for tag in "${tags[@]}"; do args+=("$tag" "${labels[$i]}"); i=$((i + 1)); done
-        out="$(whiptail --title "$title" --menu "Choose an action" 24 78 12 "${args[@]}" 3>&1 1>&2 2>&3)" && {
-            printf '%s' "$out"
-            return 0
-        }
-        return 0
-    fi
-    line "${B}${title}${NC}"; line ""
-    i=0
-    for tag in "${tags[@]}"; do
-        i=$((i + 1))
-        printf '  %b%d%b)  %s\n' "$WH" "$i" "$NC" "${labels[$((i - 1))]}" >&2
-    done
-    line ""
-    local choice; choice="$(ask "Select" "1")"
-    [[ "$choice" =~ ^[0-9]+$ ]] || { printf '%s' "${tags[0]}"; return 0; }
-    printf '%s' "${tags[$(((choice - 1) % ${#tags[@]}))]}"
-}
+# Menu. The drawing and the keystrokes belong to render.sh; this is the wrapper
+# for callers that want a tag back.
+#
+# The old version preferred whiptail when it happened to be installed, so the
+# same menu rendered two completely different ways on two different boxes. One
+# renderer, so the pointer, the number and the arrow always agree.
+tui_select() { render_menu "$@"; }
 
 _existing_tls_pair_usable() {  # <key> <cert> → 0 when an intact, unexpired pair is already there
     local key="$1" cert="$2" key_pub cert_pub
@@ -263,7 +272,7 @@ generate_selfsigned() {
     if [[ "${TLS_REGENERATE:-0}" != "1" ]] && _existing_tls_pair_usable "$key" "$cert"; then
         TLS_KEY="$key"
         TLS_CERT="$cert"
-        step "Self-signed certificate already present — reusing it"
+        render_ok "self-signed certificate already present — reusing it"
         return 0
     fi
     local cn; cn="$(primary_ip)"
@@ -276,7 +285,7 @@ generate_selfsigned() {
     chmod 644 "$cert"
     TLS_KEY="$key"
     TLS_CERT="$cert"
-    step "Self-signed certificate generated"
+    render_ok "self-signed certificate generated"
 }
 
 ensure_acme() {
@@ -297,11 +306,11 @@ issue_letsencrypt() {
         expiry="$(openssl x509 -enddate -noout -in "$outdir/fullchain.pem" 2>/dev/null | cut -d= -f2)"
         days_left=$(( ($(date -d "$expiry" +%s 2>/dev/null || echo 0) - $(date +%s)) / 86400 ))
         if (( days_left > 7 )); then
-            step "Existing certificate valid for ${days_left} more days"
+            render_ok "existing certificate valid for ${days_left} more days"
             TLS_KEY="$outdir/privkey.pem"; TLS_CERT="$outdir/fullchain.pem"
             return 0
         fi
-        warn "Certificate expires soon (${days_left}d) — renewing..."
+        render_warn "certificate expires soon (${days_left}d) — renewing"
     fi
 
     local extra_args=()
@@ -317,7 +326,7 @@ issue_letsencrypt() {
         --reloadcmd "systemctl restart $SYSTEMD_SERVICE >/dev/null 2>&1 || true" >/dev/null 2>&1 \
         || die "Failed to install certificate to $outdir"
     TLS_KEY="$outdir/privkey.pem"; TLS_CERT="$outdir/fullchain.pem"
-    step "Certificate installed to $outdir"
+    render_ok "certificate installed to $outdir"
 }
 
 setup_tls() {
@@ -332,14 +341,64 @@ setup_tls() {
             cp "$TLS_KEY" "$out/privkey.pem"
             cp "$TLS_CERT" "$out/fullchain.pem"
             TLS_KEY="$out/privkey.pem"; TLS_CERT="$out/fullchain.pem"
-            step "Custom certificate installed to $out"
+            render_ok "custom certificate installed to $out"
             ;;
     esac
 }
 
-# ── Misc helpers (kv is manager-only) ──────────────────────────────────
-kv() { [[ "$QUIET" -eq 1 ]] || printf "  ${GY}%-18s${NC} %s\n" "$1" "$2" >&2; }
+# ── Misc helpers ───────────────────────────────────────────────────────
 primary_ip() { hostname -I 2>/dev/null | awk '{print $1}'; }
+
+# This box's public address, as Let's Encrypt would see it: a public resolver
+# first (the address the internet routes to), then the local interfaces filtered
+# to globally routable ranges. An address behind NAT is still the right answer
+# here — the certificate names what the world dials.
+public_ip() {
+    local ip
+    for ip in $(curl -fsS --max-time 3 https://api.ipify.org 2>/dev/null) \
+              $(curl -fsS --max-time 3 https://ifconfig.me/ip 2>/dev/null); do
+        [[ "$ip" =~ ^[0-9a-fA-F:.]+$ ]] && { printf '%s' "$ip"; return 0; }
+    done
+    for ip in $(hostname -I 2>/dev/null); do
+        case "$ip" in
+            *:*) continue ;;                       # IPv6 is not offered for LE here
+            127.*|10.*|192.168.*|169.254.*) continue ;;
+            172.1[6-9].*|172.2[0-9].*|172.3[01].*) continue ;;   # 172.16/12 is private
+            *) printf '%s' "$ip"; return 0 ;;
+        esac
+    done
+    return 1
+}
+
+# Every routable address on this host, for a box with more than one: the prompt
+# names them so an operator with several can pick the one the certificate
+# should carry instead of guessing.
+public_ips() {
+    local ip out=""
+    for ip in $(hostname -I 2>/dev/null); do
+        case "$ip" in
+            *:*) continue ;;
+            127.*|10.*|192.168.*|169.254.*) continue ;;
+            172.1[6-9].*|172.2[0-9].*|172.3[01].*) continue ;;
+            *) out+="$ip " ;;
+        esac
+    done
+    printf '%s' "${out% }"
+}
+
+# Is this a bare IP rather than a hostname? Decides whether a Let's Encrypt
+# request is the short-lived IP kind or the ordinary domain one, so one free-text
+# prompt can serve both.
+is_ip_literal() {
+    [[ "$1" =~ ^[0-9]{1,3}(\.[0-9]{1,3}){3}$ ]] || [[ "$1" == *:* ]]
+}
+
+# Resolve and report, so a certificate attempt is not spent discovering a
+# misconfigured record. Prints the address on success, empty otherwise.
+resolve_host() {
+    local host="$1"
+    getent hosts "$host" 2>/dev/null | awk '{ print $1; exit }' || true
+}
 
 # Code-tree snapshots for update failover: keep the newest $keep.
 snapshot_code() {  # snapshot_code <dir> <label> [keep=2] → prints the file
@@ -352,7 +411,7 @@ snapshot_code() {  # snapshot_code <dir> <label> [keep=2] → prints the file
     file="/var/backups/${label}-code-${base}-${stamp}.tar.gz"
     tar -czf "$file" -C "$(dirname "$dir")" "$base" 2>/dev/null \
         || die "Could not snapshot $dir" "$EX_ERROR"
-    step "Snapshot  $file"
+    render_ok "snapshot  $file"
     # Read the list line by line: `rm -f $old` word-splits on whitespace and
     # globs the result, so a label containing a space deletes the wrong set.
     local old=() line
