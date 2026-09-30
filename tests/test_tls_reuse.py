@@ -146,6 +146,7 @@ def test_regeneration_is_still_reachable_on_request():
     assert "TLS_REGENERATE" in _body("generate_selfsigned", INSTALLER, LIB), (
         "there must be a way to ask for a new certificate"
     )
-    assert "TLS_REGENERATE=1" in _body("node_tls_menu", MANAGER), (
-        "the regenerate menu entry must bypass reuse"
+    assert "TLS_REGENERATE=1" in _body("node_tls", MANAGER), (
+        "`ovn tls selfsigned` must bypass reuse — asking for a new certificate is "
+        "asking for a new certificate, and the panel has pinned the old one"
     )

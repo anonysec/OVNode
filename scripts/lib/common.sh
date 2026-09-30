@@ -202,24 +202,6 @@ env_get() {  # env_get FILE KEY → value
     awk -F= -v k="$2" '$1 == k { sub(/^[^=]*=/, ""); print; exit }' "$1" | tr -d '\r'
 }
 
-env_set() {  # env_set FILE KEY VALUE — rewrite one line, atomically
-    local file="$1" key="$2" value="$3" tmp
-    if [[ ! -f "$file" ]]; then
-        printf '%s=%s\n' "$key" "$value" >> "$file"
-        return 0
-    fi
-    tmp="$(mktemp "${file}.XXXXXX")" || die "Could not create a temp file next to $file"
-    ENV_K="$key" ENV_V="$value" awk '
-        BEGIN { k = ENVIRON["ENV_K"]; v = ENVIRON["ENV_V"]; done = 0 }
-        index($0, k "=") == 1 { if (!done) { print k "=" v; done = 1 } ; next }
-        { print }
-        END { if (!done) print k "=" v }
-    ' "$file" > "$tmp" || { rm -f "$tmp"; die "Could not update $file"; }
-    chmod --reference="$file" "$tmp" 2>/dev/null || chmod 600 "$tmp"
-    chown --reference="$file" "$tmp" 2>/dev/null || true
-    mv -f "$tmp" "$file"
-}
-
 node_name_from_env() {
     local name; name="$(env_get "$APP_DIR/.env" NODE_NAME)"
     printf '%s' "${name:-ovnode}"

@@ -37,6 +37,9 @@ PIN=""
 LOGS_ARG=""
 AUTO_BACKUP_ACTION="" BACKUP_TIME="" BACKUP_KEEP=""
 RESTORE_NAME=""
+# tls's subcommand. Empty means the bare form: report the certificate, then
+# list what can replace it, without asking anything.
+TLS_ACTION="" TLS_DOMAIN="" TLS_KEY="" TLS_CERT="" TLS_REGENERATE=0
 NODE_NAME="${OVN_NAME:-}"
 
 # Shared helpers (output, prompts, TLS, menus), all defined in
@@ -86,7 +89,29 @@ delegate_update() {
     [[ "$YES" -eq 1 ]] && args+=(-y)
     [[ "$QUIET" -eq 1 ]] && args+=(--quiet)
     [[ -n "$PIN" ]] && args+=(--version "$PIN")
+
+    # A previous update that died mid-flight leaves the install needing recovery
+    # and refuses to start. `update` is the command an operator reaches for when
+    # something looks wrong, so it is the one that should fix it — which is what
+    # lets `recover-update` leave the short help while keeping the same code
+    # path underneath.
+    if [[ -f "$DATA_BASE/update-state.json" ]] && node_update_needs_recovery; then
+        render_note "Finishing an interrupted update first…"
+        run_installer recover-update "${args[@]}" || {
+            render_fail "update" "the interrupted update could not be recovered — nothing was changed"
+            return "$EX_ERROR"
+        }
+    fi
     run_installer update "${args[@]}"
+}
+
+# True when the recorded phase is one that means "an update stopped here".
+# Read with grep rather than python3: this runs on the failure path, where the
+# least can be assumed about the box, and a missing python3 is exactly the kind
+# of state that gets an install stuck.
+node_update_needs_recovery() {
+    grep -q '"phase": *"recovery_required"\|"phase": *"rollback_failed"\|"phase": *"candidate_failed"' \
+        "$DATA_BASE/update-state.json" 2>/dev/null
 }
 
 delegate_uninstall() {
@@ -174,6 +199,19 @@ node_service_action() {  # start|stop|restart
         systemctl "$1" "$SYSTEMD_SERVICE" || die "systemctl $1 $SYSTEMD_SERVICE failed"
     fi
     render_ok "Node agent $1: done"
+}
+
+# Autostart is a systemd-only concept: a compose container is restarted by the
+# daemon whenever docker starts, so there is nothing to enable and pretending
+# otherwise would leave the operator believing a box comes back after a reboot
+# when it does not.
+node_autostart() {  # enable|disable
+    is_docker_node && die "A container node starts with docker — nothing to enable." "$EX_USAGE"
+    systemctl "$1" "$SYSTEMD_SERVICE" || die "systemctl $1 $SYSTEMD_SERVICE failed"
+    case "$1" in
+        enable)  render_ok "node agent starts on boot" ;;
+        disable) render_ok "node agent will not start on boot" ;;
+    esac
 }
 
 restart_vpn() {
@@ -401,7 +439,7 @@ auto_backup_cli() {
     esac
 }
 
-node_tls_menu() {
+node_tls() {
     local envfile="$APP_DIR/.env"
     [[ -f "$envfile" ]] || die "Not installed ($envfile missing)"
     local method keyfile certfile expiry
@@ -409,34 +447,72 @@ node_tls_menu() {
     keyfile="$(env_get "$envfile" SSL_KEYFILE)"
     certfile="$(env_get "$envfile" SSL_CERTFILE)"
     expiry="$(openssl x509 -enddate -noout -in "$certfile" 2>/dev/null | cut -d= -f2 || true)"
-    render_line ""
-    render_line "${B}TLS certificate — panel ↔ node API${NC}"
-    render_kv "Mode"    "$method"
-    render_kv "Key file"  "${keyfile:-<none>}"
-    render_kv "Cert file" "${certfile:-<none>}"
-    [[ -n "$expiry" ]] && render_kv "Expires" "$expiry"
-    render_line ""
-    render_line "  1) Self-signed (regenerate)"
-    render_line "  2) Let's Encrypt for a domain"
-    render_line "  3) Let's Encrypt for this IP"
-    render_line "  4) Custom key + cert paths"
-    render_line "  0) Back"
-    local c; c="$(ask "Select" "0")"
-    case "${c:-0}" in
-        1) TLS_METHOD="selfsigned"; TLS_REGENERATE=1 ;;
-        2) TLS_METHOD="letsencrypt"; TLS_DOMAIN="$(ask "Domain" "")"
-           [[ -n "$TLS_DOMAIN" ]] || { render_warn "Domain required"; return 0; } ;;
-        3) TLS_METHOD="letsencrypt-ip"; TLS_DOMAIN="$(primary_ip)" ;;
-        4) TLS_METHOD="custom"; TLS_KEY="$(ask "Key file" "")"; TLS_CERT="$(ask "Cert file" "")"
-           [[ -f "$TLS_KEY" && -f "$TLS_CERT" ]] || { render_warn "Key/cert files not found"; return 0; } ;;
-        0|*) return 0 ;;
+
+    # Bare, it reports and lists. The numbered menu it used to open is the one
+    # thing a script cannot answer, and the two questions it asked — what am I
+    # running, how do I change it — are both answered here without a prompt.
+    #
+    # The option list is the point of this command, so it is printed whatever
+    # the read does. An operator who came to find out what `ovn tls` can do must
+    # not be met with an error from the thing it was about to offer.
+    if [[ -z "$TLS_ACTION" ]]; then
+        render_line ""
+        render_line "${B}TLS certificate — panel ↔ node API${NC}"
+        render_kv "Mode"      "$method"
+        render_kv "Key file"  "${keyfile:-<none>}"
+        render_kv "Cert file" "${certfile:-<none>}"
+        [[ -n "$expiry" ]] && render_kv "Expires" "$expiry"
+        render_line ""
+        render_kv "Selfsigned" "ovn tls selfsigned"
+        render_kv "Encrypt"    "ovn tls le IP|DOMAIN"
+        render_kv "Custom"     "ovn tls custom CERT KEY"
+        render_line "  the paths come from .env — this writes the certificate, never the file"
+        return 0
+    fi
+
+    case "$TLS_ACTION" in
+        selfsigned)
+            # Explicit regeneration, always. An intact pair is kept by the
+            # generator, and the panel pinned this certificate to the node, so
+            # replacing it silently is how a working node stops validating.
+            TLS_METHOD="selfsigned"; TLS_REGENERATE=1 ;;
+        le)
+            [[ -n "$TLS_DOMAIN" ]] || die "ovn tls le needs an ip or a domain" "$EX_USAGE"
+            # One free-text field for both kinds: a bare IP gets the short-lived
+            # IP certificate and a name gets the ordinary one, decided here
+            # rather than by asking the operator to know which they want.
+            if is_ip_literal "$TLS_DOMAIN"; then TLS_METHOD="letsencrypt-ip"
+            else TLS_METHOD="letsencrypt"; fi ;;
+        custom)
+            [[ -n "$TLS_KEY" && -n "$TLS_CERT" ]] || die "ovn tls custom needs CERT and KEY" "$EX_USAGE"
+            [[ -f "$TLS_KEY" && -f "$TLS_CERT" ]] || die "Key or certificate file not found: $TLS_KEY $TLS_CERT" "$EX_ERROR"
+            TLS_METHOD="custom" ;;
+        *) die "ovn tls: unknown option '$TLS_ACTION'  (see: ovn tls)" "$EX_USAGE" ;;
     esac
-    setup_tls || return 0
-    env_set "$envfile" TLS_METHOD "$TLS_METHOD"
-    env_set "$envfile" SSL_KEYFILE "$TLS_KEY"
-    env_set "$envfile" SSL_CERTFILE "$TLS_CERT"
+    setup_tls || return "$EX_ERROR"
+    node_tls_install_to_declared "$TLS_KEY" "$TLS_CERT"
     render_ok "Certificate updated — restarting the node agent"
     node_service_action restart
+}
+
+# Put the issued pair where the agent will look for it.
+#
+# .env declared the paths at install and is not edited since: it is a
+# declaration, and the job here is to fulfil it rather than to record where the
+# files happened to land. setup_tls writes wherever the chosen method wants,
+# which is not necessarily either of those.
+node_tls_install_to_declared() {
+    local want_key="$1" want_cert="$2" envfile="$APP_DIR/.env"
+    local decl_key decl_cert
+    decl_key="$(env_get "$envfile" SSL_KEYFILE)"
+    decl_cert="$(env_get "$envfile" SSL_CERTFILE)"
+    [[ -n "$decl_key" && -n "$decl_cert" ]] || return 0   # TLS is off; nothing to serve
+    [[ "$decl_key" == "$want_key" ]] && return 0
+    mkdir -p "$(dirname "$decl_key")" "$(dirname "$decl_cert")" \
+        || die "Could not create the certificate directory" "$EX_ERROR"
+    cp -f "$want_key" "$decl_key" || die "Could not install the key at $decl_key" "$EX_ERROR"
+    cp -f "$want_cert" "$decl_cert" || die "Could not install the certificate at $decl_cert" "$EX_ERROR"
+    secure_tls_files "$decl_key" "$decl_cert"
 }
 
 backup_submenu() {
@@ -748,10 +824,53 @@ do_credentials() {
     # Same shape as the installer's Ready card, or the panel cannot register it.
     bundle="ovnode://${node}@${host}:${port}?key=${key}&tls=${tls_flag}"
 
-    render_kv "Node"    "$node"
-    render_kv "Service" "${scheme}://${host}:${port}"
-    render_kv "API key" "$key"
-    render_kv "Bundle"  "$bundle"
+    render_kv "Node"     "$node"
+    render_kv "Service"  "${scheme}://${host}:${port}"
+    # Bold, and one line of prose under it, because this is the one value on
+    # screen that gets copied out of it. Printed at the same weight as every
+    # other row it was read past, and the key is not recoverable from the panel
+    # — losing it means re-enrolling the node.
+    render_key "API key" "$key"
+    render_url "Bundle"  "$bundle"
+    render_line "  paste the bundle into the panel to register this node"
+    # Worth saying out loud, because there is no command that hides it: .env is
+    # user-owned, so a rotated key is one the operator edits in. Saying that is
+    # better than letting them look for a `rotate` that does not exist.
+    render_line "  to rotate: change API_KEY in $APP_DIR/.env, then ovn restart"
+    render_line "  the panel must be given the new key too — there is one credential"
+}
+
+# `ovn config` — every effective setting and where it comes from. Read-only.
+#
+# The question it answers is the one a hand-edited .env raises: is the agent
+# using this file, or something else? Everything the agent needs at boot lives
+# here and nowhere else, so the honest answer is "all of it, and here is the
+# file" — which is worth saying once, in a place an operator can look.
+do_config() {
+    local envfile="$APP_DIR/.env"
+    [[ -f "$envfile" ]] || die "OVNode is not installed." "$EX_NOTINSTALLED"
+    check_root
+    render_line ""
+    render_line "${B}settings${NC}"
+    render_blank
+    local key value
+    while IFS='=' read -r key value; do
+        [[ -n "$key" && "$key" != \#* ]] || continue
+        case "$key" in
+            API_KEY)
+                # Never printed. `ovn credentials` is where it is shown, once,
+                # on purpose — a value that appears in two places is a value
+                # that ends up in a screenshot.
+                render_kv "$key" "set — see: ovn credentials" ;;
+            TLS_METHOD|SSL_KEYFILE|SSL_CERTFILE)
+                render_kv "$key" "$value  — read by ovn tls" ;;
+            *)
+                render_kv "$key" "$value" ;;
+        esac
+    done < "$envfile"
+    render_blank
+    render_line "  .env is written once by the installer and never by this tool"
+    render_line "  edit it freely; changes take effect on: ovn restart"
 }
 
 # ── Completion ─────────────────────────────────────────────────────────
@@ -762,7 +881,7 @@ _ovn_completions() {
     local cur
     COMPREPLY=()
     cur="${COMP_WORDS[COMP_CWORD]}"
-    local cmds="status credentials update start stop restart restart-vpn logs backup restore auto-backup tls doctor rollback recover-update uninstall completion help"
+    local cmds="status credentials config update enable disable restart restart-vpn logs backup restore auto-backup tls doctor rollback recover-update uninstall completion help start stop"
     local flags="--yes -y --help -h --quiet -q --purge --keep -v --version --fix -a --all"
     if [[ "$cur" == -* ]]; then
         COMPREPLY=( $(compgen -W "$flags" -- "$cur") )
@@ -792,43 +911,99 @@ do_completion() {
 
 # ── Help / args ────────────────────────────────────────────────────────
 show_help() {
+    # Eleven verbs, one screen, and the same shape as the panel's so the two
+    # read as one product. Everything else is one flag away.
     cat << 'EOF' >&2
-  ovnode — OVNode node manager (alias: ovn)
+  ovnode — node manager  (alias: ovn)
 
-  Usage:
-    ovn                         Interactive numbered menu
-    ovn status                  Agent, health, version and VPN state
-    ovn status --all            Also show node, mode, port and TLS
-    ovn credentials             Node name, API key and bundle for the panel
-    ovn update                  Update via install.sh (with backup)
-    ovn start|stop|restart      Control the node agent service
-    ovn restart-vpn             Restart/reload OpenVPN
-    ovn logs [N|-f]             Last N log lines (default 100), or follow
-    ovn backup [--keep N]       Save state + PKI backups now
-    ovn auto-backup on|off|status   Host timer: daily backup at 03:30
-    ovn restore [name]          List data backups, or restore one by name
-    ovn tls                     Show/replace the cert
-    ovn doctor [--fix]          Health check (agent, VPN, disk, cert, backups)
-    ovn rollback                Restore the newest pre-update code snapshot
-    ovn recover-update          Recover an interrupted update transaction
-    ovn completion              Install bash completion for ovn
-    ovn uninstall [--purge]     Remove OVNode (data kept unless --purge)
-    ovn help                    This help
+  USAGE
+    ovn status              Agent, health, version, service address  (--all for paths)
+    ovn logs [N|-f]         Last N lines, or follow live
+    ovn doctor [--fix]      Health checks; --fix applies the safe ones
+    ovn restart             Restart the node agent
+    ovn enable | disable    Automatic start on or off
+    ovn restart-vpn         Restart or reload OpenVPN
 
-  Flags (an OVN_* variable, where shown, sets the same thing; CLI wins):
-    --yes | -y          Never prompt, accept defaults    [OVN_YES=1]
-    --quiet | -q        Suppress progress logs           [OVN_QUIET=1]
-    --purge             With uninstall: remove data too  [OVN_PURGE=1]
-    --keep N            backup: keep newest N tarballs  (flag only)
-    -v | --version      update: install this release instead  (flag only)
+    ovn credentials         Node name, service address, API key, bundle
+    ovn tls                 Certificate — lists the options
+
+    ovn backup [--keep N]   Write a state + PKI backup now
+    ovn backup schedule     on | off | status — the host timer
+    ovn restore [NAME]      List backups, or restore one
+
+    ovn update              Staged update; recovers an interrupted one first
+    ovn rollback            Restore the pre-update code snapshot
+    ovn uninstall           Remove the node (--purge for data too)
+
+  full reference: ovn help --all
+EOF
+    exit "$EX_OK"
+}
+
+# The full reference. "One flag away" only works if the flag is there.
+show_help_full() {
+    cat << 'EOF' >&2
+  ovnode — node manager  (alias: ovn)
+
+  COMMANDS
+    ovn status              Agent, health, version, service address
+    ovn status --all        Adds node name, mode, port and TLS paths
+    ovn logs [N|-f]         Last N lines (default 100), or follow live
+    ovn doctor [--all]      Health checks; --all lists every one
+    ovn doctor --fix        Same checks, plus safe automatic repairs
+    ovn restart             Restart the node agent
+    ovn enable | disable    Turn automatic start on or off
+    ovn restart-vpn         Restart or reload OpenVPN
+
+    ovn credentials         Node name, service address, API key, bundle
+    ovn tls                 Certificate: method, key, cert, expiry
+    ovn tls selfsigned      New self-signed certificate
+    ovn tls le IP|DOMAIN    Let's Encrypt — ip or domain, detected
+    ovn tls custom CERT KEY Use your own pair
+
+    ovn backup [--keep N]   Write a verified state + PKI backup now
+    ovn backup schedule     on | off | status — the host timer
+    ovn restore [NAME]      List data backups, or restore one by name
+    ovn update              Staged update with automatic failover
+    ovn rollback            Restore the newest pre-update code snapshot
+    ovn uninstall [--purge] Remove the node (data kept unless --purge)
+    ovn completion          Install bash completion, print the source line
+    ovn config              Every effective setting and where it comes from
+
+  RETIRED NAMES — still work, no longer in the short help
+    ovn auto-backup         → ovn backup schedule
+    ovn recover-update      → ovn update (it recovers first)
+    ovn start | stop        → ovn restart
+
+  OPTIONS
+    -y, --yes           Never prompt
+    -a, --all           status and doctor: include everything
     --fix               doctor: apply safe automatic fixes
-    -a, --all            status: include node, mode, port and TLS
-    --help | -h         This help
+    --keep N            backup: how many backups to keep
+    --purge             uninstall: also delete data and PKI
+    -v, --version V     update: pin a release, e.g. -v v1.0.15
+    -q, --quiet         Suppress progress logs        [OVN_QUIET=1]
+    -h, --help          This help
 
-  The installer's own version is reported by: ovnode/install.sh version-script
+  ENVIRONMENT
+    OVN_YES=1           same as -y
+    OVN_PURGE=1         same as --purge
+    OVN_QUIET=1         same as -q
+    CI=true             implies -y
 
-  Update and uninstall are implemented in install.sh — this script
-  delegates to $APP_DIR/install.sh so there is exactly one copy.
+  .env
+    Written once by the installer and never by this tool. It owns the boot
+    settings outright — NODE_NAME, DATA_DIR, SERVICE_PORT, API_KEY, OPENVPN_PORT,
+    TLS_METHOD, SSL_KEYFILE, SSL_CERTFILE — because the agent cannot open its
+    state without DATA_DIR and cannot bind without the ports. Edit it freely;
+    changes take effect on restart.
+
+    The API key lives here, not in the panel. It is printed once by the
+    installer and by `ovn credentials`; neither can be recovered elsewhere, so
+    losing .env means re-enrolling the node.
+
+  Update and uninstall are implemented in install.sh — this script delegates to
+  $APP_DIR/install.sh so there is exactly one copy of each.
 EOF
     exit "$EX_OK"
 }
@@ -841,10 +1016,16 @@ parse_args() {
             credentials)  ACTION="credentials"; shift ;;
             update)       ACTION="update"; shift ;;
             uninstall|--uninstall) ACTION="uninstall"; shift ;;
-            help|--help|-h) show_help ;;
+            help|--help|-h)
+                          # "One flag away" only works if the flag is there.
+                          # The spaces matter: `ovn help --all` puts --all last,
+                          # so a bare suffix match never fires.
+                          [[ " $* " == *" --all "* ]] && show_help_full
+                          show_help ;;
             start)        ACTION="start"; shift ;;
             stop)         ACTION="stop"; shift ;;
             restart)      ACTION="restart"; shift ;;
+            enable|disable) ACTION="$1"; shift ;;
             restart-vpn)  ACTION="restart-vpn"; shift ;;
             backup)       ACTION="backup"; shift ;;
             auto-backup)  ACTION="auto-backup"; shift
@@ -863,9 +1044,36 @@ parse_args() {
                           else
                               shift
                           fi ;;
+            backup)       ACTION="backup"; shift
+                          if [[ "$1" == "schedule" ]]; then
+                              ACTION="auto-backup"; AUTO_BACKUP_ACTION="status"; shift 2
+                          fi ;;
+            # ── the two grouped commands ──
+            # Bare, each prints what it can do; a subcommand acts. Same rule as
+            # the panel's tls/auth/url, so the shape is learned once for both.
+            tls)          ACTION="tls"; shift
+                          TLS_ACTION=""
+                          if [[ $# -ge 1 && "$1" != -* ]]; then
+                              case "$1" in
+                                  selfsigned) TLS_ACTION="selfsigned"; shift ;;
+                                  le)         eval "$need2"; TLS_ACTION="le"; TLS_DOMAIN="$2"; shift 2 ;;
+                                  custom)     eval "$need2"; eval "$need2"
+                                              TLS_ACTION="custom"; TLS_CERT="$2"; TLS_KEY="$3"; shift 3 ;;
+                                  *) die "ovn tls: unknown option '$1'  (see: ovn tls)" "$EX_USAGE" ;;
+                              esac
+                          fi ;;
+            credentials)  ACTION="credentials"; shift ;;
+            config)       ACTION="config"; shift ;;
+
+            # ── retired names ──
+            # Still dispatched, out of the short help. Nothing warns, because a
+            # deprecation line on every nightly backup job is noise, not notice.
+            recover-update) ACTION="recover-update"; shift ;;
+
             --yes|-y)     YES=1; shift ;;
             --purge)      PURGE=1; shift ;;
             --fix)        FIX=1; shift ;;
+            -q|--quiet)   QUIET=1; shift ;;
             -a|--all)     SHOW_ALL=1; shift ;;
             -v|--version) eval "$need2"; PIN="$2"; shift 2 ;;
             *)            die "Unknown option: $1 (ovn help for usage)" "$EX_USAGE" ;;
@@ -886,17 +1094,18 @@ main() {
     case "$ACTION" in
         status)    do_status; exit "$EX_OK" ;;
         credentials) do_credentials; exit "$EX_OK" ;;
-        update)    delegate_update; exit "$EX_OK" ;;
+        config)    do_config; exit "$EX_OK" ;;
+        update|recover-update) delegate_update; exit "$EX_OK" ;;
         start|stop|restart) check_root; node_service_action "$ACTION"; exit "$EX_OK" ;;
+        enable|disable) check_root; node_autostart "$ACTION"; exit "$EX_OK" ;;
         restart-vpn) check_root; restart_vpn; exit "$EX_OK" ;;
         logs) do_node_logs "$LOGS_ARG"; exit "$EX_OK" ;;
         backup) check_root; do_node_backup; exit "$EX_OK" ;;
         restore) do_restore "$RESTORE_NAME"; exit "$EX_OK" ;;
         auto-backup) check_root; auto_backup_cli "$AUTO_BACKUP_ACTION"; exit "$EX_OK" ;;
-        tls) check_root; node_tls_menu; exit "$EX_OK" ;;
+        tls) check_root; node_tls; exit $? ;;
         doctor) do_doctor; exit "$EX_OK" ;;
         rollback) do_rollback; exit "$EX_OK" ;;
-        recover-update) run_installer recover-update; exit "$EX_OK" ;;
         completion) do_completion; exit "$EX_OK" ;;
         uninstall) delegate_uninstall; exit "$EX_OK" ;;
     esac
