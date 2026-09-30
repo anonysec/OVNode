@@ -28,9 +28,9 @@ client (backend/node/requests.py):
     POST   /sync/users                       set_user_limits (bulk)
 
 The panel treats a call as successful ONLY when the response is HTTP 200
-with ``{"success": true}`` — so handlers report business failures inside the
-envelope instead of raising, except where the panel explicitly checks the
-HTTP status (ovpn download must be a raw 200 body starting with "client").
+with ``{"success": true}``, so handlers report business failures inside the
+envelope instead of raising — except where the panel checks the HTTP status
+itself (ovpn download must be a raw 200 body starting with "client").
 
 Authentication: the panel sends the node API key in the ``key`` header.
 """
@@ -66,16 +66,15 @@ async def disconnect_user_sessions(
 ):
     """Best-effort disconnect for a user; also clears stale active markers.
 
-    The panel passes either the numeric user id or a raw CN here
-    (clean_stale_sessions_all_nodes() forwards marker CNs verbatim).
-
-    ``only_stale=True`` never kills live sessions — it only removes dead
-    markers, so it is safe for users that also hold a healthy session.
+    `uid` is the numeric user id or a raw CN (clean_stale_sessions_all_nodes()
+    forwards marker CNs verbatim). ``only_stale=True`` never kills live
+    sessions — it only removes dead markers, so it is safe for users that
+    also hold a healthy session.
     """
     safe_id = validate_user_id(uid)
     if safe_id is None:
-        # Business failure inside the envelope (not 400): the panel treats
-        # any non-200 as a transport error and retries/logs loudly.
+        # Business failure inside the envelope: the panel treats any non-200
+        # as a transport error and retries loudly.
         return ResponseModel(success=False, msg="Invalid user id (must be UUID or simple id)")
     cn = cn_from_uid(safe_id)
     return ResponseModel(
@@ -89,8 +88,8 @@ async def disconnect_user_sessions(
 async def reset_user_usage(uid: str, api_key: str = Depends(check_api_key)):
     """Zero a user's banked traffic counters (panel reset-usage flow).
 
-    Complements delete (which also clears): lets the panel restart counting
-    without revoking the certificate.
+    Complements delete (which also clears) — restart counting without
+    revoking the certificate.
     """
     from core.openvpn import store
 
@@ -105,10 +104,8 @@ async def reset_user_usage(uid: str, api_key: str = Depends(check_api_key)):
 async def bulk_user_limits(payload: BulkUserLimits, api_key: str = Depends(check_api_key)):
     """Apply max-login limits for many users in one call (POST /sync/users).
 
-    The panel's limit sweep used to fan out one PUT /sync/user/limit per
-    user per node — N×M HTTPS requests every 30 minutes. This endpoint
-    takes the whole batch (capped), validates each id, and applies the
-    limits in a single threadpool hop. Per-item failures are reported in
+    The panel's limit sweep used to fan out one PUT /sync/user/limit per user
+    per node — N×M requests every 30 minutes. Per-item failures land in
     ``data.failed`` instead of failing the whole call.
     """
     results = []
@@ -137,8 +134,7 @@ async def bulk_user_limits(payload: BulkUserLimits, api_key: str = Depends(check
 async def create_user(user: User, api_key: str = Depends(check_api_key_heavy)):
     """Create a client certificate + .ovpn (create_user()).
 
-    ``id`` is optional — NodeRequests only includes it when the panel knows
-    the numeric user id. Without it the normalized name is the identity.
+    ``id`` is optional: without it the normalized name is the identity.
     """
     uid = _resolve_identity(user.id, user.name)
     if uid is None:
@@ -169,10 +165,9 @@ async def delete_user(uid: str, api_key: str = Depends(check_api_key_heavy)):
             data={"id": safe_id},
         )
     if result == DeleteResult.NOT_FOUND:
-        # Treat NOT_FOUND as success: the cert is already gone from this node.
-        # The panel's delete_user_on_all_nodes() requires all() == True, so
-        # returning success here allows panel-side cleanup to proceed even when
-        # the cert was already manually removed from the node.
+        # Success, not failure: the cert is already gone, and the panel's
+        # delete_user_on_all_nodes() needs all() == True to proceed with its
+        # own cleanup.
         return ResponseModel(success=True, msg="User not found on node (already deleted)")
     return ResponseModel(success=False, msg="Failed to delete user")
 
@@ -183,7 +178,6 @@ async def change_user_status(user: User, api_key: str = Depends(check_api_key)):
     uid = _resolve_identity(user.id, user.name)
     if uid is None:
         return ResponseModel(success=False, msg="Invalid user id (must be UUID or simple id)")
-    # Update the stored login limit if the panel sent one.
     if user.max_logins is not None:
         set_user_limit(uid, user.max_logins)
     result = change_user_status_on_server(uid, user.status)
@@ -200,9 +194,8 @@ async def change_user_status(user: User, api_key: str = Depends(check_api_key)):
 async def set_user_login_limit(payload: UserLimit, api_key: str = Depends(check_api_key)):
     """Set the max simultaneous logins/devices for a client (set_user_limit()).
 
-    max_logins: 1 = single login, 0 = unlimited. ``id`` may be the numeric
-    user id or the username — set_user_limit_on_all_nodes() sends the name
-    when it has no user_id.
+    ``id`` may be the numeric user id or the username —
+    set_user_limit_on_all_nodes() sends the name when it has no user_id.
     """
     uid = validate_user_id(payload.id)
     if uid is None:
@@ -221,13 +214,10 @@ async def set_user_login_limit(payload: UserLimit, api_key: str = Depends(check_
 async def download_ovpn(uid: str, request: Request, api_key: str = Depends(check_api_key)):
     """Return the client's .ovpn profile (download_ovpn_client()/_bytes()).
 
-    The panel validates the raw body: it must start with "client" or contain
-    "<ca>" — which the generated profile always does. The client cert/config
-    is created lazily here on first download (the panel intentionally does
-    not create node-side users at Add User time).
-
-    The tight cert-issuing budget is charged only on the cold path (profile
-    missing → easyrsa fork); cached downloads keep the normal bucket.
+    The panel validates the raw body (it must start with "client" or contain
+    "<ca>"), so the client cert/config is created lazily here on first
+    download rather than at Add User time. The tight cert-issuing budget is
+    charged only on that cold path; cached downloads keep the normal bucket.
     """
     safe_id = validate_user_id(uid)
     if safe_id is None:
@@ -237,7 +227,7 @@ async def download_ovpn(uid: str, request: Request, api_key: str = Depends(check
 
     if not os.path.exists(store.ovpn_path(cn_from_uid(safe_id))):
         apply_heavy_limit(request)
-    # Lazy cert issuance/profile build inside this call is blocking work.
+    # Lazy cert issuance runs inside this call, so keep it off the event loop.
     response = await run_in_threadpool(download_ovpn_file, safe_id)
     if response:
         return FileResponse(
@@ -245,7 +235,6 @@ async def download_ovpn(uid: str, request: Request, api_key: str = Depends(check
             filename=f"{uid}.ovpn",
             media_type="application/x-openvpn-profile",
         )
-    # Envelope failure (not 404): the panel validates the raw body
-    # (must start with "client" or contain "<ca>"), so a JSON envelope
-    # safely resolves to "not found" without a transport-error log.
+    # Envelope failure, not a 404: the panel's body check resolves the JSON
+    # safely to "not found" without a transport-error log.
     return ResponseModel(success=False, msg="OVPN file not found")

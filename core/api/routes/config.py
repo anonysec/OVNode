@@ -28,9 +28,9 @@ client (backend/node/requests.py):
     POST   /sync/users                       set_user_limits (bulk)
 
 The panel treats a call as successful ONLY when the response is HTTP 200
-with ``{"success": true}`` — so handlers report business failures inside the
-envelope instead of raising, except where the panel explicitly checks the
-HTTP status (ovpn download must be a raw 200 body starting with "client").
+with ``{"success": true}``, so handlers report business failures inside the
+envelope instead of raising — except where the panel checks the HTTP status
+itself (ovpn download must be a raw 200 body starting with "client").
 
 Authentication: the panel sends the node API key in the ``key`` header.
 """
@@ -51,8 +51,8 @@ router = APIRouter(prefix="/sync", tags=["node_sync"])
 async def get_config(api_key: str = Depends(check_api_key)):
     """Live VPN endpoint settings — lets the panel detect drift.
 
-    Additive (no panel method reads it yet): compares port/proto/tunnel
-    against what the panel last pushed via POST /sync/config.
+    Additive (no panel method reads it yet): port/proto/tunnel as they are on
+    disk, against what the panel last pushed via POST /sync/config.
     """
     from core.openvpn.control import read_config
 
@@ -78,10 +78,9 @@ async def update_config(
 async def update_node_software(api_key: str = Depends(check_api_key_heavy)):
     """Trigger the node's self-update (POST /sync/update, trigger_update()).
 
-    Native installs launch ``install.sh update`` detached and answer
-    immediately; Docker nodes refuse (the host owns the container image).
-    Heavy-limited: an update restarts the agent, so a hot loop must not
-    queue them.
+    Native installs launch ``install.sh update`` detached; Docker nodes
+    refuse (the host owns the container image). Heavy-limited, because an
+    update restarts the agent.
     """
     from core.updater import trigger_update
 
@@ -92,11 +91,10 @@ async def update_node_software(api_key: str = Depends(check_api_key_heavy)):
 async def restart_openvpn_service(api_key: str = Depends(check_api_key_heavy)):
     """Restart/reload OpenVPN (POST /sync/restart, restart_vpn()).
 
-    Reports failures inside the contract envelope instead of raising, so a
-    broken OpenVPN — or a failing service manager — never takes this API down
-    with it. ``data.openvpn_running`` is the liveness check performed *after*
-    the restart attempt. Heavy-limited: a restart briefly bounces tunnels, so
-    a hot panel loop must not queue them.
+    Failures are reported inside the envelope instead of raising, so a broken
+    OpenVPN cannot take this API down with it. ``data.openvpn_running`` is
+    the liveness check performed *after* the attempt. Heavy-limited: a
+    restart briefly bounces tunnels.
     """
     from core.openvpn.control import openvpn_is_running, restart_openvpn
 
@@ -126,9 +124,8 @@ async def restart_openvpn_service(api_key: str = Depends(check_api_key_heavy)):
 async def renew_server_cert(api_key: str = Depends(check_api_key_heavy)):
     """Renew the OpenVPN server certificate, then restart OpenVPN.
 
-    Used by the panel when the server certificate is close to expiry. The old
-    certificate is archived by easyrsa; connected clients reconnect after the
-    restart.
+    Used by the panel when the server certificate nears expiry; easyrsa
+    archives the old one and clients reconnect after the restart.
     """
     from core.openvpn.control import restart_openvpn
     from core.openvpn.pki import SERVER_CERT, renew_server_certificate

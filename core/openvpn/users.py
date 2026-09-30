@@ -27,11 +27,10 @@ CLIENT_TEMPLATE = os.path.join(_OPENVPN_ROOT, "server", "client-common.txt")
 
 
 def cn_from_uid(uid: str) -> str:
-    """The OpenVPN CN for a user id — simply the id as a string (e.g. "42").
+    """The OpenVPN CN for a user id — the id as a string (e.g. "42").
 
-    Unambiguous, short, and free of characters that would complicate
-    traffic tracking and the mlogin hooks. Validation happens upstream
-    (validate_user_id) and again in store path handling.
+    Unambiguous and free of characters that would complicate traffic tracking
+    and the mlogin hooks. Validated upstream and again in store path handling.
     """
     return str(uid).strip()
 
@@ -76,11 +75,10 @@ def _build_ovpn(cn: str) -> bool:
     try:
         store.create_user(cn)
         out_path = store.ovpn_path(cn)
-        # Write via a same-directory temp file: the profile embeds the client
-        # private key and the tls-crypt PSK, and mkstemp creates it 0600 from
-        # the first byte — a plain open("w") is 0644 under the default umask
-        # and would leak the key until a later chmod. os.replace makes the
-        # final file appear atomically.
+        # Same-directory temp file: the profile embeds the client private key
+        # and the tls-crypt PSK, and mkstemp creates it 0600 from the first
+        # byte — a plain open("w") is 0644 under the default umask and would
+        # leak the key until a later chmod.
         directory = os.path.dirname(out_path) or "."
         fd, tmp_path = tempfile.mkstemp(dir=directory, prefix=".client-ovpn-")
         try:
@@ -130,8 +128,8 @@ def create_user_on_server(uid: str, name: str, max_logins: int = 1) -> bool:
     cn = cn_from_uid(uid)
     crt, inline = _cert_paths(cn)
 
-    # No certificate yet → issue one (needs an initialized PKI). Store state
-    # is written only after this succeeds, so a failed create leaves nothing.
+    # State is written only after issuance succeeds, so a failed create
+    # leaves nothing behind.
     if not os.path.exists(crt) and not os.path.exists(inline):
         if not os.path.exists(os.path.join(PKI_DIR, "ca.crt")):
             logger.error("PKI not initialized — init_pki() runs at startup.")
@@ -156,10 +154,9 @@ def delete_user_on_server(uid: str) -> DeleteResult:
     cn = cn_from_uid(uid)
     crt, inline = _cert_paths(cn)
 
-    # A user exists when there is certificate material or a cached profile.
-    # A folder holding only a pre-set limit/name (panel may push those before
-    # first download) is residue, not a user — clear it and report NOT_FOUND
-    # so the panel proceeds with its own cleanup.
+    # A user exists when there is certificate material or a cached profile. A
+    # folder holding only a pre-set limit/name (the panel may push those before
+    # the first download) is residue — clear it and report NOT_FOUND.
     if not os.path.exists(crt) and not os.path.exists(store.ovpn_path(cn)):
         store.delete_user(cn)
         logger.warning("User '%s' (uid=%s) not found on node", cn, uid)
@@ -176,8 +173,8 @@ def delete_user_on_server(uid: str) -> DeleteResult:
             return DeleteResult.FAILED
     else:
         # Retried delete: easyrsa moves the cert out of issued/ on revoke, so
-        # a crash after revoke but before gen-crl leaves no crt here. If the
-        # CRL is older than the PKI index it does not cover the revoked cert —
+        # a crash after revoke but before gen-crl leaves no crt here. A CRL
+        # older than the PKI index does not cover the revoked cert, so
         # regenerate before reporting success.
         from core.openvpn.pki import crl_is_current
 
@@ -230,8 +227,8 @@ def change_user_status(uid: str, status: str) -> bool:
 
 def set_user_limit(uid_or_name: str, max_logins: int) -> bool:
     """Set max simultaneous logins. Accepts a user id OR a panel username —
-    the panel sends the name when it has no id. Usernames are resolved to
-    the CN so the connect hook (which only knows CNs) always finds the limit.
+    the panel sends the name when it has no id — resolved to the CN so the
+    connect hook, which only knows CNs, finds the limit.
     """
     if max_logins is None:
         return True
@@ -268,19 +265,15 @@ def download_ovpn_file(uid: str) -> str | None:
 def get_users_usage() -> dict:
     """Per-user traffic usage in the exact shape OVManager consumes.
 
-    The panel has two independent consumers of GET /sync/usage:
+    Two panel consumers of GET /sync/usage:
 
-    1. Traffic collector (backend/operations/daily_checks.py): resolves
-       ``users`` keys by USERNAME → keyed by username where known.
-    2. Global mlogin (backend/routers/mlogin.py): resolves ``sessions`` keys
-       by numeric-id CN → ``sessions`` must ALSO carry the CN key.
+    1. Traffic collector (operations/daily_checks.py) resolves ``users`` keys
+       by USERNAME, so keys are usernames where known.
+    2. Global mlogin (routers/mlogin.py) resolves ``sessions`` keys by
+       numeric-id CN, so ``sessions`` also carries the CN key.
 
-    So ``users`` is keyed by username (fallback CN) and ``sessions`` carries
-    both the CN key and the username alias.
-
-    ``totals`` is additive (ignored by current panels): lifetime bytes per
-    user = completed sessions (accumulated by the disconnect hook) + live
-    sessions — the number an operator actually means by "user usage".
+    ``totals`` is additive (ignored by current panels): banked bytes from
+    completed sessions plus live sessions.
     """
     from core.openvpn.status import parse_usage
 

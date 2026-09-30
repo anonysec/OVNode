@@ -3,12 +3,8 @@
 
 """Atomic writes for non-secret OpenVPN config and policy files.
 
-One implementation instead of the per-module copies that had drifted apart
-(``control`` kept a ``.bak``; ``ports`` did not; ``pki`` wrote server.conf
-with a plain ``open(..., "w")`` and could truncate the only copy on a crash).
-
-Temp file + fsync + rename: a reader either sees the old file or the new one,
-never a half-written one.
+Temp file + fsync + rename: a reader sees the old file or the new one, never
+a half-written one — server.conf is the only copy OpenVPN will start from.
 """
 
 from __future__ import annotations
@@ -30,10 +26,10 @@ def write_text_atomic(
 ) -> None:
     """Write ``content`` to ``path`` atomically.
 
-    ``mode`` is applied to the temp file before the rename (mkstemp creates
-    0600), so a dropped-privilege OpenVPN user can still read the result.
-    ``keep_backup`` copies the previous file to ``<path>.bak`` first — the
-    rollback path in ``control`` depends on those copies existing.
+    ``mode`` is applied before the rename (mkstemp creates 0600), so a
+    dropped-privilege OpenVPN user can still read the result. ``keep_backup``
+    copies the previous file to ``<path>.bak`` — ``control``'s rollback path
+    depends on those copies existing.
     """
     directory = os.path.dirname(path) or "."
     os.makedirs(directory, exist_ok=True)

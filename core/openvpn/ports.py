@@ -4,19 +4,17 @@
 """Panel-managed extra VPN ports.
 
 The node listens only on its primary port; extra ports reach the same daemon
-through iptables REDIRECT rules and are advertised to clients as additional
-``remote`` lines so an ISP blocking one port can be bypassed.
+through iptables REDIRECT rules and are advertised as additional ``remote``
+lines so a client can bypass an ISP blocking one port.
 
 The panel owns the desired list; the node mirrors it in a small state file and
-in the ``remote`` block of ``client-common.txt``. The state file makes the
-operator's choice survive template regeneration and lets an explicitly cleared
-list stay cleared even when the installer set ``OVNODE_EXTRA_PORTS``. Writes
-are atomic (mkstemp + os.replace), matching :mod:`core.openvpn.dns` and
-``store.write_state``.
+in the ``remote`` block of ``client-common.txt``. The state file keeps the
+choice across template regeneration and lets an explicitly cleared list stay
+cleared even when the installer set ``OVNODE_EXTRA_PORTS``.
 
 Native installs also keep ``/etc/default/ovnode-nat`` in sync and re-run the
-installer's ``ovnode-nat.sh apply`` best-effort. Docker nodes apply the
-equivalent rules inside the container, so NAT is skipped there.
+installer's ``ovnode-nat.sh apply`` best-effort; Docker applies the rules
+inside the container, so NAT is skipped there.
 """
 
 from __future__ import annotations

@@ -4,53 +4,45 @@
 #
 # OVManager local max-login enforcement for OpenVPN client-connect.
 #
-# Designed for dynamic IP environments (mobile ISPs, CGNAT, etc.) where the
-# user's real IP:port changes on every reconnect. Session identity is
-# therefore CN + VPN pool IP (ifconfig_pool_remote_ip) — stable for the
-# session lifetime — and enforcement actions target the management Client ID
-# (CID), never the real address. Real IP/port are recorded as metadata only.
+# Session identity is CN + VPN pool IP (ifconfig_pool_remote_ip), stable for
+# the session lifetime in dynamic-IP environments where the real IP:port
+# changes on every reconnect; enforcement targets the management Client ID,
+# never the real address (recorded as metadata only).
 #
 # Policy:
-# - max_logins=1: local takeover. Kill old session (by CID), allow new one.
-#   Verification reads the LIVE management status (not the 5s-cadence status
-#   file): a kill that succeeded is visible immediately, so a legitimate
-#   reconnect is never rejected because of a stale file row.
+# - max_logins=1: local takeover — kill the old session by CID, allow the new
+#   one. Verification reads the LIVE management status, not the 5s-cadence
+#   status file, so a successful kill is visible immediately and a legitimate
+#   reconnect is never rejected over a stale row.
 # - max_logins=N>1: allow up to N sessions, reject N+1.
 # - max_logins=0: unlimited.
 # - limit=1 with the management socket down: degrade (replace markers, let
 #   ping-restart reap the corpse) instead of rejecting a legit reconnect.
 #   Strict cases (limit>1, disabled, unknown) still fail closed.
 #
-# Reconnection handling:
-# - Grace period absorbs a fresh marker ONLY when its (CN, pool IP) is absent
-#   from the live status: a dropped session already reaped, or a concurrent
-#   hook. A fresh marker that is still live in status counts toward the
-#   limit and goes through takeover (newest wins).
-# - Stale cleanup removes markers whose (CN, pool IP) is absent from the
-#   status file (status-version 3, tab-separated).
+# Reconnection: the grace period absorbs a fresh marker ONLY when its
+# (CN, pool IP) is absent from the live status — a dropped session already
+# reaped, or a concurrent hook. One still live in status counts toward the
+# limit and goes through takeover (newest wins).
 
-# Performance budget (reconnect storm: 100 phones rejoining at once):
-# - marker parsing is bash builtins (no awk per file),
-# - ONE awk prefilter over the status file per hook (pools/cids/reals),
-# - management is ONE python fork per takeover (auth once, pipelined
-#   kills, verify polls), zero forks on the allow path,
-# - locks are per-CN: different users never serialize behind each other.
-# Remaining forks per allow: flock, logger, ≤1 awk. Takeover adds 1 python.
+# Performance budget (reconnect storm: 100 phones rejoining at once): marker
+# parsing is bash builtins, one awk prefilter over the status file, and one
+# python fork per takeover (auth once, pipelined kills + verify polls) with
+# zero forks on the allow path. Per-CN locks keep different users from
+# serializing behind each other. Remaining forks per allow: flock, logger,
+# ≤1 awk; takeover adds the python.
 
 set -euo pipefail
 shopt -s nullglob
 
-# Per-user state lives in one folder per user (see core/openvpn/store.py):
-#   users/<cn>/limit     max simultaneous logins (0 = unlimited)
-#   users/<cn>/disabled  marker — exists = reject the connection
-# Session markers live in sessions/ (one file per live session).
-# USERS_DIR/ACTIVE_DIR honor env overrides for hermetic tests; production
-# always uses the compiled-in defaults (identical values).
+# Per-user state lives in one folder per user (see core/openvpn/store.py);
+# session markers live in sessions/, one file per live session. The env
+# overrides exist for hermetic tests.
 USERS_DIR="${OVNODE_USERS_DIR:-/etc/openvpn/ovnode/users}"
 ACTIVE_DIR="${OVNODE_SESSIONS_DIR:-/etc/openvpn/ovnode/sessions}"
-# Per-CN lock file (assigned after safe_cn exists): every critical section
-# below is CN-scoped (own markers, own usage), so a global lock would
-# serialize unrelated users behind a reconnect storm for no reason.
+# Per-CN lock file, assigned once safe_cn exists: every critical section below
+# is CN-scoped, so a global lock would serialize unrelated users behind a
+# reconnect storm for no reason.
 LOCK_FILE=""
 STATUS_FILE="${OVNODE_STATUS_FILE:-/etc/openvpn/server/status.log}"
 MGMT_HOST="${OVNODE_MANAGEMENT_HOST:-${OVNODE_MGMT_HOST:-127.0.0.1}}"
@@ -70,13 +62,12 @@ cn="${common_name:-${1:-}}"
 log() { logger -t "$LOG_TAG" "$*" 2>/dev/null || echo "$LOG_TAG: $*" >&2; }
 sanitize() { printf '%s' "$1" | sed 's/[^A-Za-z0-9_.-]/_/g'; }
 
-# mgmt_takeover runs kill commands AND the verify poll over ONE management
-# connection (auth once) and prints a machine-readable last line:
+# mgmt_takeover runs the kill commands AND the verify poll over ONE management
+# connection (auth once); the exit code mirrors the printed verdict (0/1/2):
 #   RESULT VERIFIED — no CLIENT_LIST row left for the CN
 #   RESULT TIMEOUT  — rows remain after the 7s budget (caller rejects)
 #   RESULT DOWN <err> — transport/auth failure (caller degrades or rejects)
-# Exit code mirrors the verdict (0/1/2). Kill replies are logged as
-#   KILL OK|FAIL <command>
+# Kill replies are logged as KILL OK|FAIL <command>.
 # Usage: mgmt_takeover "$cn" "client-kill 7 take" "kill 1.2.3.4:5000" ...
 mgmt_takeover() {
     local cn="$1"; shift
@@ -203,10 +194,9 @@ fi
 
 safe_cn="$(sanitize "$cn")"
 
-# USERS_DIR must exist and be readable. If it is missing or inaccessible we
-# fail-closed: deny the connection rather than risk allowing a disabled user.
-# The tree is created by the agent at startup; its absence indicates a
-# filesystem or permissions problem that must be fixed.
+# Fail closed when USERS_DIR is missing or unreadable: denying the connection
+# beats risking an allowed disabled user. The agent creates the tree at
+# startup, so its absence means a filesystem or permissions problem.
 if [[ ! -d "$USERS_DIR" ]]; then
     log "CN=$cn ip=${trusted_ip:-?}:${trusted_port:-?}; USERS_DIR missing or not a directory — fail-closed; REJECT"
     exit 1
@@ -215,10 +205,9 @@ mkdir -p "$ACTIVE_DIR"
 chmod 755 "$ACTIVE_DIR" 2>/dev/null || true
 
 # Enforcement state: one world-readable `state` file per user
-# (limit=<n> / disabled=<0|1>), read here with bash builtins. Legacy split
-# files (`limit` value, `disabled` existence marker) are honored per-field
-# when `state` is absent or unparseable — pre-merge installs and backups
-# keep working; the agent converges the tree on next write.
+# (limit=<n> / disabled=<0|1>), read here with bash builtins. The legacy split
+# files are honored per-field when `state` is absent or unparseable, so
+# pre-merge installs and backups keep working.
 limit="$DEFAULT_LIMIT"
 user_disabled=0
 state_limit_set=0
@@ -252,8 +241,7 @@ if (( state_limit_set == 0 )); then
     fi
 fi
 
-# The disabled flag blocks an already-issued certificate from reconnecting
-# after Manager disables the user.
+# Blocks an already-issued certificate from reconnecting after a disable.
 if (( user_disabled == 1 )); then
     log "CN=$cn ip=${trusted_ip:-?}:${trusted_port:-?} is disabled; REJECT"
     exit 1
@@ -271,8 +259,8 @@ trusted_port_s="$(sanitize "${trusted_port:-unknown}")"
 time_s="${EPOCHSECONDS:-$(date +%s)}"
 
 # Session identity: CN + pool IP (unique per live session, IP-change proof).
-# Without a pool IP (rare: hook order edge cases) fall back to the real
-# address so two concurrent no-pool sessions cannot share a key.
+# Without a pool IP (rare hook-order edge case) fall back to the real address
+# so two concurrent no-pool sessions cannot share a key.
 if [[ -n "$pool_ip" ]]; then
     session_key="${safe_cn}.${pool_ip_s}"
 else
@@ -285,8 +273,8 @@ exec 9>"$LOCK_FILE"
 flock -x 9
 
 # ── One status prefilter for the whole hook ────────────────────────
-# pools/cids/reals of THIS cn + row count. Every presence check below is a
-# bash builtin over these arrays — the file is read exactly once.
+# pools/cids/reals of THIS cn plus a row count; the file is read exactly once
+# and every presence check below is a bash builtin over these arrays.
 status_pools=(); status_cids=(); status_reals=(); status_count=0
 if [[ -f $STATUS_FILE ]]; then
     while IFS=$'\t' read -r _pool _cid _real; do
@@ -304,11 +292,10 @@ fi
 cn_markers=("$ACTIVE_DIR"/${safe_cn}.*)
 
 # ── Reconnect detection (dynamic IP aware) ───────────────────────
-# A fresh marker (< grace) is absorbed as "the dropped session" ONLY when
+# A fresh marker (under grace) is absorbed as "the dropped session" only when
 # its (CN, pool IP) is absent from the live status: the corpse was already
-# reaped, or a concurrent hook is in flight. A fresh marker that is still
-# live in status is a real session — it counts toward the limit below and
-# loses via takeover (newest wins), never via silent absorb.
+# reaped, or a concurrent hook is in flight. One still live counts toward the
+# limit below and loses via takeover (newest wins), never silent absorb.
 reconnected=0
 oldest_marker=""
 oldest_time=999999999
@@ -338,16 +325,14 @@ fi
 
 # ── Stale marker cleanup ─────────────────────────────────────────
 # Remove markers older than grace whose (CN, pool IP) is NOT in the status
-# file. Matching on the pool IP (status column 4) is immune to the client's
-# real IP changing between sessions. Markers without a pool IP fall back to
-# real-address matching (legacy markers).
+# file: matching on the pool IP is immune to the client's real IP changing.
+# Markers without a pool IP fall back to real-address matching.
 if [[ -f $STATUS_FILE ]]; then
     for marker in ${cn_markers[@]+"${cn_markers[@]}"}; do
         [[ -f $marker ]] || continue
         read_marker "$marker"
         created_s=$m_created
         age=$(( time_s - created_s ))
-        # Keep recent markers (within grace) — handled above
         if (( age < RECONNECT_GRACE )); then
             continue
         fi
@@ -373,9 +358,7 @@ if [[ "$status_count" -gt "$cur" ]]; then cur="$status_count"; fi
 
 if (( cur >= limit )); then
     if [[ "$limit" -eq 1 ]]; then
-        # One management session for the whole takeover: auth once, run
-        # every kill, then poll the LIVE status until the CN is gone.
-        # Exit 0 = verified, 1 = rows remain (reject), 2 = mgmt down.
+        # One management session for the whole takeover (see mgmt_takeover).
         takeover_cmds=()
         for _cid in ${status_cids[@]+"${status_cids[@]}"}; do
             [[ ${_cid:-} =~ ^[0-9]+$ ]] && takeover_cmds+=("client-kill $_cid max-login-takeover")
@@ -399,11 +382,9 @@ if (( cur >= limit )); then
             log "CN=$cn ip=${trusted_ip:-?}:${trusted_port:-?} pool=${pool_ip:-none} takeover could not verify old session termination; REJECT"
             exit 1
         else
-            # Degraded takeover: the corpse cannot be killed right now, but
-            # rejecting a legitimate reconnect is worse than a transient
-            # double session — ping-restart reaps the dead one, and the
-            # marker swap below keeps max-login accounting exact.
-            # Strict cases (limit>1, disabled, unknown) still fail closed.
+            # Degraded takeover: rejecting a legitimate reconnect is worse
+            # than a transient double session — ping-restart reaps the dead
+            # one and the marker swap below keeps accounting exact.
             log "CN=$cn ip=${trusted_ip:-?}:${trusted_port:-?} pool=${pool_ip:-none} limit=1 active=$active_files status=$status_count; management unavailable; DEGRADE (markers replaced, corpse reaped by ping-restart)"
             rm -f "${ACTIVE_DIR}/${safe_cn}."* 2>/dev/null || true
         fi

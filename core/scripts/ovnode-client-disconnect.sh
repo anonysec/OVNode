@@ -2,11 +2,10 @@
 # Copyright (c) 2026 anonysec
 # SPDX-License-Identifier: MIT
 #
-# OVManager local disconnect hook. Removes the local active-session marker
-# and banks the session's final byte counters into the per-user usage
-# accumulator (OpenVPN exposes bytes_received/bytes_sent to this hook —
-# without this, traffic from completed sessions would be lost between
-# status-file polls).
+# OVManager local disconnect hook. Removes the local active-session marker and
+# banks the session's final byte counters into the per-user usage accumulator:
+# OpenVPN exposes bytes_received/bytes_sent only here, so without this the
+# traffic of a completed session would be lost between status-file polls.
 
 set -euo pipefail
 
@@ -48,11 +47,10 @@ USAGE_LOCK="${USAGE_DIR}/.lock.${safe_cn}"
 mkdir -p "$ACTIVE_DIR"
 
 # ── usage accounting ─────────────────────────────────────────────
-# Accumulate this session's final byte counters under a DEDICATED usage
-# lock (atomic tmp+rename): the global marker lock stays with marker
-# churn only, so a connect storm is never head-of-line blocked behind
-# accounting writes. Two simultaneous disconnects of the same CN still
-# cannot lose an update.
+# Accumulate the final byte counters under a DEDICATED usage lock (atomic
+# tmp+rename), so a connect storm is never head-of-line blocked behind
+# accounting writes — while two simultaneous disconnects of the same CN
+# still cannot lose an update.
 rx="${bytes_received:-0}"
 tx="${bytes_sent:-0}"
 [[ "$rx" =~ ^[0-9]+$ ]] || rx=0
@@ -66,8 +64,8 @@ if (( session_total > 0 )) && [[ -d "$USAGE_DIR" && -w "$USAGE_DIR" ]]; then
     [[ "$old" =~ ^[0-9]+$ ]] || old=0
     # mktemp (O_EXCL) instead of a predictable .tmp.$$ name: USAGE_DIR is
     # writable by the runtime user, so a guessable path is symlink bait.
-    # Guarded: accounting is best-effort and must never abort the hook
-    # (marker removal below must still run) if mktemp ever fails.
+    # Guarded because accounting is best-effort and marker removal below must
+    # still run if mktemp ever fails.
     tmp_file="$(mktemp "${usage_file}.tmp.XXXXXX" 2>/dev/null)" || tmp_file=""
     if [[ -n "$tmp_file" ]]; then
         echo $(( old + session_total )) > "$tmp_file"

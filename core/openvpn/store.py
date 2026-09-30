@@ -18,11 +18,10 @@ so a node backup/export is exactly two paths: this tree + the PKI.
     ├── usage/<cn>           banked byte counters (hook-writable)
     └── scripts/             installed connect/disconnect hooks
 
-Plain files, simply parsed: the bash enforcement hooks read ``state`` with
-no parser, and admins can inspect or fix a user with ``ls``. Legacy layouts
-(clients/, limits/, disabled/, ovnode-active/, uid_map.json) are migrated
-automatically by :func:`ensure_layout`, so restoring an old node backup
-onto a current build just works.
+Plain files, simply parsed: the bash enforcement hooks read ``state`` with no
+parser, and an admin can inspect or fix a user with ``ls``. Legacy layouts
+(clients/, limits/, disabled/, ovnode-active/, uid_map.json) are migrated by
+:func:`ensure_layout`, so an old node backup restores onto a current build.
 """
 
 from __future__ import annotations
@@ -60,10 +59,9 @@ LOCK_FILE = os.path.join(SESSIONS_DIR, ".lock")
 _NAME_CACHE_TTL = 30.0
 _name_cache: tuple[float, dict[str, str]] | None = None
 
-# Completed-session bytes cache: the usage hot path (listdir + N file
-# opens per poll) with none. Disconnect-hook banking writes files directly
-# and panel polls are 30-60s apart, so an 8s lag is invisible; explicit
-# reset_usage() invalidates so a manual reset shows immediately.
+# Completed-session bytes cache: the usage poll would otherwise cost a
+# listdir plus one open per user. Panel polls are 30-60s apart, so an 8s lag
+# is invisible; reset_usage() invalidates so a manual reset shows at once.
 _USAGE_CACHE_TTL = 8.0
 _usage_cache: tuple[float, dict[str, int]] | None = None
 
@@ -72,13 +70,7 @@ _usage_cache: tuple[float, dict[str, int]] | None = None
 
 
 def _safe_cn(cn: str) -> str:
-    """Validate a CN before it becomes a path component (defense in depth).
-
-    The character-class check alone is not enough: ``.`` and ``..`` match it and
-    are path components, so ``os.path.join(USERS_DIR, "..")`` resolves to the
-    parent of the users tree. A leading ``-`` is rejected for the same reason a
-    filename is not a command-line option — this value reaches easyrsa's argv.
-    """
+    """Validate a CN before it becomes a path component (defense in depth)."""
     cn = str(cn).strip()
     if not _STORE_KEY_RE.match(cn):
         raise ValueError(f"invalid common name: {cn!r}")
@@ -129,9 +121,8 @@ def create_user(cn: str) -> None:
 def delete_user(cn: str) -> None:
     """Remove the whole user folder — name, state, cached profile.
 
-    Also removes the per-CN session lock (hook litter) — it is recreated
-    on next connect. Usage counters are reset separately (banked bytes must
-    survive user-folder wipes on some paths; see reset_usage callers).
+    Also removes the per-CN session lock (hook litter, recreated on next
+    connect). Banked usage is reset here too, not by the folder wipe.
     """
     _invalidate_name_cache()
     shutil.rmtree(user_dir(cn), ignore_errors=True)
@@ -170,9 +161,9 @@ def set_name(cn: str, name: str) -> None:
 
 # ── enforcement state (limit + disabled) ──────────────────────────
 # One world-readable file per user (`state`), read by the connect hook on
-# every handshake. Previously two files (`limit` value + `disabled`
-# existence marker); the split readers remain as fallback so pre-merge
-# installs and backups keep working with zero migration step.
+# every handshake. The earlier pair (`limit` value + `disabled` existence
+# marker) stays readable as fallback, so pre-merge installs and backups keep
+# working with no migration step.
 
 
 def _parse_state_file(path: str) -> dict[str, str]:

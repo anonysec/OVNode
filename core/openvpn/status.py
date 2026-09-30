@@ -26,11 +26,10 @@ logger = logging.getLogger("ovnode")
 _OPENVPN_ROOT = os.getenv("OVNODE_OPENVPN_ROOT", "/etc/openvpn")
 STATUS_FILE = os.getenv("OVNODE_STATUS_FILE", os.path.join(_OPENVPN_ROOT, "server", "status.log"))
 
-# Shared parse cache: every panel poll cycle hits /sync/usage + /sync/sessions
-# (+ diagnostics, disconnect) within milliseconds of each other, and each
-# used to re-read + re-parse the whole file. The daemon rewrites it every
-# 5s, so a 2s TTL keyed by (mtime, size) can never serve data older than
-# one generation. Treat returned rows as READ-ONLY (shared object).
+# Shared parse cache: one panel poll cycle hits /sync/usage + /sync/sessions
+# within milliseconds, and each used to re-read and re-parse the whole file.
+# The daemon rewrites it every 5s, so a 2s TTL keyed by (mtime, size) cannot
+# serve data older than one generation.
 _PARSE_TTL = 2.0
 # Rows are cached as tuples of pairs, not dicts: a dict in the cache is shared
 # with every caller for the rest of the TTL, so one caller editing a row would

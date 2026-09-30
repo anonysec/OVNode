@@ -5,13 +5,9 @@
 
 The panel owns whether the node pushes an IPv6 pool; the node mirrors it in a
 small state file (``ovnode/ipv6``) and in the three directives
-:mod:`core.openvpn.pki` generates for a fresh server.conf (``tun-ipv6``,
-``server-ipv6 <prefix>`` and the ``route-ipv6`` push). The state file makes
-the operator's choice survive server.conf regeneration instead of silently
-reverting to the installer/env default — same pattern as
-:mod:`core.openvpn.dns` for the pushed DNS servers.
-
-Writes are atomic (mkstemp + os.replace), matching ``store.write_state``.
+:mod:`core.openvpn.pki` generates (``tun-ipv6``, ``server-ipv6 <prefix>`` and
+the ``route-ipv6`` push). The state file keeps the operator's choice across
+server.conf regeneration — same pattern as :mod:`core.openvpn.dns`.
 """
 
 from __future__ import annotations

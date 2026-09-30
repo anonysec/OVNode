@@ -3,11 +3,10 @@
 
 """Panel-triggered node software update (POST /sync/update).
 
-The panel can only ask the node to run its own installer in update mode.
-Nothing caller-controlled ever reaches a shell: the command is the fixed
-``bash <app_dir>/install.sh update``, launched detached so the HTTP
-request returns immediately (the update restarts the agent when it lands).
-Docker nodes refuse — the container image is owned by the host.
+The command is the fixed ``bash <app_dir>/install.sh update`` — nothing
+caller-controlled reaches a shell — launched detached so the HTTP request
+returns immediately. Docker nodes refuse: the container image is owned by
+the host.
 """
 
 from __future__ import annotations
@@ -38,9 +37,8 @@ def is_docker() -> bool:
 def trigger_update() -> dict:
     """Start ``install.sh update`` detached; return the API envelope body.
 
-    Always returns the ``{success, msg, data}`` contract shape: refusals
-    (Docker, missing installer) are business failures the panel surfaces,
-    not HTTP errors.
+    Refusals (Docker, missing installer) are business failures inside the
+    envelope, not HTTP errors.
     """
     if is_docker():
         return {

@@ -103,17 +103,14 @@ def _setup_easyrsa() -> None:
 def _write_easyrsa_vars() -> None:
     """Write easy-rsa defaults when a vars file does not exist yet.
 
-    Fresh PKI uses ECDSA (prime256v1): ~2-3x faster signs and handshakes
-    than secp384r1 with smaller certs — matters on low-end nodes and
-    reconnect storms. Existing installs keep their own vars file, so an
-    existing secp384r1/RSA PKI is never disrupted (per-cert negotiation
-    keeps mixed fleets working).
+    Fresh PKI uses ECDSA (prime256v1): ~2-3x faster signs than secp384r1 with
+    smaller certs. Existing installs keep their vars file, so an existing
+    secp384r1/RSA PKI is never disrupted.
 
-    Note: EASYRSA_REQ_CN is intentionally omitted. When set, easy-rsa
-    refuses `build-server-full <name>` and `build-client-full <name>` calls
-    with "Option conflict: ... does not support setting an external
-    commonName" — it is only valid for `build-ca`. Per-cert CN is supplied
-    positionally instead.
+    EASYRSA_REQ_CN is intentionally omitted: when set, easy-rsa refuses
+    `build-server-full <name>` / `build-client-full <name>` with "Option
+    conflict: ... does not support setting an external commonName" — it is
+    only valid for `build-ca`. The per-cert CN is passed positionally.
     """
     vars_path = os.path.join(_pki.EASYRSA_DIR, "vars")
     if os.path.exists(vars_path):

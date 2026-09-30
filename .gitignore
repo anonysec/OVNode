@@ -58,3 +58,6 @@ scripts/openapi.json
 
 # runtime log + node state written beside the source (core/logger.py uses <repo>/data)
 /data/
+
+# Claude Code — personal overrides; .claude/settings.json is shared and tracked
+.claude/settings.local.json

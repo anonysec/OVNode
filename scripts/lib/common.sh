@@ -2,13 +2,11 @@
 # Copyright (c) 2026 anonysec
 # SPDX-License-Identifier: MIT
 #
-# OVNode shared shell library — sourced by install.sh and manager.sh.
-# This is the only copy of every function below: install.sh fetches it when
-# it has no local one. tests/test_no_duplicate_functions.py enforces that.
+# OVNode shared shell library — sourced by install.sh and manager.sh, and the
+# only copy of every function below (tests/test_no_duplicate_functions.py).
 
 # ── Output ─────────────────────────────────────────────────────────────
-# Contract: ALL human-readable output goes to stderr, so stdout stays
-# clean for callers — nothing this library prints lands in `$(...)`.
+# All human-readable output goes to stderr, so stdout stays clean for callers.
 NC=$'\033[0m'; B=$'\033[1m'
 WH=$'\033[97m'; GR=$'\033[32m'; RD=$'\033[31m'
 YL=$'\033[33m'; CY=$'\033[36m'; GY=$'\033[90m'
@@ -36,7 +34,7 @@ die() {
 
 is_tty() { [[ -t 0 && -t 2 ]]; }
 
-# Spinners/prompts only for interactive humans; plain logs otherwise.
+# Spinners/prompts only for interactive humans.
 fancy()  { is_tty && [[ "$QUIET" -eq 0 ]]; }
 
 spinner() {
@@ -51,8 +49,7 @@ spinner() {
     return $rc
 }
 
-# run <label> <cmd...> — required step: spinner on a TTY, plain log lines
-# in automation. Fails the install with a clear message on error.
+# run <label> <cmd...> — required step: spinner on a TTY, plain logs otherwise.
 run() {
     local label="$1"; shift
     if fancy; then
@@ -77,8 +74,7 @@ try_run() {
     fi
 }
 
-# Masked input: one * per character on stderr, backspace works; the value
-# goes to stdout and is never echoed as plain text.
+# Masked input: one * per char on stderr, backspace works; value goes to stdout.
 _masked_read() {
     local buf="" ch
     while IFS= read -rsn1 ch; do
@@ -107,9 +103,8 @@ ask() {
 }
 
 # confirm <question> [default] — default is y, which is what an unattended run
-# gets. A destructive caller must pass n: with no terminal there is nobody to
-# answer, and answering "yes" on their behalf would replace live data from a
-# cron job, a CI step or a pipeline.
+# gets. A destructive caller must pass n: with no terminal nobody can answer, and
+# answering yes on their behalf would replace live data from a cron or CI run.
 confirm() {
     local default="${2:-y}" c=""
     [[ "$YES" -eq 1 ]] && return 0
@@ -147,9 +142,8 @@ backup_dir() {
     local stamp; stamp="$(date +%Y%m%d-%H%M%S)"
     local base; base="$(basename "$src")"
     local file="/var/backups/${label}-${base}-${stamp}.tar.gz"
-    # The archive contains the PKI (CA private key) and, in Docker mode, the
-    # generated compose file with the API key — create it root-only from the
-    # start (tar would otherwise honor the caller's umask).
+    # Contains the PKI (CA private key) and, in Docker mode, the compose file
+    # with the API key: root-only from the start, not the caller's umask.
     local old_umask; old_umask="$(umask)"
     umask 077
     if tar -czf "$file" -C "$(dirname "$src")" "$base" 2>/dev/null; then
@@ -173,11 +167,10 @@ wait_health() {
 
 env_get() {  # env_get FILE KEY → value
     [[ -f "$1" ]] || return 0
-    # A file we can see but cannot read is not "no value". Returning empty here
-    # made every caller fall back to a default that looks like real data — a
-    # healthy node reported "Agent inactive / Health unreachable / Version
-    # unknown" and exited 0, which is worse than an error because it invites
-    # someone to repair a working box.
+    # A file we can see but cannot read is not "no value": returning empty made
+    # callers fall back to defaults that look like real data, so a healthy node
+    # reported itself broken and exited 0 — worse than an error, because it
+    # invites someone to repair a working box.
     [[ -r "$1" ]] || die "Cannot read $1 — run with sudo." "$EX_ERROR"
     awk -F= -v k="$2" '$1 == k { sub(/^[^=]*=/, ""); print; exit }' "$1" | tr -d '\r'
 }
@@ -263,11 +256,9 @@ generate_selfsigned() {
     local cert="/etc/ssl/self-signed/fullchain.pem"
     mkdir -p /etc/ssl/self-signed
     # /etc/ssl/self-signed is a shared convention: OVManager keeps its panel
-    # certificate in exactly these two files, and its docs recommend installing
-    # this node on the same host. Regenerating replaces the panel's identity
-    # and the chmod 600 below drops the group read that its non-root service
-    # account needs, so the panel stops starting until someone re-grants it.
-    # An intact pair is therefore reused untouched, permissions included;
+    # certificate in these same two files. Regenerating replaces the panel's
+    # identity, and the chmod 600 below drops the group read its non-root service
+    # account needs, so an intact pair is reused untouched — permissions included.
     # `ovn tls` option 1 is the explicit way to ask for a new one.
     if [[ "${TLS_REGENERATE:-0}" != "1" ]] && _existing_tls_pair_usable "$key" "$cert"; then
         TLS_KEY="$key"

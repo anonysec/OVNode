@@ -38,9 +38,8 @@ def _maintenance_marker() -> str:
 
 
 class MaintenanceMiddleware(BaseHTTPMiddleware):
-    """Block mutating manager requests while the installer verifies a
-    candidate release. Reads (GET/HEAD/OPTIONS) and the health probe keep
-    answering so verification and monitoring never go blind."""
+    """Block writes while a release candidate is being checked; reads and the
+    health probe keep answering so the panel's own checks do not go blind."""
 
     async def dispatch(self, request, call_next):
         blocked = request.method not in ("GET", "HEAD", "OPTIONS")
@@ -60,8 +59,8 @@ class MaintenanceMiddleware(BaseHTTPMiddleware):
 async def lifespan(app: FastAPI):
     """Initialize PKI + OpenVPN config (idempotent).
 
-    Degraded start: PKI failures must not kill the API — the panel needs
-    /sync/status diagnostics precisely when the node is broken.
+    PKI failures must not kill the API: the panel needs /sync/status most
+    when the node is broken.
     """
     logger.info("Starting OV-Node — initializing PKI...")
     app.state.degraded = None
@@ -94,15 +93,13 @@ async def lifespan(app: FastAPI):
 
 api = FastAPI(
     title="OV Node",
-    # Docs are opt-in: when disabled, hide every interactive surface
-    # (doc, redoc, openapi.json) instead of leaving two of them public.
+    # Docs are opt-in: hide all three surfaces or none.
     docs_url="/doc" if settings.doc else None,
     redoc_url="/redoc" if settings.doc else None,
     openapi_url="/openapi.json" if settings.doc else None,
     lifespan=lifespan,
 )
 
-# Apply security headers middleware
 _panel_origins = [
     origin.strip() for origin in os.getenv("PANEL_ORIGINS", "").split(",") if origin.strip()
 ]
@@ -121,14 +118,11 @@ api.include_router(core_router)
 
 # ── error handling ───────────────────────────────────────────────────
 # The panel accepts a call only when it gets HTTP 200 + {"success": true},
-# so every failure — expected or not — must come back in the same envelope.
-# Unhandled exceptions additionally get a short reference id that links the
-# response to the full traceback in the logs (and GET /sync/logs).
+# so every failure has to come back in that envelope.
 
 
 @api.exception_handler(StarletteHTTPException)
 async def http_exception_handler(request: Request, exc: StarletteHTTPException):
-    """Contract-shaped body for expected HTTP errors (401/404/422/429...)."""
     return JSONResponse(
         status_code=exc.status_code,
         content={"success": False, "msg": str(exc.detail), "data": None},
@@ -138,7 +132,6 @@ async def http_exception_handler(request: Request, exc: StarletteHTTPException):
 
 @api.exception_handler(RequestValidationError)
 async def validation_exception_handler(request: Request, exc: RequestValidationError):
-    """Malformed panel payloads: log the offender, answer in contract shape."""
     problems = "; ".join(
         f"{'.'.join(str(p) for p in e.get('loc', []))}: {e.get('msg', '')}" for e in exc.errors()
     )
@@ -153,8 +146,7 @@ async def validation_exception_handler(request: Request, exc: RequestValidationE
 async def unhandled_exception_handler(request: Request, exc: Exception):
     """Last-resort handler: never leak a traceback, always leave a trail.
 
-    The short ``ref`` ties this response to the full stack trace in the
-    node log — searchable via ``GET /sync/logs`` or ``grep ref data/app.log``.
+    ``ref`` ties the response to the full stack trace in the node log.
     """
     ref = uuid.uuid4().hex[:8]
     logger.error(

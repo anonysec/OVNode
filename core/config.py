@@ -61,11 +61,9 @@ class Settings(BaseSettings):
     ovnode_max_clients: int = 250
     ovnode_enable_ipv6: bool = False
     ovnode_ipv6_prefix: str = "fd42:42:42:42::/64"
-    # Extra VPN ports (comma-separated, e.g. "443,8443"). The node stays a
-    # single OpenVPN instance listening on OPENVPN_PORT; the installer adds
-    # iptables REDIRECT rules so the extra ports reach the same daemon, and
-    # generated .ovpn profiles list one `remote` line per port so clients
-    # fail over automatically when an ISP blocks a port.
+    # Extra VPN ports (comma-separated, e.g. "443,8443"): iptables REDIRECT
+    # rules reach the same daemon, and profiles list one `remote` line per
+    # port so clients fail over when an ISP blocks one.
     ovnode_extra_ports: str = ""
 
     model_config = {"env_file": os.path.join(os.path.dirname(__file__), "../.env")}

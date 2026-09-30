@@ -35,10 +35,10 @@ class User(BaseModel):
     # "activate" | "deactivate" — matches NodeRequests.change_user_status().
     status: Literal["activate", "deactivate"] = "activate"
     # Max simultaneous logins/devices: 1 = single login (takeover),
-    # 0 = unlimited, N>1 = strict cap. Mirrors the panel's user.max_logins.
-    # Default None: an omitted field means "leave the stored limit alone" —
-    # defaulting to 1 silently downgraded unlimited users on status-only
-    # updates. Ranged too: a negative value previously coerced to 0 (unlimited).
+    # 0 = unlimited, N>1 = strict cap. Default None: an omitted field means
+    # "leave the stored limit alone" (defaulting to 1 downgraded unlimited
+    # users on status-only updates), and the floor stops a negative value
+    # coercing to 0 = unlimited.
     max_logins: int | None = Field(default=None, ge=0, le=1000)
 
 
@@ -72,8 +72,7 @@ class ResponseModel(BaseModel):
 
 class SetSettingsModel(BaseModel):
     tunnel_address: str
-    # Unknown values previously fell through to udp silently in
-    # change_config — reject them so panel misconfigurations surface.
+    # Unknown values used to fall through to udp silently in change_config.
     protocol: Literal["tcp", "udp"]
     ovpn_port: int = Field(ge=1, le=65535)
     set_new_setting: bool

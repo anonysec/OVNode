@@ -5,13 +5,7 @@
 # ovnode — OVNode agent manager (installed as ovnode/ovn).
 # Day-to-day operations for an installed node: status, service control,
 # VPN restart, logs, backups, TLS. Install/update/uninstall live in
-# install.sh — this script delegates to it.
-#
-#   ovn                  Interactive numbered menu (needs a terminal)
-#   ovn status           Report install state
-#   ovn update           Update via install.sh (with backup)
-#   ovn uninstall        Remove OVNode (data kept unless --purge)
-#
+# install.sh — this script delegates to it. Run `ovn help` for the list.
 
 set -Eeuo pipefail
 
@@ -23,7 +17,6 @@ OPENVPN_ROOT="/etc/openvpn"
 DEFAULT_PORT=2083
 SYSTEMD_SERVICE="ovnode.service"
 INSTALLER="$APP_DIR/install.sh"
-# Installed command names.
 BIN_DIR="${OVN_BIN_DIR:-/usr/local/bin}"
 CLI_NAME="ovnode"
 CLI_ALIAS="ovn"
@@ -46,18 +39,16 @@ AUTO_BACKUP_ACTION="" BACKUP_TIME="" BACKUP_KEEP=""
 RESTORE_NAME=""
 NODE_NAME="${OVN_NAME:-}"
 
-# Shared helpers (output, prompts, TLS, menus).
+# Shared helpers (output, prompts, TLS, menus), all defined in
+# scripts/lib/common.sh and never copied here.
 #
-# The copy BESIDE this script wins when there is one, because sibling files are
-# by definition the same version as each other. The installed copy is the
-# fallback for a script run from outside its tree (an installed /usr/local/bin
-# copy with no sibling lib).
+# The copy BESIDE this script wins: sibling files are by definition the same
+# version as each other. The installed copy is the fallback for a script run
+# from outside its tree.
 #
-# Preferring the installed copy was wrong in the case that actually happens: a
+# Preferring the installed copy fails in the case that actually happens — a
 # newer manager.sh against an older installed lib calls helpers that lib has
-# never heard of and dies with "<name>: command not found". Measured — a
-# checkout manager.sh against a v1.0.0 install failed on check_root, a helper
-# this version moved into the lib.
+# never heard of and dies with "<name>: command not found".
 _SELF_DIR="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
 if [[ -f "$_SELF_DIR/scripts/lib/common.sh" ]]; then
     # shellcheck disable=SC1091
@@ -70,115 +61,17 @@ else
     exit 1
 fi
 
-
-
-# die <message> [exit-code]  — single error path.
-
 trap 'echo -e "\n  ${RD}Interrupted.${NC}" >&2; exit 130' INT TERM
 trap 'warn "Command failed near line $LINENO (running: ${BASH_COMMAND:0:80})"' ERR
-
-# Spinners/prompts only for interactive humans; plain logs otherwise.
-
-
-# run <label> <cmd...> — required step: spinner on a TTY, plain log lines
-# in automation. Fails the install with a clear message on error.
-
-# try_run <label> <cmd...> — best-effort step: warns instead of dying.
-
-# Masked input: one * per character on stderr, backspace works; the value
-# goes to stdout and is never echoed as plain text.
-
-
-
-# Explicit-yes prompt (default NO) for destructive extras like deleting data.
 
 # ── OS / package manager ───────────────────────────────────────────────
 OS_ID="" OS_NAME="" PKG_INSTALL="" PKG_UPDATE=""
 
-# ── Help / args ────────────────────────────────────────────────────────
-
-
-# ── Validation ─────────────────────────────────────────────────────────
-
-# Splits VPN_PORTS ("1194,443,8443") into VPN_PORT (primary listener) and
-# EXTRA_PORTS (comma separated, redirected to the primary).
-
-
-
-
-
-
 # ── Toolchain ──────────────────────────────────────────────────────────
 UV_BIN=""
 
-# Reproducible dependency install: the lockfile pins exact versions.
-# Fall back to a fresh resolve only when the lock cannot be honored.
-
-# ── Backups ────────────────────────────────────────────────────────────
-
-# ── TLS ────────────────────────────────────────────────────────────────
-
-
-
-
-# ── Forwarding / NAT / multi-port redirects ────────────────────────────
-# IP forwarding is a host sysctl in BOTH modes (a container usually cannot
-# write /proc/sys). The iptables rules live in one idempotent script owned
-# by a oneshot systemd unit — native mode only; in Docker the entrypoint
-# applies the equivalent rules itself via CAP_NET_ADMIN.
-
-
-
-# ── Log rotation ───────────────────────────────────────────────────────
-# server.conf uses `log-append openvpn.log`, which grows without bound and
-# will eventually fill a small VPS disk (killing OpenVPN with it). The
-# agent log rotates itself; the OpenVPN log needs logrotate. Native
-# installs SIGHUP the daemon (clean reopen, no teardown); Docker keeps
-# copytruncate because the daemon's PID namespace is unreachable from a
-# host logrotate postrotate.
-
-# ── OpenVPN scaffolding ────────────────────────────────────────────────
-
-
-# Mandatory post-flight for Docker mode (twice bitten): the container's
-# OpenVPN must own 1194/7505. A native daemon holding those ports on the
-# shared host network namespace crash-loops the container's OpenVPN
-# (mgmt bind EADDRINUSE), while the agent health check stays green.
-
-
-# ── Firewall ───────────────────────────────────────────────────────────
-# Every VPN port is opened for BOTH protocols: the panel can switch the
-# node between udp and tcp at runtime, and the extra-port redirects always
-# cover both.
-
-# Mirror of open_firewall_ports for uninstall: remove exactly what an
-# install would have opened, using the INSTALLED .env values (flags may
-# differ from install time). Best-effort — never fail the uninstall.
-
-# ── Systemd unit ───────────────────────────────────────────────────────
-
-
-# ── Source / environment ───────────────────────────────────────────────
-
-
-
-# Download the versioned release file into $1 (an existing directory).
-# The .sha256 sidecar is verified when published; a missing sidecar only
-# warns (older releases).
-
-
-
-# ── Docker ─────────────────────────────────────────────────────────────
-
-
-
-# ── Install ────────────────────────────────────────────────────────────
-
-# ── Update ─────────────────────────────────────────────────────────────
-
-# ── Uninstall ──────────────────────────────────────────────────────────
-# Update and uninstall live in install.sh — delegate so there is exactly one
-# implementation.
+# ── Update / uninstall ─────────────────────────────────────────────────
+# Both are implemented in install.sh and delegated, so there is one copy.
 run_installer() {
     [[ -e "$APP_DIR" ]] || [[ "$1" == "uninstall" ]] || die "Not installed ($APP_DIR missing)" "$EX_NOTINSTALLED"
     [[ -x "$INSTALLER" ]] || die "Installer missing ($INSTALLER)" "$EX_ERROR"
@@ -207,10 +100,9 @@ do_status() {
     local agent="unknown" health="unknown" openvpn="unknown" agent_version=""
 
     if [[ -f "$APP_DIR/.env" ]]; then
-        # Readable, not merely present. This function used to define its own
-        # env_get that sent the permission error to /dev/null and returned an
-        # empty value, so a healthy node reported "Agent inactive / Health
-        # unreachable / Version unknown" and exited 0.
+        # Readable, not merely present: swallowing the permission error left a
+        # healthy node reporting "Agent inactive / Health unreachable / Version
+        # unknown" and exiting 0.
         [[ -r "$APP_DIR/.env" ]] || die "Cannot read $APP_DIR/.env — run with sudo." "$EX_ERROR"
         installed=true
         node="$(env_get "$APP_DIR/.env" NODE_NAME)"; : "${node:=ovnode}"
@@ -262,22 +154,6 @@ do_status() {
 
     [[ "$installed" == "true" ]] || exit "$EX_NOTINSTALLED"
 }
-
-# ── Interactive setup (humans on a TTY) ────────────────────────────────
-
-# Express install: safe defaults, no further questions. TLS is always on.
-
-# Friendly front door: shown only for a bare interactive invocation.
-
-
-# ── Terminal command (TUI) ─────────────────────────────────────────────
-# install_cli() copies this installer to $BIN_DIR as "ovnode" (+ "ovn"), so a
-# bare `ovnode` opens the menu. Every action is also a subcommand for scripts:
-# status | start | stop | restart | restart-vpn | logs [N|-f] | backup |
-# restore | update | tls | uninstall | menu | help.
-
-
-
 
 # systemd waits up to TimeoutStopSec for a stuck unit; bound the wait so an
 # uninstall/update never looks frozen, then force the unit.
@@ -422,8 +298,7 @@ do_restore() {
     info "Restoring: $name"
     confirm "Replace the current node data with this backup?" n || die "Cancelled."
 
-    # Safety copy first, through the same helper `ovn backup` uses, so what
-    # lands here is an ordinary restorable backup.
+    # Safety copy first, through the same helper `ovn backup` uses.
     local before after f safety=()
     before="$(data_backup_files)"
     backup_dir "$DATA_BASE" "node-pre-restore"
@@ -519,8 +394,6 @@ auto_backup_cli() {
     esac
 }
 
-
-
 node_tls_menu() {
     local envfile="$APP_DIR/.env"
     [[ -f "$envfile" ]] || die "Not installed ($envfile missing)"
@@ -559,8 +432,6 @@ node_tls_menu() {
     node_service_action restart
 }
 
-# Boxed menu when whiptail is already installed; colored menu otherwise.
-
 backup_submenu() {
     while true; do
         line ""
@@ -587,8 +458,7 @@ backup_submenu() {
 
 manager_menu() {
     while true; do
-        # Clear between menus so each screen is one clean view; never when
-        # output is piped.
+        # Clear between menus, but never when output is piped.
         if is_tty; then command clear >/dev/null 2>&1 || true; fi
         line ""
         line "  ${B}ovnode — node manager${NC}  ${GY}v${VERSION}${NC}"
@@ -622,14 +492,12 @@ manager_menu() {
     done
 }
 
-
-
 # ── Health check (doctor) ────────────────────────────────────────────
 # Read-only by default; --fix restarts a dead agent.
 do_doctor() {
     [[ -d "$APP_DIR" ]] || die "Not installed ($APP_DIR missing)" "$EX_NOTINSTALLED"
     # Up front, so the report is not half-printed before the error: step 4 below
-    # reads .env, and everything before it would otherwise look like a result.
+    # reads .env, and everything before it would look like a result.
     if [[ -f "$APP_DIR/.env" && ! -r "$APP_DIR/.env" ]]; then
         die "Cannot read $APP_DIR/.env — run with sudo." "$EX_ERROR"
     fi
@@ -847,14 +715,11 @@ do_rollback() {
     fi
 }
 
-
-# The node's registration values, re-readable at any time. The installer shows
-# them once on the Ready card; this is how you get them back if you closed the
-# terminal, ran with --quiet, or simply lost the key. Values are read from the
-# same .env the agent loads, so this cannot drift from what the node serves.
+# Node registration values, re-readable at any time — the installer shows them
+# once on the Ready card, and this is how they come back after --quiet or a
+# closed terminal. Read from the same .env the agent loads, so they cannot drift.
 do_credentials() {
-    # Installed-check first: a missing install is worth reporting to anyone,
-    # and it keeps the root gate about the secret rather than about the paths.
+    # Installed-check first, so the root gate stays about the secret.
     [[ -f "$APP_DIR/.env" ]] || die "OVNode is not installed." "$EX_NOTINSTALLED"
     check_root
 
@@ -873,8 +738,7 @@ do_credentials() {
     tls_flag=0
     if [[ "$tls" != "none" ]]; then tls_flag=1; fi
     host="$(primary_ip)"
-    # Kept identical to the installer's Ready card; both must name the same node
-    # the same way or the panel cannot register it.
+    # Same shape as the installer's Ready card, or the panel cannot register it.
     bundle="ovnode://${node}@${host}:${port}?key=${key}&tls=${tls_flag}"
 
     field "Node"    "$node"
@@ -884,8 +748,7 @@ do_credentials() {
 }
 
 # ── Completion ─────────────────────────────────────────────────────────
-# The point of completion here is discoverability: ~20 subcommands is more
-# than anyone remembers, so Tab beats reading --help.
+# ~20 subcommands is more than anyone remembers, so Tab beats reading --help.
 generate_completion() {
     cat <<'EOF'
 _ovn_completions() {
@@ -906,9 +769,8 @@ EOF
     echo "complete -F _ovn_completions ${CLI_NAME}"
 }
 
-# Not gated on EUID: what matters is whether the file can be written, and
-# saying so beats a generic "must run as root" when the answer is a
-# permission problem.
+# Not gated on EUID: what matters is whether the file can be written, and saying
+# so beats a generic "must run as root" when it is really a permission problem.
 do_completion() {
     local file="$COMPLETION_DIR/ovn"
     mkdir -p "$COMPLETION_DIR" 2>/dev/null \

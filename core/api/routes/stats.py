@@ -28,9 +28,9 @@ client (backend/node/requests.py):
     POST   /sync/users                       set_user_limits (bulk)
 
 The panel treats a call as successful ONLY when the response is HTTP 200
-with ``{"success": true}`` — so handlers report business failures inside the
-envelope instead of raising, except where the panel explicitly checks the
-HTTP status (ovpn download must be a raw 200 body starting with "client").
+with ``{"success": true}``, so handlers report business failures inside the
+envelope instead of raising — except where the panel checks the HTTP status
+itself (ovpn download must be a raw 200 body starting with "client").
 
 Authentication: the panel sends the node API key in the ``key`` header.
 """
@@ -51,9 +51,8 @@ router = APIRouter(prefix="/sync", tags=["node_sync"])
 async def get_all_user_usage(api_key: str = Depends(check_api_key)):
     """Traffic counters — consumed by get_usage() (traffic sync + mlogin).
 
-    ``data`` always carries {"users": {...}, "sessions": {...}} so the
-    panel's per-session delta path and global-mlogin live-session scan both
-    work; empty dicts simply mean nobody is connected.
+    ``data`` always carries {"users": {...}, "sessions": {...}} so both panel
+    paths work; empty dicts mean nobody is connected.
     """
     usages = get_users_usage()
     if usages.get("users"):
@@ -70,7 +69,7 @@ async def get_session_diagnostics(
     """Live sessions, stale markers and recent max-login auth errors.
 
     Consumed by get_sessions() for node metrics, stale-session cleanup,
-    per-user diagnostics and the frontend NodeDrawer sessions tab.
+    per-user diagnostics and the panel's sessions tab.
     """
     return ResponseModel(
         success=True,

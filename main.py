@@ -9,7 +9,6 @@ logger.info("Starting OV-Node...")
 
 
 def _handle_shutdown(signum, frame):
-    """Log a clean shutdown reason on SIGTERM/SIGINT."""
     logger.info("OV-Node received %s — shutting down cleanly.", signal.Signals(signum).name)
     raise SystemExit(0)
 
@@ -40,11 +39,9 @@ def main():
         port=settings.service_port,
         reload=False,
         workers=1,
-        # Unified logging: uvicorn's loggers propagate to the root config in
-        # core/logger.py (rotating file + journald + /sync/logs ring buffer).
+        # uvicorn's loggers propagate to the root config in core/logger.py.
         log_config=None,
-        # Per-request access logging is pure overhead for a machine-to-machine
-        # API polled every few seconds by the panel; keep it for DEBUG only.
+        # Access logs stay DEBUG-only: the panel polls this API every few seconds.
         access_log=settings.debug.upper() == "DEBUG",
         server_header=False,
         **ssl_kwargs,

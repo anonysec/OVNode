@@ -12,25 +12,21 @@ from fastapi import Header, HTTPException, Request, status
 from core.config import settings
 from core.logger import logger
 
-# Simple in-memory per-client rate limiter.
-# Prevents a misconfigured/compromised panel from hammering the node,
-# which could saturate the OpenVPN management socket.
+# In-memory per-client rate limiter, so a misconfigured or compromised panel
+# cannot hammer the node and saturate the OpenVPN management socket.
 #
 # Keyed by CLIENT ADDRESS, not by the submitted API key: keying on the
-# attacker-supplied value handed every guessed key a fresh bucket, so brute
-# force was unlimited and a flood of distinct bogus keys could evict the real
-# caller's bucket. A global ceiling bounds the total work either way.
+# attacker-supplied value gave every guessed key a fresh bucket, so brute
+# force was unlimited and a flood of bogus keys evicted the real caller's.
 _WINDOW = 60  # seconds
 _MAX_REQUESTS = 120  # per client per window
 _GLOBAL_MAX = 600  # across all clients per window
 _GLOBAL_KEY = "__global__"
 
-# Cert-issuing endpoints fork easyrsa (up to 120s each). A stuck panel
-# looping create/delete could queue unbounded easyrsa processes and wedge
-# the PKI lock — so these get a separate tight bucket with Retry-After.
-# 60/min still stops a hot loop (vs. the 120/min general bucket) while
-# leaving headroom for legit bursts the suite and bulk imports produce
-# (sequential panel ops are ~1/s at most; the PKI lock serializes them).
+# Cert-issuing endpoints fork easyrsa (up to 120s each), so a stuck panel
+# looping create/delete could queue unbounded processes and wedge the PKI
+# lock. 60/min still stops a hot loop while leaving headroom for legit
+# bursts (sequential panel ops are ~1/s at most).
 _HEAVY_WINDOW = 60  # seconds
 _HEAVY_MAX = 60  # cert-issuing requests per window
 
@@ -105,9 +101,8 @@ def _client_key(request: Request | None) -> str:
 def apply_heavy_limit(request: Request | None) -> None:
     """Charge one heavy request for this client (used on cert-issuing paths).
 
-    Raises 429 with Retry-After when the tight bucket is exhausted. Public so
-    the lazy ``download`` route can charge only the cold (cert-minting) path
-    without putting a heavy dependency on every cached download.
+    Public so the lazy ``download`` route can charge only its cold
+    (cert-minting) path instead of gating every cached download.
     """
     ok, retry_after = _heavy_allowed(_client_key(request))
     if not ok:
@@ -121,11 +116,10 @@ def apply_heavy_limit(request: Request | None) -> None:
 async def check_api_key(key: str | None = Header(None), request: Request = None) -> str:
     """Check if the provided API key is valid (constant-time compare).
 
-    The header is optional at the signature so a request that omits it reaches
-    this function: an absent credential is an authentication failure (401), not
-    a malformed request, which is what the validator's 422 said. The 401 is
-    raised before the rate-limit accounting so a caller that never sends a key
-    gets that diagnostic instead of a 429 that hides it.
+    The header is optional in the signature so an omitting request reaches
+    this function: an absent credential is a 401, not the validator's 422.
+    That 401 comes before rate-limit accounting, so a caller that never sends
+    a key gets the diagnostic instead of a 429 that hides it.
     """
     if not key:
         logger.warning("Missing API key rejected from %s", _client_key(request))
@@ -156,8 +150,7 @@ async def check_api_key(key: str | None = Header(None), request: Request = None)
 async def check_api_key_heavy(key: str | None = Header(None), request: Request = None) -> str:
     """API-key check + tight rate limit for cert-issuing endpoints.
 
-    easyrsa forks are the most expensive thing the node does; a stuck panel
-    must get 429 + Retry-After instead of queueing unbounded processes.
+    A stuck panel gets 429 + Retry-After instead of queueing easyrsa forks.
     """
     await check_api_key(key, request)
     apply_heavy_limit(request)

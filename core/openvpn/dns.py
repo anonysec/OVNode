@@ -3,12 +3,10 @@
 
 """Panel-managed DNS servers for pushed client configs.
 
-The panel owns the desired DNS list; the node mirrors it in a small state
-file and in the ``push "dhcp-option DNS ..."`` lines of server.conf. The
-state file makes the operator's choice survive server.conf regeneration
-(:mod:`core.openvpn.pki`) instead of silently reverting to the installer
-defaults. Writes are atomic (mkstemp + os.replace), matching
-``store.write_state``.
+The panel owns the desired list; the node mirrors it in a small state file
+and in the ``push "dhcp-option DNS ..."`` lines of server.conf. The state
+file keeps the operator's choice across server.conf regeneration
+(:mod:`core.openvpn.pki`) instead of reverting to the installer defaults.
 """
 
 from __future__ import annotations

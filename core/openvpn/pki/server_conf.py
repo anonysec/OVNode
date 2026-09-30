@@ -162,10 +162,10 @@ def _fresh_server_conf() -> str:
 def _ensure_server_conf() -> bool:
     """Write a fresh hardened server.conf, or tune an existing one up.
 
-    Single writer for server.conf directives (fresh + tune-up): PKI/TLS
-    hardening AND the multi-login hook directives. Previously a second
-    patcher in multilogin.py re-scanned the same file, making restarts
-    order-dependent. Returns True when the file changed.
+    The single writer for server.conf directives: PKI/TLS hardening AND the
+    multi-login hooks. A second patcher in multilogin.py used to re-scan the
+    same file, which made restarts order-dependent. Returns True when the
+    file changed.
     """
     if not os.path.exists(_pki.SERVER_CONF):
         # Atomic: a crash mid-write must not leave a truncated server.conf,
@@ -179,9 +179,9 @@ def _ensure_server_conf() -> bool:
         with open(_pki.SERVER_CONF, encoding="utf-8") as f:
             content = f.read()
         lines = content.splitlines()
-        # Multi-login hooks (single writer — replaces multilogin._patch_server_conf):
-        # repoint stale script paths in place, then ensure the hook directives
-        # and duplicate-cn exist. The connect script enforces max_logins.
+        # Repoint stale multi-login hook paths in place, then ensure the hook
+        # directives and duplicate-cn exist. The connect script enforces
+        # max_logins.
         connect_dst = os.path.join(_pki.SCRIPTS_DIR, "ovnode-client-connect.sh")
         disconnect_dst = os.path.join(_pki.SCRIPTS_DIR, "ovnode-client-disconnect.sh")
         hook_targets = {"client-connect": connect_dst, "client-disconnect": disconnect_dst}
@@ -213,11 +213,10 @@ def _ensure_server_conf() -> bool:
         # connect script and traffic parser.
         if not any(ln.strip().startswith("status ") for ln in lines):
             to_add.append(f"status {os.path.join(_pki._OPENVPN_ROOT, 'server', 'status.log')} 5")
-        # If an existing `dh <path>` references a file that no longer exists
-        # (e.g. the PKI was re-initialized), replace it with `dh none` so the
-        # config keeps loading (ECDHE needs no static DH). Files that exist
-        # are left untouched. An outdated status-version (1/2) is upgraded in
-        # place: the enforcement hooks parse the tab-separated version 3.
+        # A `dh <path>` pointing at a missing file (e.g. after a PKI
+        # re-init) becomes `dh none` so the config keeps loading; existing
+        # files are left alone. An outdated status-version is upgraded in
+        # place, since the hooks parse the tab-separated version 3.
         replaced_dh = False
         replaced_status = False
         removed_mgmt_client = False
@@ -227,9 +226,9 @@ def _ensure_server_conf() -> bool:
         for ln in lines:
             parts = ln.split()
             stripped = ln.strip()
-            # Drop legacy management-client-* lines: valid only for unix sockets,
-            # fatal for TCP (the current management) — see OpenVPN error
-            # "management-client-(user|group) can only be used on unix domain sockets".
+            # Legacy management-client-* is valid only for unix sockets and
+            # fatal for the current TCP management ("can only be used on unix
+            # domain sockets").
             if stripped.startswith("management-client-"):
                 removed_mgmt_client = True
                 continue
@@ -289,9 +288,8 @@ def _ensure_client_template() -> None:
     proto = _pki._fresh_proto()
     tunnel_addr = os.getenv("TUNNEL_ADDRESS", "").strip()
     if not tunnel_addr:
-        # Never ship the "UPDATE_VIA_PANEL" placeholder to a client: fall
-        # back to this node's own public address so the profile is usable
-        # immediately; the panel overwrites it whenever it pushes config.
+        # Never ship the "UPDATE_VIA_PANEL" placeholder: fall back to this
+        # node's own public address; the panel overwrites it on its next push.
         tunnel_addr = _pki._node_public_ip()
     content = f"""client
 dev tun

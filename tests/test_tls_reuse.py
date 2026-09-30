@@ -1,7 +1,7 @@
 # Copyright (c) 2026 anonysec
 # SPDX-License-Identifier: MIT
 
-"""A second service on this host must not lose its TLS identity to ours.
+"""A second service on this host must not lose its TLS identity to the node's.
 
 ``/etc/ssl/self-signed`` is a shared convention: OVManager keeps its panel
 certificate in exactly the two files this node writes, and OVManager's own
@@ -130,7 +130,7 @@ def test_nothing_chmods_before_the_reuse_path_returns():
     """Reuse is only safe if permissions are left exactly as found.
 
     A chmod ahead of the reuse branch would still strip the panel's group
-    read even though we kept its certificate — the failure would just move.
+    read even though its certificate was kept — the failure would just move.
     Compared by line so the word "chmod" in a comment cannot satisfy it.
     """
     body = _body("generate_selfsigned", INSTALLER, LIB)

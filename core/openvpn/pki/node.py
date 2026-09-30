@@ -15,7 +15,7 @@ def _node_public_ip() -> str:
     """This node's first non-loopback IPv4 address.
 
     Used when the panel has not pushed a tunnel address yet, so a generated
-    .ovpn is immediately usable instead of carrying a placeholder.
+    .ovpn carries a usable address instead of a placeholder.
     """
     try:
         out = subprocess.run(

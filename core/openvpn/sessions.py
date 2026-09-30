@@ -52,8 +52,7 @@ def _parse_mgmt_port(raw: str | None) -> int:
 
 MANAGEMENT_PORT = _parse_mgmt_port(os.getenv("OVNODE_MANAGEMENT_PORT"))
 
-# journalctl is a subprocess fork per call; the panel polls /sync/sessions
-# from several jobs, so cache the journal tail briefly to keep CPU flat.
+# journalctl is a fork per call and several panel jobs poll /sync/sessions.
 _JOURNAL_TTL = 5.0
 _journal_cache: dict[str, tuple[int, float, list[str]]] = {}
 # Management liveness is probed on every diagnostics poll — cache briefly.
@@ -95,11 +94,9 @@ _PEER_RE = re.compile(r"\[AF_INET6?\](\d{1,3}(?:\.\d{1,3}){3}(?::\d+)?|\S+:\d+)"
 _STATE_DIR = os.path.join(OVNODE_DIR, "state")
 
 _mgmt_available_at = 0.0
-# Tri-state availability probe: None = unchecked, True/False = cached.
-# In Docker there is no journald/journalctl at all — without this, every
-# cache miss forked a doomed subprocess and logged a warning, spamming the
-# container log every few seconds and inflating warnings_1h (feedback loop
-# into /sync/status and /sync/logs).
+# Tri-state availability probe: None = unchecked, True/False = cached. Docker
+# has no journalctl at all, so without this every cache miss forked a doomed
+# subprocess and its warning inflated warnings_1h on every poll.
 _journal_available: bool | None = None
 
 
@@ -305,16 +302,13 @@ def _openvpn_log_events(hours: int) -> list[dict[str, Any]]:
     """Real TLS/auth failures from the OpenVPN log (the danger bucket).
 
     The max-login journal never sees these: a bad certificate or a failed
-    handshake never reaches client-connect, so nothing else in the node can
-    report them.
+    handshake never reaches client-connect, so nothing else can report them.
 
-    The log carries no timestamps: OpenVPN writes through `log-append`, so its
-    output never reaches the journal, and the distribution unit starts it with
-    --suppress-timestamps. There is no option to stamp the file (verified
-    against OpenVPN 2.7: `log-timestamp` is not a directive and refuses to
-    start). So the times here are the ones *this agent observed* — first seen
-    and last seen per distinct failure, kept in a small state file. Honest, and
-    identical under systemd, Docker or a bare daemon.
+    The log carries no timestamps — OpenVPN writes through `log-append` so its
+    output never reaches the journal, the unit starts it with
+    --suppress-timestamps, and OpenVPN 2.7 has no `log-timestamp` directive.
+    So the times are the ones this agent observed: first and last seen per
+    distinct failure, kept in a small state file.
     """
     now = time.time()
     window = max(1, min(int(hours or 8), 24)) * 3600
@@ -343,7 +337,7 @@ def _openvpn_log_events(hours: int) -> list[dict[str, Any]]:
             except ValueError:
                 line_ts = 0.0
             # A stamped line can be aged out exactly. An unstamped one cannot:
-            # it is in the log right now, and first/last-seen is all we know.
+            # it is in the log now, and first/last-seen is all the node knows.
             if line_ts and now - line_ts > window:
                 continue
         entry = fingerprints.get(key)
@@ -365,8 +359,8 @@ def _openvpn_log_events(hours: int) -> list[dict[str, Any]]:
             else:
                 entry["last"] = now
     if not fingerprints:
-        # Nothing in the log: forget what we saw, so a failure that stopped
-        # does not stay "ongoing" forever.
+        # Nothing in the log: drop the recorded times, so a failure that
+        # stopped does not stay "ongoing" forever.
         _save_tls_seen({})
         return []
 
@@ -412,20 +406,17 @@ def user_diagnostics(common_name: str | None = None, hours: int = 8) -> dict[str
 
     * ``live_sessions``       — node/diagnostics.py, node/sync.py, mlogin cleanup
     * ``sessions``            — frontend NodeDrawer "Sessions" tab (alias of
-                                live_sessions; each row needs common_name,
+                                live_sessions; rows need common_name,
                                 trusted_ip, bytes_received, bytes_sent)
     * ``stale_markers``       — node/sync.py clean_stale_sessions_all_nodes
     * ``live_count`` / ``stale_marker_count`` / ``auth_errors`` / ``rejects``
                               — operations/metrics.py node snapshots
-    * ``auth_errors_by_cn``   — node/diagnostics.py login_health_summary,
-                                keyed by panel USERNAME (it does
-                                ``auth_counts.get(u.name)``), so CNs are
-                                mapped to usernames here.
-    * ``events``              — structured, classified events (ts, cn, action,
-                                severity, reason, peer) for the panel's
-                                Security view. ``severity`` is policy / warn /
-                                failure; only ``failure`` counts as a real
-                                authentication or TLS problem.
+    * ``auth_errors_by_cn``   — node/diagnostics.py login_health_summary, which
+                                looks counts up by panel USERNAME, so CNs are
+                                mapped here.
+    * ``events``              — classified events (ts, cn, action, severity,
+                                reason, peer) for the panel's Security view;
+                                only ``failure`` is a real auth/TLS problem.
     """
     live = _read_status_sessions()
     active = _read_active_files()
@@ -523,7 +514,6 @@ def user_diagnostics(common_name: str | None = None, hours: int = 8) -> dict[str
         # is a policy reject and must not raise this counter.
         "auth_errors": failure_total,
         "auth_errors_by_cn": auth_errors_by_cn,
-        # Every event the panel can show: policy + warn + failure.
         "total_events": policy_total + warn_total + failure_total,
         "policy_rejects": policy_total,
         "warn_rejects": warn_total,
@@ -696,8 +686,7 @@ def _management_kill(common_name: str, live_sessions: list[dict[str, Any]]) -> d
     client's current real address; ``kill <cn>`` is the fallback when the
     status file carries no client id (very old OpenVPN).
     """
-    # Validate CN against allowed character set before sending to management socket.
-    # Unsanitized CNs could inject shell/protocol commands.
+    # An unsanitized CN could inject management-socket commands.
     if not _kill_target_ok(common_name):
         return {"available": True, "ok": False, "error": "invalid cn format"}
 
@@ -722,14 +711,12 @@ def _management_kill(common_name: str, live_sessions: list[dict[str, Any]]) -> d
 def disconnect_user(common_name: str, only_stale: bool = False) -> dict[str, Any]:
     """Best-effort disconnect.
 
-    If OpenVPN management is enabled, kill the live client(s) by CID. Always
-    removes stale local active markers for this CN so max-login does not
-    stay blocked.
+    With management enabled, kill the live client(s) by CID, then always drop
+    this CN's stale active markers so max-login does not stay blocked.
 
-    With ``only_stale=True`` no kill is attempted and only markers with no
-    live counterpart are removed: safe for CNs that also hold a healthy
-    session, where a dead marker previously meant "full" forever (neither
-    the hook sweep nor the panel sweeper would clear it).
+    ``only_stale=True`` attempts no kill and removes only markers with no live
+    counterpart: safe for a CN that also holds a healthy session, where a dead
+    marker otherwise means "full" forever.
     """
     before = user_diagnostics(common_name=common_name, hours=8)
     live_sessions = _read_status_sessions()
@@ -743,8 +730,7 @@ def disconnect_user(common_name: str, only_stale: bool = False) -> dict[str, Any
     for marker in _read_active_files():
         if marker["common_name"] != common_name:
             continue
-        # Remove stale markers immediately. If management succeeded, remove all
-        # markers for that CN because the live sessions were killed.
+        # A succeeded kill or a dead marker: either way the marker goes.
         if mgmt.get("ok") or not _marker_is_live(marker, live_sessions, index):
             try:
                 os.remove(marker["path"])

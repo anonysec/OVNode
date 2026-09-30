@@ -2,22 +2,16 @@
 # SPDX-License-Identifier: MIT
 
 """
-PKI + OpenVPN configuration initialization for OVNode.
+PKI + OpenVPN configuration initialization for OVNode (all idempotent).
 
-Responsibilities (all idempotent, safe to call on every startup):
+* Fresh installs get an ECDSA (prime256v1) PKI — OpenVPN uses ECDHE, so no
+  static ``dh`` file is needed.
+* ``server.conf`` is generated for new installs and *tuned up* for existing
+  ones: missing hardening directives are appended, admin edits never clobbered.
+* ``client-common.txt`` is generated if missing; the panel fills in the tunnel
+  address via ``/sync/config``.
 
-* Fresh installs get a modern ECDSA (prime256v1) PKI — no slow RSA DH params
-  (OpenVPN uses ECDHE, so a static ``dh`` file is unnecessary).
-* A hardened ``server.conf`` is generated for new installs and *tuned up* for
-  existing ones (missing hardening directives are appended, admin edits are
-  never clobbered).
-* ``client-common.txt`` is generated if missing (the tunnel address is filled
-  in by the panel via ``/sync/config``).
-* The client config builder appends the ``tls-crypt`` key inline so generated
-  ``.ovpn`` files actually match the server's ``tls-crypt`` directive.
-
-Split by concern — the package's public surface is unchanged from the single
-module it replaced, and it stays importable as ``core.openvpn.pki.X``:
+Split by concern, still importable as ``core.openvpn.pki.X``:
 
 * :mod:`core.openvpn.pki.paths` — path constants (leaf, no internal imports).
 * :mod:`core.openvpn.pki.settings` — OVNODE_* settings accessors.
@@ -27,10 +21,10 @@ module it replaced, and it stays importable as ``core.openvpn.pki.X``:
 * :mod:`core.openvpn.pki.server_conf` — server.conf and client template.
 * :mod:`core.openvpn.pki.bootstrap` — the ``init_pki()`` entrypoint.
 
-Submodules read the paths, hooks and helpers they do not own back through this
-package (``_pki.SERVER_CONF``) at call time instead of importing them by value,
-so ``monkeypatch.setattr(core.openvpn.pki, "SERVER_CONF", …)`` still reaches
-the code that uses the name.
+Submodules read paths, hooks and helpers they do not own back through this
+package (``_pki.SERVER_CONF``) at call time, so
+``monkeypatch.setattr(core.openvpn.pki, "SERVER_CONF", …)`` reaches the code
+that uses the name.
 """
 
 import os

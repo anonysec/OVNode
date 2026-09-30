@@ -3,20 +3,12 @@
 
 """Idempotent setup for the multi-login (per-config connection limit) feature.
 
-This wires the OpenVPN server so that ovmanager's per-user ``max_logins`` is
-actually enforced on connect:
-
-* installs the ``client-connect`` / ``client-disconnect`` enforcement scripts,
-* ensures ``server.conf`` enables ``duplicate-cn``, the script hooks, and a
-  ``status`` log (the connect script counts live sessions from it),
-* enforcement policy: REJECT the new connection when the limit is reached.
-
-The connect script uses a small active-session registry plus the OpenVPN status
-log. The registry prevents race conditions where two devices connect before the
-status log refreshes; the status log is a safety fallback.
-
-It is safe to run repeatedly (on every app start). It only restarts OpenVPN
-when it actually changed something.
+Wires the server so ovmanager's per-user ``max_logins`` is enforced on connect:
+installs the ``client-connect`` / ``client-disconnect`` scripts, and ensures
+``server.conf`` enables ``duplicate-cn``, the hooks and a ``status`` log (the
+connect script counts live sessions from it). Over-limit connections are
+REJECTED. Safe to run on every app start; it restarts OpenVPN only when
+something changed.
 """
 
 import os
@@ -40,11 +32,9 @@ def _write_mlogin_env() -> None:
     """Remove the legacy node→panel callback env file if present.
 
     Older builds wrote ovnode-mlogin.env (panel URL + API key) so the connect
-    hook could query the panel for a global session count. That coupled every
-    node to the panel's address — moving the panel would have required
-    reconfiguring all nodes. Enforcement is now strictly per-node; cross-node
-    policy belongs to the panel, which already polls /sync/sessions and can
-    disconnect via /sync/user/{uid}/disconnect on any node.
+    hook could query the panel for a global session count, which coupled every
+    node to the panel's address. Enforcement is strictly per-node now;
+    cross-node policy belongs to the panel.
     """
     legacy = os.path.join(store.SCRIPTS_DIR, "ovnode-mlogin.env")
     try:
@@ -108,10 +98,8 @@ def ensure_multilogin_setup() -> None:
         # server.conf may have been created/edited after _install_scripts() read it.
         store.fix_runtime_permissions()
         if conf_changed:
-            # OpenVPN must reload only when server.conf changed. Hook script
-            # contents are executed from disk for each new connection, so script
-            # updates do not need an OpenVPN restart and should not disconnect
-            # active VPN users.
+            # Reload only for server.conf: hook scripts are read from disk per
+            # connection, so a script update must not bounce active users.
             _restart_openvpn()
         if scripts_changed or conf_changed:
             logger.info(

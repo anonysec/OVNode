@@ -28,9 +28,9 @@ client (backend/node/requests.py):
     POST   /sync/users                       set_user_limits (bulk)
 
 The panel treats a call as successful ONLY when the response is HTTP 200
-with ``{"success": true}`` — so handlers report business failures inside the
-envelope instead of raising, except where the panel explicitly checks the
-HTTP status (ovpn download must be a raw 200 body starting with "client").
+with ``{"success": true}``, so handlers report business failures inside the
+envelope instead of raising — except where the panel checks the HTTP status
+itself (ovpn download must be a raw 200 body starting with "client").
 
 Authentication: the panel sends the node API key in the ``key`` header.
 """
@@ -53,10 +53,9 @@ router = APIRouter(prefix="/sync", tags=["node_sync"])
 
 _STARTED_AT = time.monotonic()
 
-# CRL freshness is re-checked at most once a day: _ensure_crl() forks
-# openssl, which is too heavy for every /sync/status poll, but checking
-# only at boot risks a total client lockout after >1yr of uptime when the
-# CRL lapses and crl-verify starts rejecting everyone.
+# _ensure_crl() forks openssl, too heavy for every /sync/status poll — but a
+# boot-only check risks a total client lockout once the CRL lapses after
+# >1yr of uptime and crl-verify starts rejecting everyone.
 _CRL_CHECK_INTERVAL = 86400.0
 _crl_last_check = 0.0
 
@@ -80,9 +79,8 @@ def _ensure_crl_fresh_sync() -> None:
 async def _ensure_crl_fresh() -> None:
     """Daily CRL freshness check, off the event loop.
 
-    The check forks easyrsa (up to a 120s timeout). Run inline from the async
-    route it stalls the single uvicorn worker, so every other panel call —
-    usage, sessions, disconnect — queues behind certificate maintenance.
+    The easyrsa fork can take 120s; inline from the async route it stalls the
+    single uvicorn worker and every other panel call queues behind it.
     """
     await run_in_threadpool(_ensure_crl_fresh_sync)
 
@@ -90,10 +88,8 @@ async def _ensure_crl_fresh() -> None:
 def _resolve_identity(uid: str | None, name: str | None) -> str | None:
     """Resolve the OpenVPN client identity from a panel payload.
 
-    The panel prefers the numeric user id (``NodeRequests`` includes ``id``
-    whenever it is known) but may omit it, in which case the normalized
-    username becomes the identity — mirroring the panel's own
-    ``request.name.replace(" ", "_")`` normalization.
+    The panel may omit ``id``, in which case the normalized username becomes
+    the identity — mirroring the panel's own ``name.replace(" ", "_")``.
     """
     if uid:
         return validate_user_id(uid)
@@ -104,7 +100,7 @@ def _resolve_identity(uid: str | None, name: str | None) -> str | None:
 
 @router.get("/health", include_in_schema=False)
 async def health_check():
-    """Simple health check endpoint - no auth required for Docker healthcheck."""
+    """Docker healthcheck probe — no auth, so the container can poll it."""
     return {"status": "ok"}
 
 
@@ -115,11 +111,9 @@ async def get_status(
 ):
     """Node status — consumed by check_node()/get_node_info().
 
-    The panel frontend (NodeDrawer/NodeTable) and metrics snapshots read
-    ``cpu_usage``, ``memory_usage`` and ``cert_expiry`` from ``data``.
-    The remaining keys are additive diagnostics (current panels ignore
-    unknown keys): OpenVPN liveness, agent uptime and log-error counters,
-    so node health is visible from the panel side without SSH.
+    The panel reads ``cpu_usage``, ``memory_usage`` and ``cert_expiry`` from
+    ``data``; the remaining keys are additive diagnostics (panels ignore
+    unknown keys) so node health is visible without SSH.
     """
     from core.openvpn.control import openvpn_is_running
 
@@ -141,11 +135,10 @@ async def get_status(
         }
     )
     status.update(log_stats())
-    # TLS certificate expiry (ISO date) when the node serves HTTPS — lets the
-    # panel warn before the certificate lapses and breaks node connectivity.
+    # TLS cert expiry, so the panel can warn before connectivity breaks.
     status["cert_expiry"] = _cert_expiry()
-    # VPN PKI expiries (CA 10y, server 5y): the panel can't see these
-    # otherwise, and a lapsed CA/server cert silently kills every client.
+    # VPN PKI expiries (CA 10y, server 5y): a lapsed CA or server cert
+    # silently kills every client and the panel cannot see them otherwise.
     status["ca_expiry"], status["server_expiry"] = _pki_expiry()
     await _ensure_crl_fresh()
     return ResponseModel(success=True, msg="Node status retrieved successfully", data=status)
@@ -159,8 +152,7 @@ async def get_logs(
 ):
     """Recent node log records (in-memory ring buffer) — remote diagnostics.
 
-    Consumed by the panel's node log viewer; exists so an operator (or a future
-    panel version) can inspect a node's errors without SSH:
+    Read by the panel's node log viewer; also usable by hand:
 
         curl -H "key: $API_KEY" https://node:2083/sync/logs?level=ERROR
     """
@@ -172,20 +164,15 @@ async def get_logs(
     )
 
 
-# openssl fork per call is too heavy for a /sync/status poll cadence, but a
-# cert lasts years — cache for a day (same idea as the CRL daily check).
-# Manual cert replacement becomes visible within 24h at most.
+# An openssl fork per call is too heavy for the /sync/status cadence, but a
+# cert lasts years — a manual replacement shows up within 24h.
 _CERT_EXPIRY_TTL = 86400.0
 _cert_expiry_cached: str | None = None
 _cert_expiry_checked_at = 0.0
 
 
 def _cert_expiry() -> str | None:
-    """Return the server certificate expiry as an ISO date, or None.
-
-    Reads the configured SSL cert file and parses its notAfter value.
-    Returns None when TLS is not configured or the cert is unreadable.
-    """
+    """Server TLS certificate notAfter as an ISO date, or None when unreadable."""
     global _cert_expiry_cached, _cert_expiry_checked_at
     now = time.monotonic()
     if now - _cert_expiry_checked_at < _CERT_EXPIRY_TTL:

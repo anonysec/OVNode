@@ -1,18 +1,14 @@
 # Copyright (c) 2026 anonysec
 # SPDX-License-Identifier: MIT
 
-"""OVNode logging.
-
-One configuration, three sinks:
+"""OVNode logging: one configuration, three sinks.
 
 * rotating file  — ``data/app.log`` (5 MB × 3), full detail with module:line
 * stderr         — captured by journald/Docker, same records
-* ring buffer    — last 500 records in memory, powering ``GET /sync/logs``
-                   and the error counters in ``GET /sync/status`` so a node
-                   can be diagnosed from the panel side without SSH.
+* ring buffer    — last 500 records, powering ``GET /sync/logs`` and the error
+                   counters in ``GET /sync/status``
 
-Uvicorn is started with ``log_config=None`` so its loggers propagate here —
-every line of the process shares one format and one rotation policy.
+Uvicorn runs with ``log_config=None`` so its loggers propagate here.
 """
 
 import logging
@@ -66,11 +62,9 @@ def _build_handlers() -> list[logging.Handler]:
 
     handlers: list[logging.Handler] = []
 
-    # A missing or read-only log directory must cost us the file sink, not the
-    # process. Importing core.logger sits on every code path, so an OSError here
-    # would stop the node starting at all — the same reasoning as the ring
-    # buffer's "never let diagnostics break the caller". stderr and the ring
-    # still carry the records either way.
+    # A missing or read-only log directory must cost the file sink, not the
+    # process: importing core.logger sits on every code path. stderr and the
+    # ring still carry the records either way.
     try:
         os.makedirs(os.path.dirname(LOG_FILE), exist_ok=True)
         file_handler = RotatingFileHandler(
@@ -100,10 +94,9 @@ if not any(isinstance(h, _RingBufferHandler) for h in _root.handlers):
         _root.addHandler(_h)
 _root.setLevel(_LEVELS.get(settings.debug.upper(), logging.WARNING))
 
-# Single named logger used throughout the node
 logger = logging.getLogger("ovnode")
-# The node's own records are always kept (root level only gates third-party
-# noise): INFO like "user created" is exactly what /sync/logs is for.
+# The node's own records are always kept — the root level only gates
+# third-party noise, and INFO like "user created" is what /sync/logs is for.
 logger.setLevel(min(logging.INFO, _LEVELS.get(settings.debug.upper(), logging.WARNING)))
 
 

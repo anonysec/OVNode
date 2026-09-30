@@ -138,8 +138,8 @@ def test_tls_log_scan_reports_real_handshake_failures(monkeypatch, tmp_path):
 
 
 def test_tls_events_have_observed_times_without_log_stamps(monkeypatch, tmp_path):
-    """Our log carries no stamps (log-append + --suppress-timestamps), so the
-    agent must still give every event a real, stable time."""
+    """The OpenVPN log carries no stamps (log-append + --suppress-timestamps), so
+    the agent must still give every event a real, stable time."""
     monkeypatch.setattr(sessions, "_OPENVPN_ROOT", str(tmp_path))
     monkeypatch.setattr(sessions, "_STATE_DIR", str(tmp_path / "state"))
     (tmp_path / "server").mkdir()
