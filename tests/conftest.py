@@ -49,22 +49,37 @@ _REAL_PATHS_UNTOUCHED = (
 
 
 def _snapshot() -> dict:
+    """Name, size and mtime of everything under each path.
+
+    Deliberately not a content hash. `/var/backups` holds 59MB of tarballs, and
+    hashing every byte of it twice per session is both slow and a source of
+    flakes: a file being written by something else — including an OVManager
+    update on the same host — changes under the read, which is indistinguishable
+    from the suite having written it. Size and mtime catch the case that matters
+    (a test created, truncated or removed something) without either cost.
+    """
     import hashlib
 
     out = {}
     for raw in _REAL_PATHS_UNTOUCHED:
         path = Path(raw)
-        if not path.exists():
-            out[raw] = None
-            continue
-        digest = hashlib.sha256()
-        for item in sorted(path.rglob("*")):
-            if item.is_file():
-                digest.update(str(item).encode())
-                digest.update(item.read_bytes())
-            else:
-                digest.update(str(item).encode())
-        out[raw] = digest.hexdigest()
+        try:
+            if not path.exists():
+                out[raw] = None
+                continue
+            digest = hashlib.sha256()
+            for item in sorted(path.rglob("*")):
+                try:
+                    stat = item.stat()
+                    digest.update(f"{item}:{stat.st_size}:{stat.st_mtime_ns}".encode())
+                except OSError:
+                    # Vanished or unreadable between the walk and the stat. A
+                    # guard that raises here would fail the suite for something
+                    # it cannot attribute, which is worse than missing it.
+                    digest.update(f"{item}:unreadable".encode())
+            out[raw] = digest.hexdigest()
+        except OSError as exc:
+            out[raw] = f"unreadable: {exc}"
     return out
 
 

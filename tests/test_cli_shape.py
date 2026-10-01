@@ -541,3 +541,46 @@ def test_autostart_is_systemd_only_and_says_so():
     body = _body("node_autostart")
     assert "is_docker_node" in body
     assert "nothing to enable" in body.lower()
+
+
+# ── The docs must teach the commands that exist ──────────────────────────
+
+# The README documented `ovn credentials`, `ovn restart-vpn` and
+# `ovn auto-backup` as current while the short help listed neither.
+
+README = REPO / "README.md"
+
+
+def _prose_only(text: str) -> str:
+    if "### Retired names" in text:
+        return text.split("### Retired names")[0] + text.split("### `.env` is yours")[-1]
+    return text
+
+
+def test_the_readme_does_not_teach_retired_commands():
+    prose = _prose_only(README.read_text(encoding="utf-8"))
+    for name in ("ovn credentials", "ovn restart-vpn", "ovn auto-backup", "ovn recover-update"):
+        assert name not in prose, f"README still teaches `{name}`"
+
+
+def test_the_readme_documents_the_grouped_commands():
+    text = README.read_text(encoding="utf-8")
+    for name in ("ovn auth", "ovn auth key", "ovn auth rotate", "ovn restart core"):
+        assert name in text, f"README never mentions `{name}`"
+
+
+def test_the_readme_states_the_env_rule():
+    # Whitespace-normalised: the sentence is wrapped, and a line break in the
+    # middle of it must not decide whether the rule is documented.
+    text = " ".join(README.read_text(encoding="utf-8").split())
+    assert "ever edits it again" in text
+    assert "ovn config" in text
+    # And the reason a rotate prints instead of writing.
+    assert "prints the new key" in text
+
+
+def test_the_readme_does_not_claim_there_is_a_menu():
+    """Bare `ovn` prints a list and exits. A README that says otherwise sends
+    people looking for a menu that stopped existing."""
+    text = README.read_text(encoding="utf-8")
+    assert "numbered menu" not in text
