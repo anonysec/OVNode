@@ -207,6 +207,96 @@ node_name_from_env() {
     printf '%s' "${name:-ovnode}"
 }
 
+# The one answer to "where does this node keep its data".
+#
+# It used to be written as ${DATA_BASE}/${NODE_NAME} in seventeen places, and
+# that nesting was a layout for several nodes per host that nothing ever
+# implemented — there is one NODE_NAME, one service, one agent. A node's data
+# therefore belongs at the base, and the path belongs in one function so a layout
+# question is answered once rather than seventeen times.
+#
+# .env declares it, the same way it declares the certificate paths: an install
+# that already names a directory keeps it, and a fresh one gets the base. That
+# is also what makes the one-time migration in install.sh possible without this
+# file having to know it happened.
+node_data_dir() {
+    local declared
+    declared="$(env_get "$APP_DIR/.env" DATA_DIR)"
+    printf '%s' "${declared:-$DATA_BASE}"
+}
+
+# The pre-flatten location, when it holds anything. An install from before the
+# change has its data one level down and says so here, which is how the
+# migration finds it without a flag file.
+node_legacy_data_dir() { printf '%s/%s' "$DATA_BASE" "$(node_name_from_env)"; }
+
+# The flat layout's destination is always the base, and deliberately not
+# node_data_dir(). While the old declaration is still in .env that helper returns
+# the *old* path, so asking it where to migrate to answers "nowhere" and the
+# migration silently does nothing — which is exactly what it did the first time
+# this ran. The base is not a guess: it is what the flat layout means.
+migrate_flat_data_dir() {
+    local legacy node_data
+    legacy="$(node_legacy_data_dir)"
+    node_data="$DATA_BASE"
+    [[ "$legacy" != "$node_data" ]] || return 0
+    [[ -d "$legacy" ]] || return 0
+
+    local entry name clash=""
+    for entry in "$legacy"/* "$legacy"/.[!.]*; do
+        [[ -e "$entry" ]] || continue
+        name="$(basename "$entry")"
+        [[ -e "$node_data/$name" ]] && clash+=" $name"
+    done
+    if [[ -n "$clash" ]]; then
+        render_fail "flat data migration" "already present in $node_data:$clash — refusing to merge"
+        return 1
+    fi
+
+    mkdir -p "$node_data" || { render_fail "flat data migration" "could not create $node_data"; return 1; }
+    for entry in "$legacy"/* "$legacy"/.[!.]*; do
+        [[ -e "$entry" ]] || continue
+        cp -a "$entry" "$node_data/$(basename "$entry")" || {
+            render_fail "flat data migration" "could not copy $(basename "$entry")"
+            return 1
+        }
+    done
+    # Only now is the copy known complete, so the old directory can go.
+    rmdir "$legacy" 2>/dev/null || rm -rf "$legacy"
+
+    # And the declaration has to follow, or the agent comes back reading a
+    # directory that is no longer there. This is the installer editing .env,
+    # which is its job — install.sh already rewrites it during an update to
+    # strip retired keys. The operator CLI never touches it.
+    if [[ -f "$APP_DIR/.env" ]]; then
+        local tmp; tmp="$(mktemp "${APP_DIR}/.env.XXXXXX")" || {
+            render_fail "flat data migration" "could not stage $APP_DIR/.env"
+            return 1
+        }
+        if awk -v k=DATA_DIR -v v="$node_data" '
+            BEGIN { k = k; v = v; done = 0 }
+            index($0, k "=") == 1 { if (!done) { print k "=" v; done = 1 } ; next }
+            { print }
+            END { if (!done) print k "=" v }
+        ' "$APP_DIR/.env" > "$tmp" 2>/dev/null; then
+            chmod --reference="$APP_DIR/.env" "$tmp" 2>/dev/null || chmod 600 "$tmp"
+            chown --reference="$APP_DIR/.env" "$tmp" 2>/dev/null || true
+            mv -f "$tmp" "$APP_DIR/.env" || { rm -f "$tmp"; render_fail "flat data migration" "could not replace .env"; return 1; }
+        else
+            rm -f "$tmp"
+            render_fail "flat data migration" "could not rewrite DATA_DIR in .env"
+            return 1
+        fi
+    fi
+
+    render_ok "moved node data to $node_data"
+    render_kv "From" "$legacy"
+    render_kv "To"   "$node_data"
+    render_line "    DATA_DIR in $APP_DIR/.env now points there; the old directory is gone"
+    return 0
+}
+
+
 systemctl_bounded() {  # systemctl_bounded stop|restart <unit>
     local action="$1" unit="$2"
     # Not loaded (Docker install, or NAT unit absent): nothing to do.
@@ -434,5 +524,5 @@ latest_snapshot() {  # latest_snapshot <label> → prints newest code snapshot o
 # ── Host / install-mode probes ─────────────────────────────────────────
 check_root() { [[ "$EUID" -eq 0 ]] || die "Must run as root."; }
 has_systemd() { command -v systemctl >/dev/null 2>&1 && [[ -d /run/systemd/system ]]; }
-compose_file() { echo "$DATA_BASE/${NODE_NAME:-ovnode}/docker-compose.yml"; }
+compose_file() { echo "$(node_data_dir)/docker-compose.yml"; }
 is_docker_node() { [[ -f "$(compose_file)" ]]; }

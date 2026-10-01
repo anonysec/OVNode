@@ -140,7 +140,7 @@ do_status() {
         port="$(env_get "$APP_DIR/.env" SERVICE_PORT)"; : "${port:=$DEFAULT_PORT}"
         tls="$(env_get "$APP_DIR/.env" TLS_METHOD)"; : "${tls:=selfsigned}"
         mode="native"
-        [[ -f "$DATA_BASE/$node/docker-compose.yml" ]] && mode="docker"
+        [[ -f "$(node_data_dir)/docker-compose.yml" ]] && mode="docker"
 
         agent_version="$(grep -Eo '"[0-9]+\.[0-9]+\.[0-9]+"' "$APP_DIR/core/version.py" 2>/dev/null | head -1 | tr -d '"' || true)"
 
@@ -180,7 +180,7 @@ do_status() {
             render_kv "TLS"       "$tls"
             # The two rows a task-ordered success card offloads here. Labels copied
             # from install.sh's shared summary card so the card and --all cannot drift.
-            render_kv "Data"        "$DATA_BASE/$node"
+            render_kv "Data"        "$(node_data_dir)"
             render_kv "OpenVPN cfg" "$OPENVPN_ROOT/server"
         fi
     else
@@ -554,7 +554,7 @@ node_tls_install_to_declared() {
 do_rollback() {
     [[ -d "$APP_DIR" ]] || die "Not installed ($APP_DIR missing)" "$EX_NOTINSTALLED"
     # An interrupted transaction owns recovery: rollback must not fight it.
-    if [[ -f "$DATA_BASE/$(node_name_from_env)/update-maintenance" ]]; then
+    if [[ -f "$(node_data_dir)/update-maintenance" ]]; then
         die "An update transaction is interrupted — run: ovn recover-update" "$EX_ERROR"
     fi
     local snap

@@ -763,7 +763,7 @@ IMAGE_REPO="ghcr.io/${REPO,,}"
 # dir so the agent sees the same file the installer writes. Staging and
 # previous live beside the app.
 UPDATE_STATE="${DATA_BASE}/update-state.json"
-update_marker() { printf '%s' "${DATA_BASE}/${NODE_NAME:-ovnode}/update-maintenance"; }
+update_marker() { printf '%s/update-maintenance' "$(node_data_dir)"; }
 UPDATE_STAGE="$(dirname "$APP_DIR")/.ovnode.staging"
 UPDATE_PREVIOUS="$(dirname "$APP_DIR")/.ovnode.previous"
 OP_LOCK="${DATA_BASE}/.operation.lock"
@@ -866,7 +866,7 @@ fetch_source() {
 # tarball; state_restore consumes it after verification.
 state_safety_bundle() {
     local from_version="$1" backup_root="/var/backups"
-    local node_data="${DATA_BASE}/${NODE_NAME}"
+    local node_data; node_data="$(node_data_dir)"
     mkdir -p "$backup_root" "$node_data"
     python3 - "$APP_DIR" "$node_data" "$OPENVPN_ROOT" "$backup_root" "$NODE_NAME" "$from_version" <<'PY' || return 1
 import hashlib, json, os, sys, tarfile, tempfile
@@ -1013,9 +1013,14 @@ node_api_status() {
 write_env() {
     # TUNNEL_ADDRESS is deliberately not written here: the node's pydantic
     # Settings rejects extra env fields, and the panel pushes it via /sync/config.
+    #
+    # DATA_DIR is resolved through node_data_dir() so the file, the Docker
+    # volume and the installer's own bookkeeping cannot disagree about the path.
+    # On a fresh install there is no .env yet, so the helper falls back to the
+    # base — which is the flat layout this now uses.
     cat > "$APP_DIR/.env" << EOF
 NODE_NAME=${NODE_NAME}
-DATA_DIR=${DATA_BASE}/${NODE_NAME}
+DATA_DIR=$(node_data_dir)
 SERVICE_PORT=${PORT}
 API_KEY=${API_KEY}
 OPENVPN_PORT=${VPN_PORT}
@@ -1074,7 +1079,7 @@ write_compose_file() {
     local compose tag
     compose="$(compose_file)"
     tag="${IMAGE_TAG:-$VERSION}"
-    mkdir -p "$DATA_BASE/$NODE_NAME"
+    mkdir -p "$(node_data_dir)"
 
     # TLS material lives on host paths; mount read-only or the agent cannot
     # serve HTTPS. Let's Encrypt needs the whole tree: live/ symlinks archive/.
@@ -1108,7 +1113,7 @@ $( [[ -n "$TLS_KEY" ]] && echo "      SSL_KEYFILE: ${TLS_KEY}" )
 $( [[ -n "$TLS_CERT" ]] && echo "      SSL_CERTFILE: ${TLS_CERT}" )
     volumes:
       - ${OPENVPN_ROOT}:/etc/openvpn
-      - ${DATA_BASE}/${NODE_NAME}:/app/data
+      - $(node_data_dir):/app/data
       - /dev/net/tun:/dev/net/tun
 $( [[ -n "$tls_mounts" ]] && printf '%s' "$tls_mounts" )
     cap_add:
@@ -1150,7 +1155,7 @@ do_install() {
     [[ "$TLS_METHOD" != "none" ]] && scheme="https"
     local host; host="$(primary_ip)"
 
-    mkdir -p "$DATA_BASE/$NODE_NAME"
+    mkdir -p "$(node_data_dir)"
     ensure_openvpn_dirs
 
     render_begin "runtime" 6
@@ -1235,7 +1240,7 @@ node_success_card() {
     render_card "ready" "api key" "${API_KEY}${key_note}" \
         "node|$where" \
         "tls|$(tls_summary)" \
-        "data|$DATA_BASE/$NODE_NAME" \
+        "data|$(node_data_dir)" \
         "logs|$CLI_ALIAS logs -f"
     render_line "  $(printf '%slost it?  %s credentials%s' "$GY" "$CLI_ALIAS" "$NC")"
     render_line "  $(printf '%bpanel%s  Nodes → Add Node → paste the bundle below' "$GY" "$NC")"
@@ -1264,6 +1269,29 @@ do_update() {
     check_root
     operation_begin update
     trap operation_end EXIT
+
+    # Flatten the data directory, before the .env is re-read or the safety
+    # bundle is taken. Both need to see the new location, and the bundle is the
+    # last thing standing between a failed migration and a lost node — so it has
+    # to be taken after, not before.
+    #
+    # Done here, in the installer, rather than in `ovn`: install.sh is what owns
+    # .env, and the operator CLI never edits it.
+    node_env_before_migration="$(env_get "$APP_DIR/.env" DATA_DIR)"
+    flat_migration_needed=0
+    if [[ -n "$node_env_before_migration" && "$node_env_before_migration" != "$DATA_BASE" ]]; then
+        flat_migration_needed=1
+    fi
+    if (( flat_migration_needed )); then
+        render_begin "migrate data" 6
+        if migrate_flat_data_dir; then
+            render_done "data directory flattened"
+        else
+            render_end
+            die "Could not move the node data to $DATA_BASE — nothing was changed"
+        fi
+    fi
+
     # Recover install parameters from .env so `update` never silently changes
     # the configuration.
     local env_get; env_get() { grep -E "^$1=" "$APP_DIR/.env" 2>/dev/null | head -1 | cut -d= -f2- | tr -d '"' || true; }
@@ -1913,7 +1941,7 @@ main() {
     render_kv "node" "$(printf '%s· systemd on this box' "$PORT")"
     render_kv "vpn" "$(vpn_ports_label)/$VPN_PROTO"
     render_kv "tls" "$TLS_METHOD"
-    render_kv "data" "$DATA_BASE/$NODE_NAME"
+    render_kv "data" "$(node_data_dir)"
     render_blank
 
     do_install

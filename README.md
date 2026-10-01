@@ -157,7 +157,7 @@ If the card shows a private address (`10.x`, `192.168.x`), the server is behind 
 | `/opt/ovnode/.env` | Runtime settings — port, VPN pool, DNS, extra ports, IPv6, runtime user |
 | `/etc/openvpn/server` | `server.conf`, the PKI and the OpenVPN logs |
 | `/etc/openvpn/ovnode` | Per-user folders, session markers, usage counters and the hooks |
-| `/var/lib/ovnode/<name>` | The agent's own data, under the node's `--name` |
+| `/var/lib/ovnode` | The agent's own data. `DATA_DIR` in `.env` names it |
 | `/var/backups` | Backup archives written by `ovn backup` |
 
 The agent's runtime settings use `OVNODE_*` names and live in `/opt/ovnode/.env`; they are separate from the installer's `OVN_*` variables above. Every one is documented in [.env.example](.env.example).
@@ -234,6 +234,12 @@ These still work, unchanged. Nothing warns — a deprecation line on every night
 The installer writes `.env` once, at install, and **nothing in `ovn` ever edits it again** — not `ovn auth rotate`, not `ovn tls`. Edit it freely; changes take effect on `ovn restart`. `ovn config` prints every effective setting and its source.
 
 That is why `ovn auth rotate` prints the new key and the line to change rather than making the change: a command that quietly rewrote the file would mean the `.env` in your backups is not the one you last edited.
+
+Node data lives at `/var/lib/ovnode`, and `DATA_DIR` in `.env` names it. Older
+installs kept it one level down at `/var/lib/ovnode/<name>` — a layout for several
+nodes on one host that nothing ever implemented. `ovn update` moves it up and
+repoints `DATA_DIR`; it refuses rather than merging if both directories hold the
+same file, and it is a no-op on an install that is already flat.
 
 The API key lives in `.env`, not in the panel. It is printed by the installer and by `ovn auth key`; neither can be recovered elsewhere, so losing `.env` means re-enrolling the node. The node keeps its own certificate in `/etc/ovnode/tls` (or wherever `SSL_KEYFILE` says) rather than in `/etc/ssl/self-signed`, which is shared with an OVManager panel on the same host.
 

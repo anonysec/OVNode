@@ -514,7 +514,16 @@ def test_default_node_name_is_ovnode():
     assert "OVN_NAME, ovnode]" in content
     assert 'ask "Node name"' not in content
     # The fallback still has to hold where the name is read back off disk.
-    assert "${NODE_NAME:-ovnode}" in content
+    # The fallback used to be inlined wherever the name was read back off disk.
+    # It is now node_name_from_env() in common.sh — one place, so the data
+    # directory and the compose file cannot disagree about the default.
+    common = (Path(__file__).resolve().parent.parent / "scripts" / "lib" / "common.sh").read_text(
+        encoding="utf-8"
+    )
+    assert '${name:-ovnode}' in common
+    lines = common.splitlines()
+    start = next(i for i, ln in enumerate(lines) if ln.startswith("node_name_from_env()"))
+    assert "NODE_NAME" in "\n".join(lines[start : start + 4])
 
 
 def test_detect_os_preserves_app_version(tmp_path):
