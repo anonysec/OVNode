@@ -52,10 +52,60 @@ def test_entry_points_are_not_lib_functions():
 
 
 def test_lib_defines_what_the_manager_calls():
-    """kv() prints the TLS menu's rows and node_name_from_env() feeds it.
-    Both are lib-only, so nothing else would notice them going missing."""
+    """render_kv() prints the TLS menu's rows and node_name_from_env() feeds it.
+    Both are lib-only, so nothing else would notice them going missing.
+
+    kv became render_kv when output moved to render.sh: it was a fifth copy of
+    the same label/value idea, at a different column width."""
     lib_names = set().union(*(_defines(path) for path in LIBS))
-    assert {"kv", "node_name_from_env"} <= lib_names
+    assert {"render_kv", "node_name_from_env"} <= lib_names
+
+
+def test_the_retired_output_helpers_are_gone():
+    """Nothing may reintroduce the old vocabulary.
+
+    line/step/info/warn/field/sep/kv each printed a glyph or a colour inline,
+    which is the duplication render.sh exists to remove: the node card and the
+    panel card were two copies of one idea, and they had already drifted.
+
+    The match is a single-pass command-boundary pattern. It used to be
+    ``^\\s*(?:[^#\\n]*?(?:&&|\\|\\||\\{|;)\\s*)*NAME`` — a lazy ``*?`` inside a
+    ``*``, exponential in the number of separators on a line, which cost 8.9s
+    here. It was also *wrong*: it could not match ``then step``, so a retired
+    helper called after `then` slipped through. On the panel the same broken
+    pattern was hiding a live `step` call in backup.sh.
+    """
+    import re
+
+    retired = ("step", "info", "warn", "field", "sep", "kv", "line", "spinner")
+    offenders = {}
+    for path in FILES:
+        if path.name == "render.sh":
+            continue
+        hits = {}
+        for name in retired:
+            pat = re.compile(r"(?:^|[;&|{()\s])" + re.escape(name) + r'\s+(?:"|\$\(|e )')
+            found = [
+                i
+                for i, ln in enumerate(path.read_text(encoding="utf-8").splitlines(), 1)
+                if pat.search(ln.split("#", 1)[0])
+            ]
+            if found:
+                hits[name] = found
+        if found_hits := hits:
+            offenders[path.name] = found_hits
+    assert not offenders, f"retired output helpers back in use: {offenders}"
+
+
+def test_the_installer_fetches_render_sh():
+    """render.sh has to be in LIB_FILES, or a curl-piped install sources the old
+    common.sh and then dies on the first render_* call — after the installer has
+    already started changing the box."""
+    import re
+
+    listed = re.search(r"^LIB_FILES=\(([^)]*)\)", INSTALLER.read_text(encoding="utf-8"), re.M)
+    assert listed, "install.sh no longer declares LIB_FILES"
+    assert "render.sh" in listed.group(1), listed.group(1)
 
 
 def test_the_installer_names_every_lib():
