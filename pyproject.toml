@@ -30,6 +30,12 @@ asyncio_mode = "auto"
 testpaths = ["tests"]
 pythonpath = ["."]
 
+[tool.pyright]
+# Resolve third-party imports against the project venv. Without this pyright
+# falls back to its own interpreter and reports every dependency as missing.
+venvPath = "."
+venv = ".venv"
+
 [tool.ruff]
 line-length = 100
 target-version = "py312"
