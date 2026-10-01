@@ -295,7 +295,7 @@ def test_a_plain_line_between_the_block_and_the_card_keeps_the_block_intact():
     script = (
         'render_begin "a" 2; render_done "" 100\n'
         'render_begin "b" 2; render_watch; sleep 0.35; render_done "" 200\n'
-        'render_blank\n'
+        "render_blank\n"
         'render_warn "a caveat"\n'
         'render_card "ready" "setup key" "K" "logs|ovm logs -f"\n'
     )
@@ -421,9 +421,7 @@ def test_a_failure_is_one_line_with_the_cause():
 
 
 def test_failure_is_ascii_too():
-    out = strip(
-        run('render_begin "v" 1; render_fail "v" "boom"', tty=False, LC_ALL="C")
-    )
+    out = strip(run('render_begin "v" 1; render_fail "v" "boom"', tty=False, LC_ALL="C"))
     assert "XX" in out
     assert "boom" in out
 
@@ -626,7 +624,7 @@ def test_non_tty_text_matches_tty_text_exactly():
         'render_begin "preflight" 3; render_done "debian 12 · 14G free" 412\n'
         'render_begin "release" 3; render_watch; sleep 0.3; render_done "38.0 MB" 9100\n'
         'render_begin "health" 3; render_done "200 in 41ms" 6900\n'
-        f'{CARD}\n'
+        f"{CARD}\n"
     )
     piped = [ln.rstrip() for ln in strip(run(script, tty=False)).splitlines() if ln.strip()]
     drawn = [ln.rstrip() for ln in screen(run_pty(script)) if ln.strip()]

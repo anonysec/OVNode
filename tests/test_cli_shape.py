@@ -239,7 +239,7 @@ def test_doctor_exits_non_zero_on_problems():
     body = _body("do_doctor", LIB)
     assert "doctor_render || rc=1" in body
     with open(MANAGER, encoding="utf-8") as f:
-        assert "doctor) do_doctor || rc=$?; exit \"$rc\" ;;" in f.read()
+        assert 'doctor) do_doctor || rc=$?; exit "$rc" ;;' in f.read()
 
 
 def test_doctor_survives_the_err_trap():
@@ -489,7 +489,7 @@ def test_the_api_key_is_never_printed_where_it_does_not_belong():
     # The control flow, not a string: API_KEY has to be matched before the
     # branch that prints every other value, or the guarantee is only a comment.
     api_key_arm = body.index("API_KEY)")
-    fallback = body.index('*)')
+    fallback = body.index("*)")
     assert api_key_arm < fallback, "the API_KEY arm must come before the print-everything branch"
 
 

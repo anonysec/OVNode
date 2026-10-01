@@ -520,7 +520,7 @@ def test_default_node_name_is_ovnode():
     common = (Path(__file__).resolve().parent.parent / "scripts" / "lib" / "common.sh").read_text(
         encoding="utf-8"
     )
-    assert '${name:-ovnode}' in common
+    assert "${name:-ovnode}" in common
     lines = common.splitlines()
     start = next(i for i, ln in enumerate(lines) if ln.startswith("node_name_from_env()"))
     assert "NODE_NAME" in "\n".join(lines[start : start + 4])

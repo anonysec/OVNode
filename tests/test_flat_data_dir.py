@@ -214,9 +214,16 @@ def test_node_data_dir_prefers_the_declaration(tmp_path):
     that names a directory keeps it."""
     app = _install(tmp_path, data_dir="/somewhere/custom")
     out = subprocess.run(
-        ["bash", "-c", f'APP_DIR={app} DATA_BASE={tmp_path}/data\n'
-                      f'. "{app}/scripts/lib/common.sh"; node_data_dir'],
-        capture_output=True, text=True, timeout=30, env={**os.environ, "NO_COLOR": "1"},
+        [
+            "bash",
+            "-c",
+            f"APP_DIR={app} DATA_BASE={tmp_path}/data\n"
+            f'. "{app}/scripts/lib/common.sh"; node_data_dir',
+        ],
+        capture_output=True,
+        text=True,
+        timeout=30,
+        env={**os.environ, "NO_COLOR": "1"},
     )
     assert out.stdout.strip() == "/somewhere/custom", out.stdout + out.stderr
 
@@ -225,9 +232,16 @@ def test_node_data_dir_falls_back_to_the_base(tmp_path):
     app = _install(tmp_path)
     (app / ".env").unlink()
     out = subprocess.run(
-        ["bash", "-c", f'APP_DIR={app} DATA_BASE={tmp_path}/data\n'
-                      f'. "{app}/scripts/lib/common.sh"; node_data_dir'],
-        capture_output=True, text=True, timeout=30, env={**os.environ, "NO_COLOR": "1"},
+        [
+            "bash",
+            "-c",
+            f"APP_DIR={app} DATA_BASE={tmp_path}/data\n"
+            f'. "{app}/scripts/lib/common.sh"; node_data_dir',
+        ],
+        capture_output=True,
+        text=True,
+        timeout=30,
+        env={**os.environ, "NO_COLOR": "1"},
     )
     assert out.stdout.strip() == f"{tmp_path}/data", out.stdout + out.stderr
 
