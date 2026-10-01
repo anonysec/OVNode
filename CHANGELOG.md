@@ -1,6 +1,52 @@
 # Changelog
 
-## 1.0.0 — 2026-09-29
+## 1.0.1 — 2026-10-01
+
+The panel's shape, and a data directory that matches the name.
+
+**A bare install is interactive**
+
+The installer read a missing terminal as "no questions wanted" and installed
+anyway, reporting success for choices nobody made. A bare run is now interactive
+unconditionally and stops without a terminal, naming `-y`. `update`, `uninstall`,
+`recover-update` and `repair-unit` were never prompted and are unchanged. Bad
+input is still reported as bad input.
+
+**CLI**
+
+- Bare `ovn` prints thirteen verbs and exits, like `ovm`. It used to open a
+  numbered menu on a tty and die without one, so a provisioning script either
+  hung or looked broken. The menu was also a second hand-maintained list of the
+  tool's own commands.
+- `ovn doctor` collects then renders: failures first, each fix in the label's
+  column, passes counted, a clean run one line. `--all` works — it was in the
+  help and did nothing.
+- `credentials` is now `auth`; `restart-vpn` is now `restart core`.
+
+**Fixed**
+
+The node wrote its self-signed certificate to `/etc/ssl/self-signed` and
+`chmod 600`'d the key. That is the panel's certificate directory on a shared
+host, and 600 drops the group read the panel's service account needs. The node
+now uses `/etc/ovnode/tls`. Two guards: the shared path appears nowhere in the
+generator, and a session fixture fails the suite if it touches
+`/etc/ssl/self-signed`, `/var/lib/ovnode`, `/etc/openvpn` or `/var/backups`.
+
+Three commands shipped broken and every test passed, because the tests read the
+source instead of running the command. Running every verb is now a test.
+
+**Data directory**
+
+`/var/lib/ovnode`, not `/var/lib/ovnode/<name>` — the nesting was a layout for
+several nodes on a host that nothing implemented. `ovn update` migrates existing
+installs before re-reading `.env`, copies rather than moves, and refuses to merge
+rather than guessing which copy is live.
+
+**Suite**
+
+442 pass.
+
+## 1.0.0 — 2026-09-29 — 2026-09-29
 
 First public release. One installer, one manager, and one copy of the shell
 helpers they share.
