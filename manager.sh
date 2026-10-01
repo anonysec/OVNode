@@ -338,7 +338,7 @@ restore_target_dir() {
     esac
 }
 
-# Restore one data backup over the current state. Never unattended: the
+# Restore one data backup over the current state. Never automatic: the
 # confirmation defaults to NO, and the current state is copied to a fresh
 # backup first, so a restore that goes wrong is undone by restoring that copy.
 do_restore() {

@@ -1,7 +1,7 @@
 # Copyright (c) 2026 anonysec
 # SPDX-License-Identifier: MIT
 
-"""Behavioral tests for install.sh's unattended interface (no root needed).
+"""Behavioral tests for install.sh's non-interactive interface (no root needed).
 
 These exercise the paths scripts rely on: argument/env parsing, validation
 and the documented exit codes. They never get past validation/root checks,

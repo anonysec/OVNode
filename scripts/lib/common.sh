@@ -95,7 +95,7 @@ ask() {
     echo "${val:-$default}"
 }
 
-# confirm <question> [default] — default is y, which is what an unattended run
+# confirm <question> [default] — default is y, which is what a run with no
 # gets. A destructive caller must pass n: with no terminal nobody can answer, and
 # answering yes on their behalf would replace live data from a cron or CI run.
 confirm() {

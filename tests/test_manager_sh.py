@@ -415,7 +415,7 @@ def test_the_api_key_is_printed_whatever_the_output_mode():
 
     The old -q path printed the card's shape without the key and added a line
     naming `ovn credentials`. That is a credential nobody ever saw, on a run
-    that was explicit about being unattended: the key exists nowhere else. One
+    that was explicit about running with no terminal: the key exists nowhere else. One
     renderer, one output, and the key is in it.
     """
     source = INSTALLER.read_text(encoding="utf-8")
