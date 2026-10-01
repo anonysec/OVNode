@@ -26,14 +26,18 @@ jobs:
         uses: docker/setup-buildx-action@v3
 
       # GITHUB_TOKEN can only write to a package that is *linked* to the repo
-      # this workflow runs for. ghcr.io/anonysec/ovmanager and .../ovnode are
-      # user-owned packages with no repository linked, so every push to main
-      # died with "denied: permission_denied: write_package" while the build
-      # itself succeeded — the failure looked like a build problem and was not.
+      # this workflow runs for, so if a package is ever deleted and recreated
+      # outside a workflow the link is lost and every push to main fails with
+      # "denied: permission_denied: write_package" — while the build succeeds,
+      # so the log reads like a build problem and is not one. That is what
+      # happened here until 1 October 2026: both packages were user-owned and
+      # unlinked, and the publish had been broken on every push since 30
+      # September. They are linked now, verified through the API, and no
+      # credential is stored in this repository.
       #
-      # A registry token, when the repository has one, is used instead. Without
-      # it the workflow still logs in as before and fails the same way, which is
-      # the honest outcome: it will not silently publish to the wrong place.
+      # The token override is kept as the way out if that link is ever lost
+      # again. It is deliberately unset: a token with write:packages is also a
+      # token that can publish anything, and GITHUB_TOKEN cannot.
       - name: Log in to GitHub Container Registry
         uses: docker/login-action@v3
         with:
