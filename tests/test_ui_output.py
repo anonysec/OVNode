@@ -89,7 +89,14 @@ def run_pty(script: str, *, stdin_pipe: bool = False, **env: str) -> str:
             stdin=subprocess.PIPE if stdin_pipe else subprocess.DEVNULL,
             stdout=subprocess.DEVNULL,
             stderr=slave,
-            env={**os.environ, **env},
+            # TERM is set here rather than inherited. render.sh gates motion on
+            # ${TERM:-dumb}, so a runner with no TERM — which is what GitHub's
+            # non-interactive steps are — gets every test below passing on a
+            # developer terminal and failing in CI, with the message "no
+            # repaint happened at all" for a repaint that was never going to be
+            # attempted. These tests are about what a terminal draws, so they ask
+            # for a terminal.
+            env={"TERM": "xterm-256color", **os.environ, **env},
         )
         os.close(slave)
         chunks = []
