@@ -30,6 +30,9 @@ docker-compose.yml
 *.md
 LICENSE
 
+# Agent configuration — never part of a build context
+.claude
+
 # Editor / OS
 .idea
 .vscode

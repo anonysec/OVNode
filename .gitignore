@@ -59,5 +59,7 @@ scripts/openapi.json
 # runtime log + node state written beside the source (core/logger.py uses <repo>/data)
 /data/
 
-# Claude Code — personal overrides; .claude/settings.json is shared and tracked
-.claude/settings.local.json
+# Claude Code — local agent configuration, hooks and project skills. These were
+# tracked (settings.json, hooks/ruff-on-edit.py, skills/*/SKILL.md); the whole
+# directory is ignored now, so a fresh clone gets no agent files at all.
+.claude/
