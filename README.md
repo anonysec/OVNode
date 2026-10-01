@@ -104,7 +104,7 @@ To answer every setting yourself, run the wizard instead:
 bash <(curl -sSL https://raw.githubusercontent.com/anonysec/OVNode/main/install.sh) interactive
 ```
 
-**Unattended**, for scripts and CI — the three flags are `-y/--yes`, `--docker` and `-h/--help`, and everything else is an `OVN_*` variable:
+**With no terminal** — a run without one cannot ask, so it needs `-y` to say that is intended. The three flags are `-y/--yes`, `--docker` and `-h/--help`, and everything else is an `OVN_*` variable:
 
 ```bash
 curl -fsSL https://raw.githubusercontent.com/anonysec/OVNode/main/install.sh -o install.sh
@@ -126,7 +126,7 @@ OVN_NAME=eu-1 OVN_VPN_PORTS=1194,443,8443 OVN_IPV6=1 bash install.sh -y
 | `OVN_QUIET` | off | `1` suppresses progress logs |
 | `OVN_REPO` | `anonysec/OVNode` | Pull releases from a fork |
 
-An unattended install never prompts — `-y`, or simply no terminal — and reports its outcome as an exit code, so a script branches on `$?` instead of parsing output:
+A run with `-y` never prompts and reports its outcome as an exit code, so a script branches on `$?` instead of parsing output. A run *without* `-y` and without a terminal stops and says so, rather than picking answers for you:
 
 ```text
 0 ok · 1 error · 2 usage error · 3 already installed · 4 not installed

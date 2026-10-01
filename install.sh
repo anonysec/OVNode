@@ -6,14 +6,14 @@
 #
 #   zero-question: bash <(curl -Ls URL)
 #   wizard       : bash <(curl -Ls URL) interactive
-#   unattended   : OVN_KEY=... OVN_VPN_PORTS=1194,443 bash <(curl -Ls URL) -y
+#   no terminal  : OVN_KEY=... OVN_VPN_PORTS=1194,443 bash <(curl -Ls URL) -y
 #
 # Commands: install (default) | update | recover-update | repair-unit |
 #           uninstall | interactive | version-script | help
 # Modes   : host (systemd, default) | --docker (see docker/entrypoint.sh)
 # Day-to-day ops (status, logs, backup, TLS, completion) live in the manager: ovn.
 #
-# Unattended: -y never prompts (implied by no TTY), OVN_* env vars mirror
+# Non-interactive: -y never prompts, OVN_* env vars mirror
 # every setting, CLI wins. Exit codes: 0 ok · 1 error · 2 usage ·
 # 3 already installed · 4 not installed. Everything else is in --help.
 
@@ -210,7 +210,7 @@ print_script_version() {
 
 show_help() {
     cat << EOF >&2
-  OVNode installer — host (systemd) or Docker, interactive or unattended.
+  OVNode installer — host (systemd) or Docker. Interactive unless you pass -y.
 
   Usage:
     bash <(curl -Ls URL) [command] [flags]
@@ -274,7 +274,7 @@ show_help() {
     0 success · 1 error · 2 usage error · 3 already installed ·
     4 not installed
 
-  Unattended example (never prompts; branch on the exit code):
+  Without a terminal (never prompts; branch on the exit code):
     OVN_KEY="\$API_KEY" bash install.sh -y
 EOF
     exit "$EX_OK"
@@ -324,8 +324,6 @@ parse_args() {
             *)            die "Unknown option: $1 (--help for usage)" "$EX_USAGE" ;;
         esac
     done
-    # No TTY = nobody to answer prompts: behave as --yes.
-    is_tty || YES=1
 }
 
 # ── Validation ─────────────────────────────────────────────────────────
@@ -1716,11 +1714,11 @@ dir_size() {
 # else — the VPN transport, the deployment mode — is either chosen on the front
 # door menu or owned by the panel.
 #
-# The transport used to be asked here and defaulted to UDP interactively while
-# unattended installs silently got TCP. One question with two possible defaults
-# is a question with a bug in it, and the panel can change the transport on a
-# live node (POST /sync/config rewrites proto and restarts OpenVPN), so the
-# installer only has to write something valid to start from.
+# The transport used to be asked here and got UDP when a person answered and TCP
+# when nobody did. One question with two possible defaults is a question with a
+# bug in it, and the panel can change the transport on a live node (POST
+# /sync/config rewrites proto and restarts OpenVPN), so the installer only has to
+# write something valid to start from.
 interactive_setup() {
     render_screen
     render_line "  $(printf '%bport%s' "$B" "$NC")"
@@ -1932,6 +1930,20 @@ main() {
         [[ -n "$API_KEY" ]] || generate_api_key
     fi
     validate_input
+
+    # A bare run is interactive, full stop. It used to be "no questions because
+    # there is no terminal", and that inference installed things nobody chose and
+    # then reported success — the one outcome a silent default must never
+    # produce. With no terminal there is nobody to answer, so say so and name the
+    # flag rather than deciding on their behalf.
+    #
+    # After validate_input on purpose. A bad value should be reported as the bad
+    # value: `OVN_TLS=none` with no terminal is a plain-HTTP error, not a
+    # complaint about the terminal. Checked in parse_args it masked every
+    # validation message behind this one.
+    if [[ "$YES" -eq 0 ]] && ! is_tty; then
+        die "No interactive terminal. The default install asks questions; pass -y to accept the defaults without them." "$EX_USAGE"
+    fi
 
     # One line, not a nine-row card. A mistyped port or the wrong transport is
     # the thing worth catching before the box changes, and both fit in a line

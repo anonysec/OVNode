@@ -875,3 +875,40 @@ def test_no_extra_install_confirmation():
     assert "this will install" in content
     for retired in ('render_kv "OS"', 'render_kv "Version"', 'render_kv "Install"'):
         assert retired not in content, retired
+
+
+class TestBareRunIsInteractive:
+    """A run with no flags and no terminal must not decide anything itself.
+
+    The installer used to read a missing terminal as "no questions wanted" and
+    install anyway, reporting success for choices nobody made. Now it stops and
+    names the flag. Two properties matter and they pull in opposite directions,
+    so both are pinned here.
+    """
+
+    def test_a_bare_run_with_no_terminal_refuses(self, tmp_path):
+        r = sh(env={"OVN_APP_DIR": str(tmp_path / "empty")})  # stdin closed
+        assert r.returncode != 0
+        assert "No interactive terminal" in r.stderr, r.stderr
+        assert "-y" in r.stderr, "the refusal must name the flag that changes it"
+
+    def test_a_bad_value_is_reported_as_the_bad_value(self, tmp_path):
+        """Ordering: validate first, then complain about the terminal.
+
+        The check sat in parse_args at first, so every validation message was
+        masked by it — `OVN_TLS=none` came back as "no interactive terminal",
+        which is true and useless. The thing the operator typed wrong is the
+        thing they need to hear.
+        """
+        r = sh(
+            "-p",
+            "0123456789abcdef",
+            env={"OVN_APP_DIR": str(tmp_path / "empty"), "OVN_TLS": "none"},
+        )
+        assert r.returncode == 2
+        assert "Plain HTTP is not allowed" in r.stderr, r.stderr
+        assert "No interactive terminal" not in r.stderr, r.stderr
+
+    def test_yes_still_works_without_a_terminal(self, tmp_path):
+        r = sh("-y", "--version", "notaversion", env={"OVN_APP_DIR": str(tmp_path / "e")})
+        assert "No interactive terminal" not in r.stderr, r.stderr
