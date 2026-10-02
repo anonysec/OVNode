@@ -213,8 +213,14 @@ render_menu() {
             # Timed out with nothing typed. Fall back to a plain line read so a
             # keystroke-free session (a CI runner with a pty, a flaky tmux) still
             # completes instead of redrawing forever.
+            # The newline ends the prompt line above, and `ask` would print that
+            # same prompt a second time — so every run that took the fallback
+            # showed "choice [1]:" twice, once with the cursor already past it.
+            # Read the line directly: the prompt is on screen and we have just
+            # moved off it, and the default is applied by the next line either
+            # way.
             printf '\n' >&3
-            digits="$(ask "choice" "$(( _MENU_CUR + 1 ))")"
+            IFS= read -r digits || digits=""
             [[ "$digits" =~ ^[0-9]+$ ]] || digits=$(( _MENU_CUR + 1 ))
             reply=$(( (10#$digits - 1) % count + 1 ))
             break
