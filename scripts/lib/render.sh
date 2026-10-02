@@ -147,7 +147,13 @@ render_rule() { _render_out "$(_render_paint "$GY" "$RENDER_RULE")"; }
 # rather than the primary check.
 render_screen() {
     [[ "$RENDER_ANIMATE" -eq 1 ]] || return 0
-    command clear >/dev/null 2>&1 || printf '\033[H\033[J' >&2 || true
+    # `clear 2>/dev/null`, not `command clear >/dev/null 2>&1`. `clear` clears
+    # by *printing* escape codes, so redirecting its stdout to /dev/null threw
+    # the codes away and the screen was never cleared — the exact opposite of
+    # what that redirection looks like it is doing. Only stderr is silenced, to
+    # keep "terminal not found" out of the output. The printf fallback still
+    # covers a host where `clear` is missing or non-functional.
+    clear 2>/dev/null || printf '\033[H\033[2J\033[3J' >&2 || true
     return 0
 }
 

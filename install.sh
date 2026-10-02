@@ -1882,7 +1882,10 @@ main() {
             || die "Bad --version '$PIN' (use 1.2.3, v1.2.3, 1.2.3-rc1)" "$EX_USAGE"
         VERSION="${PIN#v}"
     fi
-    if fancy; then command clear >/dev/null 2>&1 || true; fi
+    # render_screen, not a bare `clear`: no escape-sequence fallback here, so a
+    # host without terminfo silently skipped the wipe and the installer drew
+    # itself over whatever was already on the terminal.
+    render_screen
     render_banner "OVNode" "v${VERSION}"
 
     case "$ACTION" in
