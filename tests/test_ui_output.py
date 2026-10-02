@@ -669,23 +669,48 @@ def test_render_kv_w_takes_the_column_it_is_given():
     assert len(columns) == 1, f"values do not share a column: {rows}"
 
 
-def test_render_sh_is_byte_identical_to_the_panels():
-    """One renderer, two installers, one file.
+def test_the_renderer_matches_the_panel():
+    """One renderer, two installers, same code.
 
-    This is the whole point of moving the output into scripts/lib. The node card
-    and the panel card used to be two copies of one idea written at different
-    times, and they had drifted: different label widths, different glyphs, a
-    spinner that only one of them had.
+    This is the whole point of having one renderer. The node card and the panel
+    card used to be two copies of one idea written at different times, and they
+    had drifted: different label widths, different glyphs, a spinner that only
+    one of them had.
 
-    This file is a copy of the panel's, which is why the same assertions pass in
-    both repos without edits. That only stays true if the renderer does too.
+    The two are compared on their code, not their bytes. The node's helpers
+    still live in scripts/lib and the panel's are inline in install.sh, so the
+    comment above each block is a true statement on its own side — comparing it
+    would fail on the very difference the assertion exists to ignore. Everything
+    that executes is still required to be identical.
     """
     import pytest as _pytest
 
     if not PANEL.is_dir():
         _pytest.skip("OVManager checkout not beside this repo")
-    here = (LIB / "render.sh").read_text(encoding="utf-8")
-    there = (PANEL / "scripts" / "lib" / "render.sh").read_text(encoding="utf-8")
+    panel_installer = PANEL / "install.sh"
+    if not panel_installer.is_file():
+        _pytest.skip("OVManager checkout has no install.sh")
+
+    def code(text: str) -> list[str]:
+        """Lines that are not comments and not blank."""
+        out = []
+        for line in text.splitlines():
+            stripped = line.strip()
+            if stripped and not stripped.startswith("#"):
+                out.append(line)
+        return out
+
+    def panel_render_section() -> str:
+        """The render.sh section out of the panel's inline helper block."""
+        text = panel_installer.read_text(encoding="utf-8")
+        banner = re.compile(r"^# =+\n# render\.sh\n# =+\n", re.M)
+        match = banner.search(text)
+        assert match, "OVManager's install.sh has no render section"
+        nxt = re.compile(r"^# =+\n# \w+\.sh\n# =+\n", re.M).search(text, match.end())
+        return text[match.start() : nxt.start() if nxt else len(text)]
+
+    here = code((LIB / "render.sh").read_text(encoding="utf-8"))
+    there = code(panel_render_section())
     if here == there:
         return
     # A deliberate change must be made in both places in one commit, and said so
@@ -693,15 +718,6 @@ def test_render_sh_is_byte_identical_to_the_panels():
     import difflib
 
     diff = "\n".join(
-        list(
-            difflib.unified_diff(
-                there.splitlines(),
-                here.splitlines(),
-                "panel/render.sh",
-                "node/render.sh",
-                lineterm="",
-                n=1,
-            )
-        )[:40]
+        list(difflib.unified_diff(there, here, "panel", "node", lineterm="", n=1))[:40]
     )
-    raise AssertionError(f"render.sh has drifted between the two installers:\n{diff}")
+    raise AssertionError(f"the renderer has drifted between the two installers:\n{diff}")
