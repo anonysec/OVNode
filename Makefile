@@ -25,7 +25,10 @@ check-bash:
 	  tests/test_ui_output.py tests/test_no_duplicate_functions.py
 
 lint:
-	ruff check core/ tests/
+	# --output-format=github is what puts findings on the PR diff as inline
+	# annotations. It was only on the CI copy of this command, so calling
+	# `make lint` from the workflow would have silently dropped them.
+	ruff check core/ tests/ --output-format=github
 	ruff format --check core/ tests/
 	bash -n install.sh manager.sh scripts/lib/*.sh
 

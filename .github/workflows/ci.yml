@@ -52,10 +52,11 @@ jobs:
         with:
           python-version: "3.12"
       - run: pip install uv ruff
-      - run: uv sync
-      - run: ruff check core/ tests/ --output-format=github
-      - run: ruff format --check core/ tests/
-
+      # `make lint`, not a second copy of it. The panel hit this exact bug:
+      # its workflow and its Makefile each listed the lint targets, so a
+      # path change had to be made twice and CI failed while the local run
+      # passed. One command, one home.
+      - run: make lint
   build:
     needs: [test, lint]
     runs-on: ubuntu-latest
