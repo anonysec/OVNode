@@ -1,5 +1,15 @@
 # Changelog
 
+## 1.0.2 — 2026-10-02
+
+**CI**
+
+The workflow listed the lint targets as well as the Makefile did. It now calls
+`make lint`, with `--output-format=github` moved into the Makefile rather than
+dropped — losing it would have made CI quieter, not stricter.
+
+442 pass.
+
 ## 1.0.1 — 2026-10-01
 
 The panel's shape, and a data directory that matches the name.
