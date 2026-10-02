@@ -1,5 +1,15 @@
 # Changelog
 
+## 1.0.4 — 2026-10-02
+
+**Hardening**
+
+The base image's OS packages are upgraded at build. This node's scan was already
+green; the panel's was not, on the same `python:3.12-slim` base, and a fix that
+lands in one repo and not the other is how the two drift.
+
+442 pass.
+
 ## 1.0.3 — 2026-10-02
 
 The screen clears, and the output uses your terminal.

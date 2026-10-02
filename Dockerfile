@@ -37,7 +37,11 @@ ENV PYTHONUNBUFFERED=1 \
 # procps              — pgrep (process detection fallback in control.py)
 # tini                — PID 1: signal forwarding + zombie reaping (hooks fork)
 # curl                — container healthcheck
+# The upgrade is separate from the install so a withdrawn package cannot take the
+# whole RUN down with it. This node's scan is green today; the panel's was not, on
+# the same python:3.12-slim base, and the fix belongs in both so they cannot drift.
 RUN apt-get update \
+    && apt-get upgrade -y --no-install-recommends \
     && apt-get install -y --no-install-recommends \
         openvpn easy-rsa iproute2 iptables procps tini curl \
     && rm -rf /var/lib/apt/lists/*
