@@ -1,5 +1,23 @@
 # Changelog
 
+## 1.0.3 — 2026-10-02
+
+The screen clears, and the output uses your terminal.
+
+**Fixed**
+
+- The screen never cleared: `command clear >/dev/null 2>&1` discarded the
+  escape codes `clear` prints. Now `clear 2>/dev/null`, with the escape
+  fallback kept for hosts without terminfo.
+- The menu printed its prompt twice when the keystroke read timed out.
+- The rule was a hardcoded 46 characters; it is now the terminal's width,
+  clamped to [48, 100]. A pipe still gets 80.
+
+Found by running the installer on a real pty, which is the only way to reach
+these paths.
+
+442 pass.
+
 ## 1.0.2 — 2026-10-02
 
 **CI**
