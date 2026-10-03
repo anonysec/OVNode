@@ -1,5 +1,29 @@
 # Changelog
 
+## 1.0.43 — 2026-10-03
+
+**Tests**
+
+The renderer parity check reads the panel's code rather than its bytes.
+
+The panel inlined its helper block into `install.sh`, so
+`scripts/lib/render.sh` no longer exists there and this test died on
+`FileNotFoundError` instead of on the drift it exists to catch. It now reads
+the render section out of the panel's `install.sh` and compares code —
+comments and blanks excluded. The node's helpers still live in
+`scripts/lib/render.sh` and the panel's are inline, so the comment above each
+block is a true statement on its own side; requiring those to match would fail
+on the very difference the assertion exists to ignore. Everything that executes
+is still required to be identical.
+
+**Changed**
+
+`scripts/lib/` stays here. The panel's equivalent helpers moved inline into its
+own two programs, so the two repos no longer share a file layout — only the
+renderer's behaviour, which is what the parity test pins.
+
+442 pass, 1 skipped.
+
 ## 1.0.4 — 2026-10-02
 
 **Hardening**
