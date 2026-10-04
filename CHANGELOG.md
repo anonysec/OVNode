@@ -1,5 +1,24 @@
 # Changelog
 
+## 1.0.44 — 2026-10-04
+
+The installer's menu takes numbers, and waits for nobody.
+
+**Changed**
+
+The front door is one numbered menu — install, install with docker, and, on a
+host that already has OVNode, uninstall and update. Installing over an existing
+install updates it rather than starting over, keeping the database, the URL
+path, the certificate and the owner's credential; declining prints the command
+that reinstalls from scratch.
+
+The menu reads a number instead of arrow keys. The arrow-key version redrew the
+menu in place and read single keystrokes from `/dev/tty` with a timeout, so a
+pasted line, a closed terminal or a tmux that lost the pane could leave a
+half-drawn frame — and every one of those timeouts was a branch to get right.
+The panel's installer moved the same way in the same release, which keeps the
+two installs describing themselves in the same words.
+
 ## 1.0.43 — 2026-10-03
 
 **Tests**
