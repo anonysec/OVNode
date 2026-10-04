@@ -159,14 +159,15 @@ render_screen() {
 
 # ── Menu ───────────────────────────────────────────────────────────────
 #
-# The pointer and the number on the input line are the same thing. Arrows do
-# not "select" separately: they move the cursor and rewrite the digits, and
-# Enter always reads back what is visible. One source of truth means no branch
-# where the pointer and the number disagree, which is the bug every hand-rolled
-# arrow menu grows.
+# Numbers only. The arrow-key version redrew the menu in place on a separate fd
+# and read single keystrokes from /dev/tty with a two-second timeout, so a
+# pasted line, a closed terminal or a tmux that lost the pane could leave a
+# half-drawn frame on screen — and every one of those timeouts was a branch to
+# get right. Typing a number needs none of it, and `ask` already reads the
+# answer. A person who reaches for the arrows loses the arrows and nothing
+# else; the menu is still a menu.
 #
 # render_menu <title> <tag> <label> [<tag> <label> ...] → prints the tag.
-# Falls back to a plain numbered read when there is no terminal to draw on.
 
 render_menu() {
     shift    # title is the caller's; the banner already said what this is
@@ -175,90 +176,21 @@ render_menu() {
     local count=${#tags[@]}
     [[ "$count" -gt 0 ]] || return 1
 
-    _menu_draw() {  # reads _MENU_TAGS/_MENU_LABELS/_MENU_CUR
-        local i=0 n=${#_MENU_TAGS[@]}
-        while (( i < n )); do
-            if (( i == _MENU_CUR )); then
-                printf '  %b%s%b  %b%d%b  %s\n' \
-                    "$OR" "$RENDER_POINTER" "$NC" "$B" "$(( i + 1 ))" "$NC" "${_MENU_LABELS[$i]}"
-            else
-                printf '    %b%d%b  %s\n' "$GY" "$(( i + 1 ))" "$NC" "${_MENU_LABELS[$i]}"
-            fi
-            i=$(( i + 1 ))
-        done
-    }
-
-    _MENU_TAGS=("${tags[@]}"); _MENU_LABELS=("${labels[@]}"); _MENU_CUR=0
-
-    if [[ "$RENDER_ANIMATE" -ne 1 || ! -e /dev/tty || ! -r /dev/tty ]]; then
-        _menu_draw >&2
-        local n
-        n="$(ask "choice" "1")"
-        [[ "$n" =~ ^[0-9]+$ ]] || n=1
-        printf '%s' "${tags[$(( (n - 1) % count ))]}"
-        return 0
-    fi
-
-    # Own fd for the drawing. The keystroke reader must not see the menu's own
-    # writes on the same descriptor, and the prompt line is rewritten in place,
-    # so the two are kept apart from here down.
-    exec 3>&2
-    local frame=$(( count + 3 )) ch c1 c2 reply="" digits=""
-    local hint='↑↓ move · ⏎ confirm'
-    [[ "$RENDER_SPINNER_UNICODE" -eq 1 ]] || hint='type a number · ↑↓ move'
-    while true; do
-        printf '\033[%dA\033[J' "$frame" >&3 2>/dev/null || true
-        _menu_draw >&3
-        printf '  %b%s%b\n' "$GY" "$hint" "$NC" >&3
-        printf '  %bchoice [%s%d%s]%b: ' "$NC" "$B" "$(( _MENU_CUR + 1 ))" "$NC" "$NC" >&3
-
-        # One keystroke, no Enter. Every read is timed: a pasted line, a closed
-        # terminal or a tmux that lost the pane must not wedge the installer
-        # mid-menu with a half-drawn frame on screen.
-        if ! IFS= read -rsn1 -t 2 ch < /dev/tty; then
-            # Timed out with nothing typed. Fall back to a plain line read so a
-            # keystroke-free session (a CI runner with a pty, a flaky tmux) still
-            # completes instead of redrawing forever.
-            # The newline ends the prompt line above, and `ask` would print that
-            # same prompt a second time — so every run that took the fallback
-            # showed "choice [1]:" twice, once with the cursor already past it.
-            # Read the line directly: the prompt is on screen and we have just
-            # moved off it, and the default is applied by the next line either
-            # way.
-            printf '\n' >&3
-            IFS= read -r digits || digits=""
-            [[ "$digits" =~ ^[0-9]+$ ]] || digits=$(( _MENU_CUR + 1 ))
-            reply=$(( (10#$digits - 1) % count + 1 ))
-            break
-        fi
-        # A bare newline comes back from `read -n1` as an empty string with a
-        # zero status: the delimiter was consumed and there was nothing left.
-        # Without this, Enter would redraw the menu and wait again.
-        [[ -z "$ch" ]] && ch=$'\n'
-        case "$ch" in
-            $'\n'|$'\r'|$'\x04')
-                reply=$(( _MENU_CUR + 1 )); break ;;
-            $'\033')
-                # CSI is three bytes: ESC [ <final>. Read the two that follow
-                # with a short timeout — an ESC alone (a bare Escape keypress)
-                # times out here and is ignored, which is the wanted behaviour.
-                if IFS= read -rsn1 -t 0.3 c1 < /dev/tty && IFS= read -rsn1 -t 0.3 c2 < /dev/tty; then
-                    case "$c2" in
-                        A) (( _MENU_CUR > 0 )) && _MENU_CUR=$(( _MENU_CUR - 1 )) ;;
-                        B) (( _MENU_CUR < count - 1 )) && _MENU_CUR=$(( _MENU_CUR + 1 )) ;;
-                    esac
-                fi ;;
-            $'\x7f'|$'\b')
-                digits="${digits%?}"
-                (( _MENU_CUR > 0 )) || _MENU_CUR=0 ;;
-            [0-9])
-                digits="$ch"
-                _MENU_CUR=$(( 10#$ch - 1 ))
-                (( _MENU_CUR >= count )) && _MENU_CUR=$(( count - 1 )) ;;
-        esac
+    local i=0
+    while (( i < count )); do
+        printf '  %b%d%b  %s\n' "$B" "$(( i + 1 ))" "$NC" "${labels[$i]}" >&2
+        i=$(( i + 1 ))
     done
-    exec 3>&-
-    printf '%s' "${tags[$(( reply - 1 ))]}"
+
+    local n
+    n="$(ask "choice" "1")"
+    [[ "$n" =~ ^[0-9]+$ ]] || n=1
+    # Wrap into range rather than crash on 0 or a stray large number. The
+    # modulo is done in bash's own arithmetic, where a negative operand keeps
+    # its sign: $(( (0 - 1) % 3 )) is -1, and indexing with -1 is the last
+    # element rather than the first. Adding the count first keeps it positive.
+    printf '%s' "${tags[$(( ((10#$n - 1) + count) % count ))]}"
+    return 0
 }
 
 # ── Progress ───────────────────────────────────────────────────────────

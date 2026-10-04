@@ -509,11 +509,12 @@ def test_the_ask_puts_the_default_in_brackets_before_the_colon():
     assert out.endswith("[2095]: ")
 
 
-def test_the_menu_draws_numbers_and_a_pointer():
-    """Every row is numbered, the current one carries the pointer.
+def test_the_menu_draws_numbers():
+    """Every row is numbered.
 
     Checked in the piped form, which is the path that must also be readable: a CI
-    log has no arrow keys, so the numbers are what it has to go on.
+    log has no keyboard, so the numbers are what it has to go on — and they are
+    now the only thing that selects.
     """
     rows = screen(
         run(
@@ -526,14 +527,18 @@ def test_the_menu_draws_numbers_and_a_pointer():
     assert "1  install  ·  systemd" in text
     assert "2  install  ·  containerized" in text
     assert "3  exit" in text
-    assert "▸" in text, "no pointer row when the menu cannot be interacted with"
 
 
-def test_the_menu_pointer_starts_on_the_first_item():
-    rows = screen(run('render_menu "" a "one" b "two"', tty=False))
-    pointer = next(r for r in rows if "▸" in r)
-    assert "one" in pointer
-    assert "1" in pointer
+def test_the_menu_does_not_draw_a_pointer():
+    """No pointer row, and no arrows to move one.
+
+    The pointer went with the keystroke reader: there is nothing to move it, so
+    a `▸` sitting next to one option would claim a selection the terminal cannot
+    change.
+    """
+    text = "\n".join(screen(run('render_menu "" a "one" b "two"', tty=False)))
+    assert "▸" not in text, "the menu still draws a pointer it can no longer move"
+    assert "↑" not in text and "↓" not in text, "the menu still advertises arrow keys"
 
 
 def test_the_menu_is_not_drawn_as_a_whiptail_box():
@@ -553,11 +558,25 @@ def test_a_typed_number_clamps_into_range():
     """9 on a three-item menu is the last item, not a crash and not item 1."""
     out = strip(
         run(
-            'render_menu "" a "one" b "two" c "three" <<< "9"',
+            # ask() is stubbed to return the typed answer: the probe runs with
+            # can_prompt false, so a real read would take the default and never
+            # see the 9 this is about.
+            'ask() { printf "%s" "9"; }; render_menu "" a "one" b "two" c "three"',
             tty=False,
         )
     )
     assert "three" in out
+
+
+def test_a_typed_number_selects_that_item():
+    """2 on a three-item menu returns the second tag, not the first."""
+    out = strip(
+        run(
+            'ask() { printf "%s" "2"; }; render_menu "" a "one" b "two" c "three"',
+            tty=False,
+        )
+    )
+    assert "two" in out
 
 
 # ── Colour discipline ───────────────────────────────────────────────────
