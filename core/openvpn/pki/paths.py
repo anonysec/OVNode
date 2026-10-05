@@ -1,17 +1,15 @@
 # Copyright (c) 2026 anonysec
 # SPDX-License-Identifier: MIT
 
-"""Every path the PKI writes to, plus the OVNODE_* helpers that read them.
+"""Every path the PKI writes to.
 
-Leaf module: it imports nothing else from this package (config is imported
-lazily), so the other submodules can depend on it without a circular import.
+Leaf module: it imports nothing else from this package, so the other
+submodules can depend on it without a circular import.
 """
 
 import os
 
-from core.openvpn.atomic import openvpn_root
-
-_OPENVPN_ROOT = openvpn_root()
+_OPENVPN_ROOT = os.getenv("OVNODE_OPENVPN_ROOT", "/etc/openvpn")
 EASYRSA_DIR = os.path.join(_OPENVPN_ROOT, "server", "easy-rsa")
 PKI_DIR = os.path.join(_OPENVPN_ROOT, "server", "pki")
 SERVER_CONF = os.path.join(_OPENVPN_ROOT, "server", "server.conf")
@@ -30,27 +28,3 @@ REQUIRED_DIRS = [
     os.path.join(_OPENVPN_ROOT, "server"),
     os.path.join(_OPENVPN_ROOT, "ccd"),
 ]
-
-
-def _env(name: str, default: str) -> str:
-    """Read an OVNODE_* env var with a default (config.py is the source)."""
-    try:
-        from core.config import settings
-
-        return str(getattr(settings, f"ovnode_{name}", default) or default)
-    except Exception:
-        return os.getenv(f"OVNODE_{name.upper()}", default)
-
-
-def _openvpn_port() -> int:
-    try:
-        return int(os.getenv("OPENVPN_PORT", "1194"))
-    except ValueError:
-        return 1194
-
-
-def _extra_vpn_ports() -> list[int]:
-    """Extra ports the node is reachable on (iptables REDIRECT → primary)."""
-    from core.config import parse_extra_ports
-
-    return parse_extra_ports(os.getenv("OVNODE_EXTRA_PORTS", ""), _openvpn_port())

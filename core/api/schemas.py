@@ -89,3 +89,14 @@ class SetSettingsModel(BaseModel):
     # /sync/config). Comma-separated; omitted = unchanged, empty string =
     # clear. Optional so old panels keep working.
     extra_ports: str | None = None
+
+
+class UsersUsage(BaseModel):
+    # Per-user total bytes. Keys are panel usernames when known (the panel's
+    # traffic collector looks rows up by username), falling back to the CN.
+    users: dict[str, float]
+    # Per-session bytes: {key: {"ip:port": bytes}}. Contains BOTH the CN key
+    # (consumed by the panel's /mlogin global registry, which maps numeric-id
+    # CNs to usernames) and the username key (consumed by the traffic
+    # collector's per-session delta path).
+    sessions: dict[str, dict[str, float]] = {}

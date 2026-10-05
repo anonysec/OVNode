@@ -124,7 +124,7 @@ def test_easyrsa_runs_serialize_on_lock(tmp_path, monkeypatch):
     fake.chmod(0o755)
     pki_dir = tmp_path / "pki"
     pki_dir.mkdir()
-    monkeypatch.setattr("core.openvpn.pki.paths.EASYRSA_DIR", str(tmp_path))
+    monkeypatch.setattr(pki, "EASYRSA_DIR", str(tmp_path))
     results = []
     ts = []
 

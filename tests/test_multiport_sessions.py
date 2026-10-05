@@ -27,9 +27,7 @@ def test_client_template_lists_all_ports(tmp_path, monkeypatch):
     monkeypatch.setenv("OPENVPN_PORT", "1194")
     monkeypatch.setenv("OVNODE_EXTRA_PORTS", "443,8443")
     monkeypatch.setenv("TUNNEL_ADDRESS", "vpn.example.com")
-    monkeypatch.setattr(
-        "core.openvpn.pki.paths.CLIENT_TEMPLATE", str(tmp_path / "client-common.txt")
-    )
+    monkeypatch.setattr(pki, "CLIENT_TEMPLATE", str(tmp_path / "client-common.txt"))
 
     pki._ensure_client_template()
     content = (tmp_path / "client-common.txt").read_text()
@@ -237,29 +235,27 @@ def test_crl_renewed_when_near_expiry(tmp_path, monkeypatch):
 
     crl = tmp_path / "crl.pem"
     crl.write_text("dummy")
-    monkeypatch.setattr("core.openvpn.pki.paths.CRL_FILE", str(crl))
+    monkeypatch.setattr(pki, "CRL_FILE", str(crl))
 
     calls = []
-    monkeypatch.setattr(
-        "core.openvpn.pki.easyrsa._easyrsa", lambda *a, **k: calls.append(a) or True
-    )
+    monkeypatch.setattr(pki, "_easyrsa", lambda *a, **k: calls.append(a) or True)
 
     # Fresh CRL → no regeneration.
-    monkeypatch.setattr("core.openvpn.pki.certs._crl_days_remaining", lambda: 200)
+    monkeypatch.setattr(pki, "_crl_days_remaining", lambda: 200)
     assert pki._ensure_crl() is True
     assert calls == []
 
     # Near expiry → gen-crl.
-    monkeypatch.setattr("core.openvpn.pki.certs._crl_days_remaining", lambda: 10)
+    monkeypatch.setattr(pki, "_crl_days_remaining", lambda: 10)
     assert pki._ensure_crl() is True
     assert calls == [("gen-crl",)]
 
     # Renewal fails but CRL still currently valid → keep serving it.
-    monkeypatch.setattr("core.openvpn.pki.easyrsa._easyrsa", lambda *a, **k: False)
+    monkeypatch.setattr(pki, "_easyrsa", lambda *a, **k: False)
     assert pki._ensure_crl() is True
 
     # Renewal fails and CRL already expired → report failure.
-    monkeypatch.setattr("core.openvpn.pki.certs._crl_days_remaining", lambda: -1)
+    monkeypatch.setattr(pki, "_crl_days_remaining", lambda: -1)
     assert pki._ensure_crl() is False
 
 

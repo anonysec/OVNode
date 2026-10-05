@@ -1,9 +1,20 @@
 # Copyright (c) 2026 anonysec
 # SPDX-License-Identifier: MIT
 
+import signal
+
 from core.logger import logger
 
 logger.info("Starting OV-Node...")
+
+
+def _handle_shutdown(signum, frame):
+    logger.info("OV-Node received %s — shutting down cleanly.", signal.Signals(signum).name)
+    raise SystemExit(0)
+
+
+signal.signal(signal.SIGTERM, _handle_shutdown)
+signal.signal(signal.SIGINT, _handle_shutdown)
 
 
 def main():

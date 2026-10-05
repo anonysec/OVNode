@@ -128,8 +128,7 @@ async def renew_server_cert(api_key: str = Depends(check_api_key_heavy)):
     archives the old one and clients reconnect after the restart.
     """
     from core.openvpn.control import restart_openvpn
-    from core.openvpn.pki.certs import renew_server_certificate
-    from core.openvpn.pki.paths import SERVER_CERT
+    from core.openvpn.pki import SERVER_CERT, renew_server_certificate
 
     renewed = bool(await run_in_threadpool(renew_server_certificate))
     if not renewed:

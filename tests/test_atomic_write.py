@@ -97,10 +97,8 @@ def test_pki_creates_server_conf_atomically(monkeypatch, tmp_path):
     from core.openvpn import pki
 
     target = tmp_path / "server.conf"
-    monkeypatch.setattr("core.openvpn.pki.paths.SERVER_CONF", str(target))
-    monkeypatch.setattr(
-        "core.openvpn.pki.server_conf._fresh_server_conf", lambda: "port 1194\nproto udp\n"
-    )
+    monkeypatch.setattr(pki, "SERVER_CONF", str(target))
+    monkeypatch.setattr(pki, "_fresh_server_conf", lambda: "port 1194\nproto udp\n")
 
     assert pki._ensure_server_conf() is True
     assert target.read_text() == "port 1194\nproto udp\n"

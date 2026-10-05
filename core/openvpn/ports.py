@@ -22,9 +22,9 @@ from __future__ import annotations
 import os
 import re
 import subprocess
+import tempfile
 
 from core.logger import logger
-from core.openvpn.atomic import openvpn_root, read_kv
 from core.updater import is_docker
 
 # Installer-owned NAT files (native installs only — Docker applies the same
@@ -39,12 +39,14 @@ _NAT_KEYS = ("VPN_PRIMARY_PORT", "VPN_EXTRA_PORTS")
 
 def state_path() -> str:
     """Location of the desired-extra-ports state file (root read at call time)."""
-    return os.path.join(openvpn_root(), "ovnode", "ports")
+    root = os.getenv("OVNODE_OPENVPN_ROOT", "/etc/openvpn")
+    return os.path.join(root, "ovnode", "ports")
 
 
 def template_path() -> str:
     """Location of the client template shared with OpenVPN (read at call time)."""
-    return os.path.join(openvpn_root(), "server", "client-common.txt")
+    root = os.getenv("OVNODE_OPENVPN_ROOT", "/etc/openvpn")
+    return os.path.join(root, "server", "client-common.txt")
 
 
 def validate(raw: object, primary: int) -> list[int] | None:
@@ -97,10 +99,17 @@ def read_state() -> list[int] | None:
     ``[]`` deliberately means "the panel explicitly cleared the extras" so
     :func:`effective` never resurrects the installer's ``OVNODE_EXTRA_PORTS``.
     """
-    state = read_kv(state_path())
-    if "ports" not in state:
-        return None
-    return _parse_state(state["ports"])
+    try:
+        with open(state_path(), encoding="utf-8") as f:
+            for line in f:
+                if "=" not in line:
+                    continue
+                key, _, value = line.strip().partition("=")
+                if key == "ports":
+                    return _parse_state(value)
+    except OSError:
+        pass
+    return None
 
 
 def _sync_env(ports: list[int]) -> None:
@@ -125,8 +134,21 @@ def write_state(ports: list[int]) -> bool:
                 return False
     except OSError:
         pass
+    directory = os.path.dirname(path)
     try:
-        _atomic_write(path, content)
+        os.makedirs(directory, exist_ok=True)
+        fd, tmp = tempfile.mkstemp(dir=directory, prefix=".ports-")
+        try:
+            with os.fdopen(fd, "w", encoding="utf-8") as f:
+                f.write(content)
+            os.chmod(tmp, 0o644)
+            os.replace(tmp, path)
+        except BaseException:
+            try:
+                os.remove(tmp)
+            except OSError:
+                pass
+            raise
     except OSError as e:
         logger.error("ports: could not write state file %s: %s", path, e)
         return False

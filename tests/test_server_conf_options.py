@@ -53,11 +53,9 @@ def _directive_names(conf: str) -> set[str]:
 def generated_conf(monkeypatch, tmp_path):
     from core.openvpn import pki
 
-    monkeypatch.setattr("core.openvpn.pki.paths._OPENVPN_ROOT", str(tmp_path))
-    monkeypatch.setattr(
-        "core.openvpn.pki.paths.SERVER_CONF", str(tmp_path / "server" / "server.conf")
-    )
-    monkeypatch.setattr("core.openvpn.store.SCRIPTS_DIR", str(tmp_path / "scripts"))
+    monkeypatch.setattr(pki, "_OPENVPN_ROOT", str(tmp_path))
+    monkeypatch.setattr(pki, "SERVER_CONF", str(tmp_path / "server" / "server.conf"))
+    monkeypatch.setattr(pki, "SCRIPTS_DIR", str(tmp_path / "scripts"))
     return pki._fresh_server_conf()
 
 

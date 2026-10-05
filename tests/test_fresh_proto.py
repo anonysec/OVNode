@@ -69,7 +69,7 @@ def test_fresh_vars_use_fast_curve_and_keep_existing(tmp_path, monkeypatch):
 
     easyrsa = tmp_path / "easy-rsa"
     easyrsa.mkdir()
-    monkeypatch.setattr("core.openvpn.pki.paths.EASYRSA_DIR", str(easyrsa))
+    monkeypatch.setattr(pki_mod, "EASYRSA_DIR", str(easyrsa))
     pki_mod._write_easyrsa_vars()
     content = (easyrsa / "vars").read_text()
     assert 'EASYRSA_CURVE "prime256v1"' in content

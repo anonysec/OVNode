@@ -20,7 +20,6 @@ import threading
 import time
 
 from core.openvpn import sessions as sess_mod
-from core.openvpn import status as status_mod
 
 HOOK = os.path.join(os.path.dirname(__file__), "..", "core", "scripts", "ovnode-client-connect.sh")
 
@@ -128,8 +127,18 @@ def _status_row(cn, real, pool, cid, time_t="1700000000"):
 def test_corpse_reconnect_allowed_after_kill():
     """The reported bug: old (CN, old-pool) corpse still in the status file,
     new IP/pool arrives. Kill succeeds; mgmt status drops the row; ALLOW."""
+    import tempfile
+
     with tempfile.TemporaryDirectory() as tmp:
-        users, sessions, server, status = _mktree(tmp)
+        root = tmp
+        users = os.path.join(root, "users")
+        sessions = os.path.join(root, "sessions")
+        server = os.path.join(root, "server")
+        os.makedirs(users)
+        os.makedirs(sessions)
+        os.makedirs(server)
+        open(os.path.join(server, "mgmt-pass"), "w").write("testpw\n")
+        status = os.path.join(server, "status.log")
         # Corpse row: file is NOT rewritten by the kill (5s cadence).
         corpse = _status_row("u1", "5.5.5.5:4000", "10.8.0.1", 7)
         open(status, "w").write("HEADER\tX\n" + corpse + "\n")
@@ -148,7 +157,19 @@ def test_corpse_reconnect_allowed_after_kill():
             ]
         )
         try:
-            env = _hook_env(users, sessions, server, status, mgmt.port)
+            env = {
+                **os.environ,
+                "OVNODE_USERS_DIR": users,
+                "OVNODE_SESSIONS_DIR": sessions,
+                "OVNODE_STATUS_FILE": status,
+                "OVNODE_MANAGEMENT_HOST": "127.0.0.1",
+                "OVNODE_MANAGEMENT_PORT": str(mgmt.port),
+                "OVNODE_MGMT_PASS_FILE": os.path.join(server, "mgmt-pass"),
+                "common_name": "u1",
+                "trusted_ip": "9.9.9.9",
+                "trusted_port": "5001",
+                "ifconfig_pool_remote_ip": "10.8.0.2",
+            }
             r = subprocess.run(["bash", HOOK], capture_output=True, text=True, timeout=60, env=env)
             assert r.returncode == 0, f"hook rejected legit reconnect: {r.stderr}"
             assert mgmt.killed == ["7"], f"expected CID kill, got {mgmt.killed}"
@@ -160,8 +181,16 @@ def test_corpse_reconnect_allowed_after_kill():
 
 def test_live_second_device_rejected():
     """A genuinely live session must still block a second device (limit=1)."""
+    import tempfile
+
     with tempfile.TemporaryDirectory() as tmp:
-        users, sessions, server, status = _mktree(tmp)
+        users = os.path.join(tmp, "users")
+        sessions = os.path.join(tmp, "sessions")
+        server = os.path.join(tmp, "server")
+        for d in (users, sessions, server):
+            os.makedirs(d)
+        open(os.path.join(server, "mgmt-pass"), "w").write("testpw\n")
+        status = os.path.join(server, "status.log")
         # mgmt status NEVER drops the row (kill ignored / session really live
         # and re-pushed): 14+ identical replies exhaust the 7s verify budget.
         live = [("u1", "5.5.5.5:4000", "10.8.0.1", "u1")]
@@ -177,7 +206,19 @@ def test_live_second_device_rejected():
                 "common_name=u1\ntrusted_ip=5.5.5.5\ntrusted_port=4000\n"
                 f"ifconfig_pool_remote_ip=10.8.0.1\ncreated={now - 60}\n"
             )
-            env = _hook_env(users, sessions, server, status, mgmt.port)
+            env = {
+                **os.environ,
+                "OVNODE_USERS_DIR": users,
+                "OVNODE_SESSIONS_DIR": sessions,
+                "OVNODE_STATUS_FILE": status,
+                "OVNODE_MANAGEMENT_HOST": "127.0.0.1",
+                "OVNODE_MANAGEMENT_PORT": str(mgmt.port),
+                "OVNODE_MGMT_PASS_FILE": os.path.join(server, "mgmt-pass"),
+                "common_name": "u1",
+                "trusted_ip": "9.9.9.9",
+                "trusted_port": "5001",
+                "ifconfig_pool_remote_ip": "10.8.0.2",
+            }
             r = subprocess.run(["bash", HOOK], capture_output=True, text=True, timeout=60, env=env)
             assert r.returncode == 1, "live second device must be rejected"
             assert not os.path.exists(os.path.join(sessions, "u1.10.8.0.2"))
@@ -188,8 +229,16 @@ def test_live_second_device_rejected():
 def test_grace_absorbs_reaped_session():
     """Fresh marker (<15s) whose pool is already gone from status: the old
     daemon row was reaped — absorb, don't force a takeover cycle."""
+    import tempfile
+
     with tempfile.TemporaryDirectory() as tmp:
-        users, sessions, server, status = _mktree(tmp)
+        users = os.path.join(tmp, "users")
+        sessions = os.path.join(tmp, "sessions")
+        server = os.path.join(tmp, "server")
+        for d in (users, sessions, server):
+            os.makedirs(d)
+        open(os.path.join(server, "mgmt-pass"), "w").write("testpw\n")
+        status = os.path.join(server, "status.log")
         open(status, "w").write("HEADER\tX\n")  # empty: corpse reaped
         os.makedirs(os.path.join(users, "u1"))
         open(os.path.join(users, "u1", "limit"), "w").write("1")
@@ -200,7 +249,19 @@ def test_grace_absorbs_reaped_session():
         )
         mgmt = FakeMgmt(status_script=[[]] * 5)
         try:
-            env = _hook_env(users, sessions, server, status, mgmt.port)
+            env = {
+                **os.environ,
+                "OVNODE_USERS_DIR": users,
+                "OVNODE_SESSIONS_DIR": sessions,
+                "OVNODE_STATUS_FILE": status,
+                "OVNODE_MANAGEMENT_HOST": "127.0.0.1",
+                "OVNODE_MANAGEMENT_PORT": str(mgmt.port),
+                "OVNODE_MGMT_PASS_FILE": os.path.join(server, "mgmt-pass"),
+                "common_name": "u1",
+                "trusted_ip": "9.9.9.9",
+                "trusted_port": "5001",
+                "ifconfig_pool_remote_ip": "10.8.0.2",
+            }
             r = subprocess.run(["bash", HOOK], capture_output=True, text=True, timeout=60, env=env)
             assert r.returncode == 0, r.stderr
             assert mgmt.killed == [], f"no kill needed, got {mgmt.killed}"
@@ -212,8 +273,15 @@ def test_grace_absorbs_reaped_session():
 def test_mgmt_down_degrades_for_limit1():
     """Management socket down + limit=1: allow with replaced markers
     (corpse reaped by ping-restart) instead of rejecting."""
+    import tempfile
+
     with tempfile.TemporaryDirectory() as tmp:
-        users, sessions, server, status = _mktree(tmp)
+        users = os.path.join(tmp, "users")
+        sessions = os.path.join(tmp, "sessions")
+        server = os.path.join(tmp, "server")
+        for d in (users, sessions, server):
+            os.makedirs(d)
+        status = os.path.join(server, "status.log")
         open(status, "w").write(
             "HEADER\tX\n" + _status_row("u1", "5.5.5.5:4000", "10.8.0.1", 7) + "\n"
         )
@@ -225,7 +293,18 @@ def test_mgmt_down_degrades_for_limit1():
             f"ifconfig_pool_remote_ip=10.8.0.1\ncreated={now - 60}\n"
         )
         closed = _free_port()  # nothing listening: mgmt down
-        env = _hook_env(users, sessions, server, status, closed)
+        env = {
+            **os.environ,
+            "OVNODE_USERS_DIR": users,
+            "OVNODE_SESSIONS_DIR": sessions,
+            "OVNODE_STATUS_FILE": status,
+            "OVNODE_MANAGEMENT_HOST": "127.0.0.1",
+            "OVNODE_MANAGEMENT_PORT": str(closed),
+            "common_name": "u1",
+            "trusted_ip": "9.9.9.9",
+            "trusted_port": "5001",
+            "ifconfig_pool_remote_ip": "10.8.0.2",
+        }
         r = subprocess.run(["bash", HOOK], capture_output=True, text=True, timeout=60, env=env)
         assert r.returncode == 0, f"degrade expected, got reject: {r.stderr}"
         assert os.path.exists(os.path.join(sessions, "u1.10.8.0.2"))
@@ -234,8 +313,15 @@ def test_mgmt_down_degrades_for_limit1():
 
 def test_mgmt_down_still_rejects_limit2():
     """Strict case stays fail-closed when mgmt is down."""
+    import tempfile
+
     with tempfile.TemporaryDirectory() as tmp:
-        users, sessions, server, status = _mktree(tmp)
+        users = os.path.join(tmp, "users")
+        sessions = os.path.join(tmp, "sessions")
+        server = os.path.join(tmp, "server")
+        for d in (users, sessions, server):
+            os.makedirs(d)
+        status = os.path.join(server, "status.log")
         open(status, "w").write(
             "HEADER\tX\n"
             + _status_row("u1", "5.5.5.5:4000", "10.8.0.1", 7)
@@ -246,7 +332,18 @@ def test_mgmt_down_still_rejects_limit2():
         os.makedirs(os.path.join(users, "u1"))
         open(os.path.join(users, "u1", "limit"), "w").write("2")
         closed = _free_port()
-        env = _hook_env(users, sessions, server, status, closed)
+        env = {
+            **os.environ,
+            "OVNODE_USERS_DIR": users,
+            "OVNODE_SESSIONS_DIR": sessions,
+            "OVNODE_STATUS_FILE": status,
+            "OVNODE_MANAGEMENT_HOST": "127.0.0.1",
+            "OVNODE_MANAGEMENT_PORT": str(closed),
+            "common_name": "u1",
+            "trusted_ip": "9.9.9.9",
+            "trusted_port": "5001",
+            "ifconfig_pool_remote_ip": "10.8.0.2",
+        }
         r = subprocess.run(["bash", HOOK], capture_output=True, text=True, timeout=60, env=env)
         assert r.returncode == 1, "over-limit with mgmt down must reject"
 
@@ -254,8 +351,16 @@ def test_mgmt_down_still_rejects_limit2():
 def test_pool_reuse_takeover_kills_same_pool_corpse():
     """ipp.txt recycled the dead session's pool IP: the corpse row carries
     the NEW pool. Takeover must still kill it (by CID) and allow."""
+    import tempfile
+
     with tempfile.TemporaryDirectory() as tmp:
-        users, sessions, server, status = _mktree(tmp)
+        users = os.path.join(tmp, "users")
+        sessions = os.path.join(tmp, "sessions")
+        server = os.path.join(tmp, "server")
+        for d in (users, sessions, server):
+            os.makedirs(d)
+        open(os.path.join(server, "mgmt-pass"), "w").write("testpw\n")
+        status = os.path.join(server, "status.log")
         open(status, "w").write(
             "HEADER\tX\n" + _status_row("u1", "5.5.5.5:4000", "10.8.0.2", 7) + "\n"
         )
@@ -273,7 +378,19 @@ def test_pool_reuse_takeover_kills_same_pool_corpse():
             ]
         )
         try:
-            env = _hook_env(users, sessions, server, status, mgmt.port)
+            env = {
+                **os.environ,
+                "OVNODE_USERS_DIR": users,
+                "OVNODE_SESSIONS_DIR": sessions,
+                "OVNODE_STATUS_FILE": status,
+                "OVNODE_MANAGEMENT_HOST": "127.0.0.1",
+                "OVNODE_MANAGEMENT_PORT": str(mgmt.port),
+                "OVNODE_MGMT_PASS_FILE": os.path.join(server, "mgmt-pass"),
+                "common_name": "u1",
+                "trusted_ip": "9.9.9.9",
+                "trusted_port": "5001",
+                "ifconfig_pool_remote_ip": "10.8.0.2",
+            }
             r = subprocess.run(["bash", HOOK], capture_output=True, text=True, timeout=60, env=env)
             assert r.returncode == 0, f"pool-reuse corpse must be taken over: {r.stderr}"
             assert mgmt.killed == ["7"]
@@ -285,8 +402,16 @@ def test_rapid_flap_all_reconnects_allowed():
     """Dynamic-IP flap: three rapid reconnects, each arriving while the
     previous corpse is still listed. Every reconnect must be allowed and
     exactly one marker must remain at the end."""
+    import tempfile
+
     with tempfile.TemporaryDirectory() as tmp:
-        users, sessions, server, status = _mktree(tmp)
+        users = os.path.join(tmp, "users")
+        sessions = os.path.join(tmp, "sessions")
+        server = os.path.join(tmp, "server")
+        for d in (users, sessions, server):
+            os.makedirs(d)
+        open(os.path.join(server, "mgmt-pass"), "w").write("testpw\n")
+        status = os.path.join(server, "status.log")
         os.makedirs(os.path.join(users, "u1"))
         open(os.path.join(users, "u1", "limit"), "w").write("1")
         # Each round: mgmt sees the previous corpse once, then clean.
@@ -296,7 +421,16 @@ def test_rapid_flap_all_reconnects_allowed():
             script.append([])
         mgmt = FakeMgmt(status_script=script)
         try:
-            base_env = _hook_env(users, sessions, server, status, mgmt.port)
+            base_env = {
+                **os.environ,
+                "OVNODE_USERS_DIR": users,
+                "OVNODE_SESSIONS_DIR": sessions,
+                "OVNODE_STATUS_FILE": status,
+                "OVNODE_MANAGEMENT_HOST": "127.0.0.1",
+                "OVNODE_MANAGEMENT_PORT": str(mgmt.port),
+                "OVNODE_MGMT_PASS_FILE": os.path.join(server, "mgmt-pass"),
+                "common_name": "u1",
+            }
             for i in range(3):
                 pool = f"10.8.0.{i + 1}"
                 # Status file still lists the previous corpse (5s lag).
@@ -325,8 +459,16 @@ def test_parallel_full_reject_all_and_touch_nothing():
     """Chaos 1: 8 parallel connects against 3 live rows (limit=3).
     Nothing mutates mid-run, so every hook must deterministically REJECT
     without touching mgmt or markers — per-CN locking must not deadlock."""
+    import tempfile
+
     with tempfile.TemporaryDirectory() as tmp:
-        users, sessions, server, status = _mktree(tmp)
+        users = os.path.join(tmp, "users")
+        sessions = os.path.join(tmp, "sessions")
+        server = os.path.join(tmp, "server")
+        for d in (users, sessions, server):
+            os.makedirs(d)
+        open(os.path.join(server, "mgmt-pass"), "w").write("testpw\n")
+        status = os.path.join(server, "status.log")
         with open(status, "w") as f:
             f.write("HEADER\tX\n")
             for i, pool in enumerate(("10.8.0.1", "10.8.0.2", "10.8.0.3")):
@@ -335,7 +477,16 @@ def test_parallel_full_reject_all_and_touch_nothing():
         open(os.path.join(users, "u1", "limit"), "w").write("3")
         mgmt = FakeMgmt(status_script=[])
         try:
-            base_env = _hook_env(users, sessions, server, status, mgmt.port)
+            base_env = {
+                **os.environ,
+                "OVNODE_USERS_DIR": users,
+                "OVNODE_SESSIONS_DIR": sessions,
+                "OVNODE_STATUS_FILE": status,
+                "OVNODE_MANAGEMENT_HOST": "127.0.0.1",
+                "OVNODE_MANAGEMENT_PORT": str(mgmt.port),
+                "OVNODE_MGMT_PASS_FILE": os.path.join(server, "mgmt-pass"),
+                "common_name": "u1",
+            }
             procs = []
             for i in range(8):
                 env = {
@@ -366,13 +517,28 @@ def test_parallel_degrade_converges_to_one_marker():
     """Chaos 2: 8 parallel limit=1 connects, empty status, mgmt down.
     Every hook degrades (ALLOW + replace markers) — final state must be
     exactly one marker regardless of interleaving."""
+    import tempfile
+
     with tempfile.TemporaryDirectory() as tmp:
-        users, sessions, server, status = _mktree(tmp)
+        users = os.path.join(tmp, "users")
+        sessions = os.path.join(tmp, "sessions")
+        server = os.path.join(tmp, "server")
+        for d in (users, sessions, server):
+            os.makedirs(d)
+        status = os.path.join(server, "status.log")
         open(status, "w").write("HEADER\tX\n")
         os.makedirs(os.path.join(users, "u1"))
         open(os.path.join(users, "u1", "limit"), "w").write("1")
         closed = _free_port()
-        base_env = _hook_env(users, sessions, server, status, closed)
+        base_env = {
+            **os.environ,
+            "OVNODE_USERS_DIR": users,
+            "OVNODE_SESSIONS_DIR": sessions,
+            "OVNODE_STATUS_FILE": status,
+            "OVNODE_MANAGEMENT_HOST": "127.0.0.1",
+            "OVNODE_MANAGEMENT_PORT": str(closed),
+            "common_name": "u1",
+        }
         procs = []
         for i in range(8):
             env = {
@@ -418,8 +584,8 @@ def test_disconnect_only_stale_keeps_live():
         with open(status_path, "w") as f:
             f.write("HEADER\tX\n" + _status_row("u1", "9.9.9.9:5001", "10.8.0.2", 9) + "\n")
         # parse_sessions reads the canonical path; monkeypatch it.
-        orig_parse = status_mod.parse_sessions
-        status_mod.parse_sessions = lambda: [
+        orig_parse = sess_mod._read_status_sessions
+        sess_mod._read_status_sessions = lambda: [
             {
                 "common_name": "u1",
                 "virtual_address": "10.8.0.2",
@@ -435,7 +601,7 @@ def test_disconnect_only_stale_keeps_live():
             assert out["removed_markers"] == ["u1.10.8.0.1"], out
             assert os.path.exists(os.path.join(tmp, "u1.10.8.0.2")), "live marker removed!"
         finally:
-            status_mod.parse_sessions = orig_parse
+            sess_mod._read_status_sessions = orig_parse
             sess_mod.user_diagnostics = orig_diag
             sess_mod.SESSIONS_DIR = old_sessions
 
@@ -470,6 +636,8 @@ def _mktree(tmp):
 
 def test_state_file_limit_enforced():
     """Merged `state` file drives the limit exactly like the legacy file."""
+    import tempfile
+
     with tempfile.TemporaryDirectory() as tmp:
         users, sessions, server, status = _mktree(tmp)
         os.makedirs(os.path.join(users, "u1"))
@@ -495,6 +663,8 @@ def test_state_file_limit_enforced():
 
 def test_state_file_disabled_rejects():
     """`disabled=1` in the merged file rejects without mgmt traffic."""
+    import tempfile
+
     with tempfile.TemporaryDirectory() as tmp:
         users, sessions, server, status = _mktree(tmp)
         os.makedirs(os.path.join(users, "u1"))
@@ -512,6 +682,8 @@ def test_state_file_disabled_rejects():
 
 def test_legacy_disabled_marker_still_rejects():
     """Pre-merge `disabled` existence marker keeps working (dual-read)."""
+    import tempfile
+
     with tempfile.TemporaryDirectory() as tmp:
         users, sessions, server, status = _mktree(tmp)
         os.makedirs(os.path.join(users, "u1"))

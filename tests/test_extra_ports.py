@@ -231,7 +231,7 @@ def test_template_generation_honours_state(root, monkeypatch):
     from core.openvpn import pki, ports
 
     template = tmp_path / "server" / "client-common.txt"
-    monkeypatch.setattr("core.openvpn.pki.paths.CLIENT_TEMPLATE", str(template))
+    monkeypatch.setattr(pki, "CLIENT_TEMPLATE", str(template))
     assert ports.set_extra_ports(1194, "443,8443")[0] is True
     template.unlink()
     pki._ensure_client_template()

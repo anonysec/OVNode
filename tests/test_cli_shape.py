@@ -345,7 +345,7 @@ def test_the_short_help_does_not_carry_the_flag_list():
     text = _short_help()
     for section in ("OPTIONS", "ENVIRONMENT", "RETIRED NAMES", "FLAGS"):
         assert section not in text, f"short help carries a {section} section"
-    for token in ("OVN_YES", "OVN_PURGE"):
+    for token in ("OVN_YES", "OVN_PURGE", "-q, --quiet"):
         assert token not in text, f"short help carries {token}"
 
 

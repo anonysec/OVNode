@@ -15,12 +15,14 @@ YL=$'\033[33m'; CY=$'\033[36m'; GY=$'\033[90m'
 OR=$'\033[38;5;208m'
 [[ -t 2 && -z "${NO_COLOR:-}" && "${TERM:-dumb}" != "dumb" ]] \
     || { NC=''; B=''; D=''; WH=''; GR=''; RD=''; YL=''; CY=''; GY=''; OR=''; }
+: "${QUIET:=0}"
 
 # die <message> [exit-code]  — single error path.
 #
 # Deliberately not a render helper: this is the exit path, not decoration, and
 # it must keep working when the terminal is unusable and when render.sh failed
-# to source. An error nobody sees is a silent failure.
+# to source. QUIET does not silence it — an error nobody sees is a silent
+# failure.
 die() {
     local msg="$1" code="${2:-$EX_ERROR}"
     printf '\n  %bError:%b %s\n\n' "$RD" "$NC" "$msg" >&2
@@ -33,6 +35,9 @@ die() {
 # operator is watching — the wrong answer here would degrade the most common
 # install path.
 is_tty() { [[ -t 0 && -t 2 ]]; }
+
+# Spinners/prompts only for interactive humans.
+fancy()  { is_tty && [[ "$QUIET" -eq 0 ]]; }
 
 # run <label> <cmd...> — required step. A failure is fatal: continuing would
 # leave a half-installed node the operator believes is whole.
@@ -109,6 +114,16 @@ confirm() {
         read -r c
         [[ "$c" =~ ^[Yy]$ ]]
     fi
+}
+
+# Explicit-yes prompt (default NO) for destructive extras like deleting data.
+confirm_no() {
+    [[ "$YES" -eq 1 ]] && return 1
+    is_tty || return 1
+    render_ask "$1" "y/N"
+    local c=""
+    read -r c
+    [[ "$c" =~ ^[Yy]$ ]]
 }
 
 # confirm_word <question> <word> — the destructive default. `uninstall` asks for

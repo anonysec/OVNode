@@ -5,11 +5,10 @@
 
 import os
 import subprocess
-from datetime import UTC, datetime
+from datetime import UTC
 
 from core.logger import logger
-from core.openvpn.pki import easyrsa as _easyrsa_mod
-from core.openvpn.pki import paths as _paths
+from core.openvpn import pki as _pki
 
 # ── CRL ──────────────────────────────────────────────────────────────
 
@@ -24,14 +23,14 @@ def _crl_days_remaining() -> int | None:
     """Days until the CRL's nextUpdate, or None when it cannot be read."""
     try:
         out = subprocess.check_output(
-            ["openssl", "crl", "-nextupdate", "-noout", "-in", _paths.CRL_FILE],
+            ["openssl", "crl", "-nextupdate", "-noout", "-in", _pki.CRL_FILE],
             text=True,
             timeout=10,
         )
     except Exception as e:
         logger.warning("Could not read CRL nextUpdate: %s", e)
         return None
-    return _days_until_openssl_date(out)
+    return _pki._days_until_openssl_date(out)
 
 
 _MONTHS = {
@@ -40,29 +39,28 @@ _MONTHS = {
 }  # fmt: skip
 
 
-def parse_openssl_date(raw: str) -> datetime:
-    """Parse an openssl date value ('nextUpdate=Aug 28 12:00:00 2027 GMT').
+def _days_until_openssl_date(raw: str) -> int | None:
+    """Parse 'nextUpdate=Aug 28 12:00:00 2027 GMT' → whole days from now.
 
     Parsed by hand because openssl always prints English month names while
     strptime('%b') is locale-dependent.
     """
-    month_s, day_s, time_s, year_s, _tz = raw.split("=", 1)[1].strip().split()
-    hour_s, minute_s, second_s = time_s.split(":")
-    return datetime(
-        int(year_s),
-        _MONTHS[month_s],
-        int(day_s),
-        int(hour_s),
-        int(minute_s),
-        int(second_s),
-        tzinfo=UTC,
-    )
+    from datetime import datetime
 
-
-def _days_until_openssl_date(raw: str) -> int | None:
-    """Parse 'nextUpdate=Aug 28 12:00:00 2027 GMT' → whole days from now."""
     try:
-        return int((parse_openssl_date(raw) - datetime.now(UTC)).total_seconds() // 86400)
+        value = raw.split("=", 1)[1].strip()
+        month_s, day_s, time_s, year_s, _tz = value.split()
+        hour_s, minute_s, second_s = time_s.split(":")
+        expiry = datetime(
+            int(year_s),
+            _pki._MONTHS[month_s],
+            int(day_s),
+            int(hour_s),
+            int(minute_s),
+            int(second_s),
+            tzinfo=UTC,
+        )
+        return int((expiry - datetime.now(UTC)).total_seconds() // 86400)
     except (IndexError, KeyError, ValueError) as e:
         logger.warning("Unparseable CRL date %r: %s", raw.strip(), e)
         return None
@@ -74,10 +72,10 @@ def renew_server_certificate() -> bool:
     easyrsa archives the old certificate under ``pki/renewed/`` and issues a
     fresh one; callers restart OpenVPN afterwards so clients pick it up.
     """
-    if not os.path.exists(_paths.SERVER_CERT):
-        logger.error("Cannot renew server certificate: %s is missing", _paths.SERVER_CERT)
+    if not os.path.exists(_pki.SERVER_CERT):
+        logger.error("Cannot renew server certificate: %s is missing", _pki.SERVER_CERT)
         return False
-    if not _easyrsa_mod._easyrsa("renew", "server", "nopass"):
+    if not _pki._easyrsa("renew", "server", "nopass"):
         logger.error("Server certificate renewal failed")
         return False
     logger.info("Server certificate renewed (previous cert archived under renewed/)")
@@ -91,20 +89,20 @@ def crl_is_current() -> bool:
     may not list a just-revoked certificate. Callers use this to decide whether
     a ``gen-crl`` run is still owed before reporting a delete as complete.
     """
-    index = os.path.join(_paths.PKI_DIR, "index.txt")
+    index = os.path.join(_pki.PKI_DIR, "index.txt")
     try:
-        return os.path.getmtime(_paths.CRL_FILE) >= os.path.getmtime(index)
+        return os.path.getmtime(_pki.CRL_FILE) >= os.path.getmtime(index)
     except OSError:
         return False
 
 
 def _ensure_crl() -> bool:
     """Generate the CRL when missing or near expiry; keep it OpenVPN-readable."""
-    if os.path.exists(_paths.CRL_FILE):
-        days = _crl_days_remaining()
-        if days is not None and days > _CRL_RENEW_THRESHOLD_DAYS:
+    if os.path.exists(_pki.CRL_FILE):
+        days = _pki._crl_days_remaining()
+        if days is not None and days > _pki._CRL_RENEW_THRESHOLD_DAYS:
             try:
-                os.chmod(_paths.CRL_FILE, 0o644)
+                os.chmod(_pki.CRL_FILE, 0o644)
             except OSError:
                 pass
             return True
@@ -113,28 +111,28 @@ def _ensure_crl() -> bool:
         logger.warning(
             "CRL expires in %s days (threshold %d) — regenerating",
             days,
-            _CRL_RENEW_THRESHOLD_DAYS,
+            _pki._CRL_RENEW_THRESHOLD_DAYS,
         )
-        if not _easyrsa_mod._easyrsa("gen-crl"):
+        if not _pki._easyrsa("gen-crl"):
             logger.error("CRL renewal failed — clients will be rejected once it expires!")
             return days is not None and days > 0
         try:
-            os.chmod(_paths.CRL_FILE, 0o644)
+            os.chmod(_pki.CRL_FILE, 0o644)
         except OSError:
             pass
-        logger.info("CRL renewed at %s", _paths.CRL_FILE)
+        logger.info("CRL renewed at %s", _pki.CRL_FILE)
         return True
-    if not _easyrsa_mod._easyrsa("gen-crl"):
+    if not _pki._easyrsa("gen-crl"):
         logger.error("CRL generation failed — revoked certs may remain usable.")
         return False
-    if not os.path.exists(_paths.CRL_FILE):
-        logger.error("EasyRSA reported CRL success but %s was not created.", _paths.CRL_FILE)
+    if not os.path.exists(_pki.CRL_FILE):
+        logger.error("EasyRSA reported CRL success but %s was not created.", _pki.CRL_FILE)
         return False
     try:
-        os.chmod(_paths.CRL_FILE, 0o644)
+        os.chmod(_pki.CRL_FILE, 0o644)
     except OSError:
         pass
-    logger.info("Certificate revocation list ready at %s", _paths.CRL_FILE)
+    logger.info("Certificate revocation list ready at %s", _pki.CRL_FILE)
     return True
 
 
@@ -144,11 +142,11 @@ def _ensure_crl() -> bool:
 def read_tls_crypt_key() -> str | None:
     """Return the tls-crypt pre-shared key, or None if unavailable."""
     try:
-        with open(_paths.TLS_KEY, encoding="utf-8") as f:
+        with open(_pki.TLS_KEY, encoding="utf-8") as f:
             key = f.read().strip()
         return key or None
     except OSError as e:
-        logger.error("Could not read tls-crypt key %s: %s", _paths.TLS_KEY, e)
+        logger.error("Could not read tls-crypt key %s: %s", _pki.TLS_KEY, e)
         return None
 
 
@@ -158,7 +156,7 @@ def tls_crypt_block() -> str:
     Generated .ovpn files MUST contain this — server.conf requires tls-crypt,
     so without it the client handshake fails at "TLS key negotiation failed".
     """
-    key = read_tls_crypt_key()
+    key = _pki.read_tls_crypt_key()
     if not key:
         return ""
     return f"\n<tls-crypt>\n{key}\n</tls-crypt>\n"

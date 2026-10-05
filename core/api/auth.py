@@ -58,41 +58,39 @@ def _global_allowed(now: float) -> tuple[bool, float]:
     return True, 0.0
 
 
-def _bucket_take(
-    buckets: OrderedDict[str, list[float]],
-    key: str,
-    window: float,
-    max_requests: int,
-) -> tuple[bool, float]:
-    now = time.monotonic()
-    bucket = [ts for ts in buckets.get(key, []) if now - ts < window]
-    if len(bucket) >= max_requests:
-        retry_after = max(1.0, window - (now - bucket[0])) if bucket else 1.0
-        buckets[key] = bucket
-        return False, retry_after
-    bucket.append(now)
-    buckets[key] = bucket
-    return True, 0.0
-
-
 def _allowed(api_key: str) -> tuple[bool, float]:
+    now = time.monotonic()
     # Do not retain attacker-controlled API-key strings in memory.
     key = hashlib.sha256(str(api_key).encode()).hexdigest()[:32]
     with _ratelimit_lock:
-        now = time.monotonic()
         _prune(_ratelimit_buckets, now, _WINDOW)
         ok, retry_after = _global_allowed(now)
         if not ok:
             return False, retry_after
-        return _bucket_take(_ratelimit_buckets, key, _WINDOW, _MAX_REQUESTS)
+        bucket = [ts for ts in _ratelimit_buckets.get(key, []) if now - ts < _WINDOW]
+        if len(bucket) >= _MAX_REQUESTS:
+            retry_after = max(1.0, _WINDOW - (now - bucket[0])) if bucket else 1.0
+            _ratelimit_buckets[key] = bucket
+            return False, retry_after
+        bucket.append(now)
+        _ratelimit_buckets[key] = bucket
+    return True, 0.0
 
 
 def _heavy_allowed(api_key: str) -> tuple[bool, float]:
     """Tight bucket for cert-issuing endpoints. Returns (allowed, retry_after_s)."""
+    now = time.monotonic()
     key = hashlib.sha256(str(api_key).encode()).hexdigest()[:32]
     with _ratelimit_lock:
-        _prune(_heavy_buckets, time.monotonic(), _HEAVY_WINDOW)
-        return _bucket_take(_heavy_buckets, key, _HEAVY_WINDOW, _HEAVY_MAX)
+        _prune(_heavy_buckets, now, _HEAVY_WINDOW)
+        bucket = [ts for ts in _heavy_buckets.get(key, []) if now - ts < _HEAVY_WINDOW]
+        if len(bucket) >= _HEAVY_MAX:
+            retry_after = max(1.0, _HEAVY_WINDOW - (now - bucket[0]))
+            _heavy_buckets[key] = bucket
+            return False, retry_after
+        bucket.append(now)
+        _heavy_buckets[key] = bucket
+    return True, 0.0
 
 
 def _client_key(request: Request | None) -> str:

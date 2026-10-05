@@ -215,11 +215,9 @@ def test_pki_does_not_write_log_timestamp(monkeypatch, tmp_path):
     wider guard; this keeps the intent next to the TLS timing tests."""
     from core.openvpn import pki
 
-    monkeypatch.setattr("core.openvpn.pki.paths._OPENVPN_ROOT", str(tmp_path))
-    monkeypatch.setattr(
-        "core.openvpn.pki.paths.SERVER_CONF", str(tmp_path / "server" / "server.conf")
-    )
-    monkeypatch.setattr("core.openvpn.store.SCRIPTS_DIR", str(tmp_path / "scripts"))
+    monkeypatch.setattr(pki, "_OPENVPN_ROOT", str(tmp_path))
+    monkeypatch.setattr(pki, "SERVER_CONF", str(tmp_path / "server" / "server.conf"))
+    monkeypatch.setattr(pki, "SCRIPTS_DIR", str(tmp_path / "scripts"))
     conf = pki._fresh_server_conf()
     assert "log-append" in conf
     assert "log-timestamp" not in conf.splitlines()

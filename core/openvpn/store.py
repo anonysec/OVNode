@@ -30,17 +30,17 @@ import json
 import os
 import re
 import shutil
+import tempfile
 import time
 
 from core.logger import logger
-from core.openvpn.atomic import file_lock, openvpn_root, read_kv, write_text_atomic
 
 # A store key is any valid user identity: a client name (<=32 chars, dots
 # allowed) or a panel user id (UUID / simple id, <=64 chars). Path-safe by
 # construction — no separators, no traversal.
 _STORE_KEY_RE = re.compile(r"^[A-Za-z0-9._-]{1,64}$")
 
-_OPENVPN_ROOT = openvpn_root()
+_OPENVPN_ROOT = os.getenv("OVNODE_OPENVPN_ROOT", "/etc/openvpn")
 
 OVNODE_DIR = os.path.join(_OPENVPN_ROOT, "ovnode")
 USERS_DIR = os.path.join(OVNODE_DIR, "users")
@@ -166,13 +166,26 @@ def set_name(cn: str, name: str) -> None:
 # working with no migration step.
 
 
+def _parse_state_file(path: str) -> dict[str, str]:
+    try:
+        out: dict[str, str] = {}
+        with open(path, encoding="utf-8") as f:
+            for line in f:
+                if "=" in line:
+                    k, v = line.strip().split("=", 1)
+                    out[k.strip()] = v.strip()
+        return out
+    except OSError:
+        return {}
+
+
 def read_state(cn: str) -> dict[str, object]:
     """Merged {limit: int|None, disabled: bool} for a user.
 
     Prefers the `state` file; falls back per-field to the legacy `limit`
     value file and `disabled` existence marker.
     """
-    data = read_kv(_attr_path(cn, "state"))
+    data = _parse_state_file(_attr_path(cn, "state"))
     limit: int | None = None
     if data.get("limit", "").isdigit():
         limit = int(data["limit"])
@@ -202,11 +215,21 @@ def write_state(cn: str, limit: int | None = None, disabled: bool | None = None)
         disabled = current["disabled"]
     create_user(cn)
     path = _attr_path(cn, "state")
-    write_text_atomic(
-        path,
-        f"limit={int(limit) if limit is not None else 1}\ndisabled={1 if disabled else 0}\n",
-        prefix=".state-",
-    )
+    # mkstemp (O_EXCL) instead of a predictable pid-suffixed name: the store
+    # is touched by the runtime user, so a guessable tmp path is symlink bait.
+    fd, tmp = tempfile.mkstemp(dir=os.path.dirname(path), prefix=".state-")
+    try:
+        with os.fdopen(fd, "w", encoding="utf-8") as f:
+            f.write(f"limit={int(limit) if limit is not None else 1}\n")
+            f.write(f"disabled={1 if disabled else 0}\n")
+        os.chmod(tmp, 0o644)
+        os.replace(tmp, path)
+    except BaseException:
+        try:
+            os.remove(tmp)
+        except OSError:
+            pass
+        raise
     for legacy in ("limit", "disabled"):
         try:
             os.remove(_attr_path(cn, legacy))
@@ -214,10 +237,19 @@ def write_state(cn: str, limit: int | None = None, disabled: bool | None = None)
             pass
 
 
+def get_limit(cn: str) -> int | None:
+    value = read_state(cn)["limit"]
+    return int(value) if value is not None else None
+
+
 def set_limit(cn: str, max_logins: int) -> None:
     # Read by the connect hook (as the OpenVPN runtime user) → the merged
     # file stays world-readable.
     write_state(cn, limit=max(0, int(max_logins)))
+
+
+def is_disabled(cn: str) -> bool:
+    return bool(read_state(cn)["disabled"])
 
 
 def set_disabled(cn: str, disabled: bool) -> None:
@@ -306,10 +338,14 @@ def reset_usage(cn: str) -> None:
     usage_file = os.path.join(USAGE_DIR, safe)
     lock_path = os.path.join(USAGE_DIR, f".lock.{safe}")
     try:
-        with file_lock(lock_path) as lock_err:
-            if lock_err is not None:
-                raise lock_err
-            os.remove(usage_file)
+        import fcntl
+
+        with open(lock_path, "a") as lock_fh:
+            fcntl.flock(lock_fh.fileno(), fcntl.LOCK_EX)
+            try:
+                os.remove(usage_file)
+            finally:
+                fcntl.flock(lock_fh.fileno(), fcntl.LOCK_UN)
     except FileNotFoundError:
         pass
     except OSError as e:

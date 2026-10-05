@@ -42,7 +42,7 @@ def test_status_offloads_the_crl_check_to_the_threadpool(monkeypatch):
 
     monkeypatch.setattr(routes, "run_in_threadpool", recording_run_in_threadpool)
     monkeypatch.setattr(routes, "_crl_last_check", 0.0, raising=False)
-    monkeypatch.setattr("core.openvpn.pki.certs._ensure_crl", fake_ensure_crl, raising=False)
+    monkeypatch.setattr("core.openvpn.pki._ensure_crl", fake_ensure_crl, raising=False)
 
     _clear_limits()
     c, headers = _client()
@@ -61,7 +61,7 @@ def test_status_still_answers_when_the_crl_check_explodes(monkeypatch):
         raise RuntimeError("easyrsa is missing")
 
     monkeypatch.setattr(routes, "_crl_last_check", 0.0, raising=False)
-    monkeypatch.setattr("core.openvpn.pki.certs._ensure_crl", boom, raising=False)
+    monkeypatch.setattr("core.openvpn.pki._ensure_crl", boom, raising=False)
 
     _clear_limits()
     c, headers = _client()
@@ -83,7 +83,7 @@ def test_the_crl_check_is_rate_limited_to_once_a_day(monkeypatch):
         return True
 
     monkeypatch.setattr(routes, "_crl_last_check", time.monotonic(), raising=False)
-    monkeypatch.setattr("core.openvpn.pki.certs._ensure_crl", fake_ensure_crl, raising=False)
+    monkeypatch.setattr("core.openvpn.pki._ensure_crl", fake_ensure_crl, raising=False)
 
     _clear_limits()
     c, headers = _client()
