@@ -25,11 +25,12 @@ from collections import Counter
 from typing import Any
 
 from core.logger import logger
+from core.openvpn import status
+from core.openvpn.atomic import openvpn_root
 from core.openvpn.store import OVNODE_DIR, SESSIONS_DIR
 from core.validation import _CLIENT_NAME_RE, _SIMPLE_ID_RE, _UUID_RE
 
-_OPENVPN_ROOT = os.getenv("OVNODE_OPENVPN_ROOT", "/etc/openvpn")
-STATUS_FILE = os.getenv("OVNODE_STATUS_FILE", os.path.join(_OPENVPN_ROOT, "server", "status.log"))
+_OPENVPN_ROOT = openvpn_root()
 # Canonical host var is OVNODE_MANAGEMENT_HOST; the connect hook
 # historically reads OVNODE_MGMT_HOST, so accept both (canonical wins).
 _OVPN_MGMT_HOST = (
@@ -98,13 +99,6 @@ _mgmt_available_at = 0.0
 # has no journalctl at all, so without this every cache miss forked a doomed
 # subprocess and its warning inflated warnings_1h on every poll.
 _journal_available: bool | None = None
-
-
-def _read_status_sessions() -> list[dict[str, Any]]:
-    """Read live sessions from the OpenVPN status file."""
-    from core.openvpn.status import parse_sessions
-
-    return parse_sessions()
 
 
 def _read_active_files() -> list[dict[str, Any]]:
@@ -418,7 +412,7 @@ def user_diagnostics(common_name: str | None = None, hours: int = 8) -> dict[str
                                 reason, peer) for the panel's Security view;
                                 only ``failure`` is a real auth/TLS problem.
     """
-    live = _read_status_sessions()
+    live = status.parse_sessions()
     active = _read_active_files()
     index = _live_index(live)
     stale = [a for a in active if not _marker_is_live(a, live, index)]
@@ -719,7 +713,7 @@ def disconnect_user(common_name: str, only_stale: bool = False) -> dict[str, Any
     marker otherwise means "full" forever.
     """
     before = user_diagnostics(common_name=common_name, hours=8)
-    live_sessions = _read_status_sessions()
+    live_sessions = status.parse_sessions()
     if only_stale:
         mgmt = {"available": None, "ok": None, "skipped": "only_stale"}
     else:

@@ -13,17 +13,14 @@ limits — and reports usage in the exact shape OVManager consumes.
 from __future__ import annotations
 
 import os
-import subprocess
 import tempfile
 
 from core.logger import logger
 from core.openvpn import store
 from core.openvpn.pki import PKI_DIR, tls_crypt_block
+from core.openvpn.pki import paths as _paths
 from core.openvpn.pki import run_easyrsa as _easyrsa
 from core.validation import DeleteResult
-
-_OPENVPN_ROOT = os.getenv("OVNODE_OPENVPN_ROOT", "/etc/openvpn")
-CLIENT_TEMPLATE = os.path.join(_OPENVPN_ROOT, "server", "client-common.txt")
 
 
 def cn_from_uid(uid: str) -> str:
@@ -63,7 +60,7 @@ def _build_ovpn(cn: str) -> bool:
     if cert_src is None:
         logger.warning("No certificate material for cn='%s'; cannot build .ovpn", cn)
         return False
-    if not os.path.exists(CLIENT_TEMPLATE):
+    if not os.path.exists(_paths.CLIENT_TEMPLATE):
         logger.warning("client-common.txt missing; cannot build .ovpn for cn='%s'", cn)
         return False
     # The inline bundle is the cert + CA chain; the private key lives next
@@ -82,13 +79,18 @@ def _build_ovpn(cn: str) -> bool:
         directory = os.path.dirname(out_path) or "."
         fd, tmp_path = tempfile.mkstemp(dir=directory, prefix=".client-ovpn-")
         try:
-            with os.fdopen(fd, "w", encoding="utf-8") as out:
-                subprocess.run(
-                    ["grep", "-vh", "^#", CLIENT_TEMPLATE, cert_src],
-                    stdout=out,
-                    check=True,
-                    timeout=30,
-                )
+            with os.fdopen(fd, "w", encoding="utf-8", errors="surrogateescape") as out:
+                for src in (_paths.CLIENT_TEMPLATE, cert_src):
+                    with open(src, encoding="utf-8", errors="surrogateescape") as source:
+                        for line in source.read().splitlines(keepends=True):
+                            if line.startswith("#"):
+                                continue
+                            out.write(line)
+                            # grep always terminates its last output line with a
+                            # newline; without this a file lacking a final newline
+                            # concatenates onto the next source's first line.
+                            if not line.endswith(("\n", "\r")):
+                                out.write("\n")
                 # Embed the private key in the standard <key>…</key> block.
                 with open(key_path, encoding="utf-8") as kf:
                     out.write("<key>\n")
@@ -182,7 +184,7 @@ def delete_user_on_server(uid: str) -> DeleteResult:
             logger.error("Failed to regenerate CRL while completing delete of '%s'", cn)
             return DeleteResult.FAILED
 
-    for path in (crt, inline, os.path.join(_OPENVPN_ROOT, "ccd", cn)):
+    for path in (crt, inline, os.path.join(_paths.openvpn_root(), "ccd", cn)):
         try:
             os.remove(path)
         except FileNotFoundError:

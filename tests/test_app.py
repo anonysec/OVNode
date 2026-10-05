@@ -31,21 +31,6 @@ def test_version_endpoint():
     assert __version__ is not None
 
 
-def test_validation_client_name():
-    """validate_client_name must accept safe CNs and reject dangerous ones."""
-    from core.validation import validate_client_name
-
-    assert validate_client_name("alice") == "alice"
-    assert validate_client_name("user_1") == "user_1"
-    assert validate_client_name("a.b-c") == "a.b-c"
-    assert validate_client_name("../../etc/passwd") is None
-    assert validate_client_name("a b") is None
-    assert validate_client_name("$(rm -rf /)") is None
-    assert validate_client_name("") is None
-    assert validate_client_name(None) is None
-    assert validate_client_name("x" * 33) is None
-
-
 def test_validation_user_id():
     """validate_user_id must accept UUIDs and simple IDs, reject garbage."""
     from core.validation import validate_user_id

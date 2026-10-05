@@ -72,7 +72,7 @@ ok("remote " in tpl and " 1194" in tpl, "tpl remote line present")
 
 # client .ovpn embeds tls-crypt
 from core.openvpn.users import create_user_on_server
-from core.openvpn.store import ovpn_path, get_limit
+from core.openvpn.store import ovpn_path, read_state
 uid = "testuser42"
 ok(create_user_on_server(uid, "Test User", max_logins=2), "create user")
 ovpn = read(ovpn_path(uid))
@@ -83,8 +83,7 @@ import glob as _glob
 _prof_dir = os.path.dirname(ovpn_path(uid))
 ok((os.stat(ovpn_path(uid)).st_mode & 0o777) == 0o600, "ovpn mode 0600")
 ok(not _glob.glob(os.path.join(_prof_dir, ".client-ovpn-*")), "no temp profiles")
-from core.openvpn.store import get_limit
-ok(get_limit(uid) == 2, "limit state")
+ok(read_state(uid)["limit"] == 2, "limit state")
 
 # existing conf hardening preserves admin edits
 with open(SERVER_CONF, "w") as f:
@@ -215,10 +214,12 @@ def test_generated_profile_never_contains_placeholder(monkeypatch, tmp_path):
     import core.openvpn.pki as pki
 
     monkeypatch.setenv("TUNNEL_ADDRESS", "")
-    monkeypatch.setattr(pki, "_node_public_ip", lambda: "203.0.113.7")
-    monkeypatch.setattr(pki, "CLIENT_TEMPLATE", str(tmp_path / "client-common.txt"))
-    monkeypatch.setattr(pki, "_openvpn_port", lambda: 1194)
-    monkeypatch.setattr(pki, "_extra_vpn_ports", lambda: [])
+    monkeypatch.setattr("core.openvpn.pki.node._node_public_ip", lambda: "203.0.113.7")
+    monkeypatch.setattr(
+        "core.openvpn.pki.paths.CLIENT_TEMPLATE", str(tmp_path / "client-common.txt")
+    )
+    monkeypatch.setenv("OPENVPN_PORT", "1194")
+    monkeypatch.setenv("OVNODE_EXTRA_PORTS", "")
 
     pki._ensure_client_template()
     written = (tmp_path / "client-common.txt").read_text(encoding="utf-8")

@@ -13,6 +13,7 @@ from __future__ import annotations
 import json
 import os
 import sys
+from pathlib import Path
 
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
 
@@ -22,8 +23,6 @@ os.environ["DOC"] = "true"
 from core.app import api  # noqa: E402
 
 schema = api.openapi()
-out = os.path.join(os.path.dirname(__file__), "openapi.json")
-with open(out, "w", encoding="utf-8") as fh:
-    json.dump(schema, fh, indent=2, ensure_ascii=False)
-    fh.write("\n")
+out = Path(__file__).with_name("openapi.json")
+out.write_text(json.dumps(schema, indent=2, ensure_ascii=False) + "\n", encoding="utf-8")
 print(f"wrote {out} ({len(schema.get('paths', {}))} paths)")

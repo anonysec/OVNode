@@ -1,10 +1,14 @@
 # Copyright (c) 2026 anonysec
 # SPDX-License-Identifier: MIT
 
-"""Atomic writes for non-secret OpenVPN config and policy files.
+"""Atomic writes, file locks and the OpenVPN root for the whole domain.
 
 Temp file + fsync + rename: a reader sees the old file or the new one, never
 a half-written one — server.conf is the only copy OpenVPN will start from.
+
+Leaf module: it imports nothing else from ``core.openvpn``, so every submodule
+(including :mod:`core.openvpn.store`, which the PKI imports) can depend on it
+without a circular import.
 """
 
 from __future__ import annotations
@@ -12,8 +16,74 @@ from __future__ import annotations
 import os
 import shutil
 import tempfile
+from contextlib import contextmanager
 
 from core.logger import logger
+
+
+def openvpn_root() -> str:
+    """The OpenVPN root directory.
+
+    Single source for the ``OVNODE_OPENVPN_ROOT`` default; every module that
+    needs a path under it calls this or imports a constant derived from it.
+    """
+    return os.getenv("OVNODE_OPENVPN_ROOT", "/etc/openvpn")
+
+
+def read_kv(path: str) -> dict[str, str]:
+    """Read a ``key=value`` state file into a dict (``{}`` when unreadable).
+
+    Whitespace around keys and values is stripped; lines without ``=`` are
+    skipped; duplicate keys keep the last occurrence.
+    """
+    out: dict[str, str] = {}
+    try:
+        with open(path, encoding="utf-8") as f:
+            for line in f:
+                if "=" not in line:
+                    continue
+                key, _, value = line.strip().partition("=")
+                out[key.strip()] = value.strip()
+    except OSError:
+        pass
+    return out
+
+
+@contextmanager
+def file_lock(path: str):
+    """Hold an exclusive ``flock`` on ``path`` for the duration of the block.
+
+    Yields ``None`` while the lock is held, or the :class:`OSError` when the
+    lock file cannot be *opened* — the caller decides whether to refuse or
+    proceed unlocked. A failure to acquire the lock itself (``flock``) is
+    re-raised: it means the lock exists but is unusable, so silently
+    proceeding unlocked would defeat the mutual exclusion. The lock (and
+    file) is always released.
+    """
+    import fcntl
+
+    fh = None
+    err: OSError | None = None
+    try:
+        fh = open(path, "a")
+    except OSError as e:
+        err = e
+    else:
+        try:
+            fcntl.flock(fh.fileno(), fcntl.LOCK_EX)
+        except OSError:
+            fh.close()
+            fh = None
+            raise
+    try:
+        yield err
+    finally:
+        if fh is not None:
+            try:
+                fcntl.flock(fh.fileno(), fcntl.LOCK_UN)
+            except OSError:
+                pass
+            fh.close()
 
 
 def write_text_atomic(

@@ -68,7 +68,7 @@ def _ensure_crl_fresh_sync() -> None:
         return
     _crl_last_check = now
     try:
-        from core.openvpn.pki import _ensure_crl
+        from core.openvpn.pki.certs import _ensure_crl
 
         _ensure_crl()
     except Exception:
@@ -207,11 +207,10 @@ def _openssl_enddate(cert_file: str) -> str | None:
     line = out.stdout.strip()
     if not line.startswith("notAfter="):
         return None
-    # OpenSSL emits RFC2822 (e.g. "Aug 12 12:00:00 2027 GMT").
-    import datetime as _dt
+    from core.openvpn.pki.certs import parse_openssl_date
 
-    parsed = _dt.datetime.strptime(line[len("notAfter=") :].strip(), "%b %d %H:%M:%S %Y %Z")
-    return parsed.date().isoformat()
+    # OpenSSL emits RFC2822 (e.g. "Aug 12 12:00:00 2027 GMT").
+    return parse_openssl_date(line).date().isoformat()
 
 
 _pki_expiry_cached: tuple[str | None, str | None] | None = None

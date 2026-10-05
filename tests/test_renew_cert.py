@@ -34,7 +34,7 @@ def test_renew_cert_success(monkeypatch):
         calls.append("restart")
         return True
 
-    monkeypatch.setattr("core.openvpn.pki.renew_server_certificate", fake_renew)
+    monkeypatch.setattr("core.openvpn.pki.certs.renew_server_certificate", fake_renew)
     monkeypatch.setattr("core.openvpn.control.restart_openvpn", fake_restart)
     monkeypatch.setattr(routes, "_openssl_enddate", lambda path: "2028-01-01")
 
@@ -54,7 +54,7 @@ def test_renew_cert_requires_auth():
 
 
 def test_renew_cert_renewal_failure(monkeypatch):
-    monkeypatch.setattr("core.openvpn.pki.renew_server_certificate", lambda: False)
+    monkeypatch.setattr("core.openvpn.pki.certs.renew_server_certificate", lambda: False)
     c, headers = _client()
     body = c.post("/sync/renew-cert", headers=headers).json()
     assert body["success"] is False
@@ -62,7 +62,7 @@ def test_renew_cert_renewal_failure(monkeypatch):
 
 
 def test_renew_cert_restart_failure(monkeypatch):
-    monkeypatch.setattr("core.openvpn.pki.renew_server_certificate", lambda: True)
+    monkeypatch.setattr("core.openvpn.pki.certs.renew_server_certificate", lambda: True)
     monkeypatch.setattr("core.openvpn.control.restart_openvpn", lambda: False)
     c, headers = _client()
     body = c.post("/sync/renew-cert", headers=headers).json()

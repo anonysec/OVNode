@@ -15,9 +15,9 @@ from __future__ import annotations
 import ipaddress
 import os
 import re
-import tempfile
 
 from core.logger import logger
+from core.openvpn.atomic import openvpn_root, read_kv, write_text_atomic
 
 DEFAULT_PREFIX = "fd42:42:42:42::/64"
 
@@ -33,8 +33,7 @@ _ROUTE_IPV6_RE = re.compile(r'^\s*push\s+"?route-ipv6\s+2000::/3"?\s*$')
 
 def state_path() -> str:
     """Location of the desired-IPv6 state file (root read at call time)."""
-    root = os.getenv("OVNODE_OPENVPN_ROOT", "/etc/openvpn")
-    return os.path.join(root, "ovnode", "ipv6")
+    return os.path.join(openvpn_root(), "ovnode", "ipv6")
 
 
 def validate_prefix(value: object) -> str | None:
@@ -59,27 +58,19 @@ def validate_prefix(value: object) -> str | None:
 def _defaults() -> tuple[bool, str]:
     """Installer/env defaults, used for un-pinned state values."""
     try:
-        from core.openvpn.pki import _ipv6_enabled, _ipv6_prefix
+        from core.openvpn.pki.paths import _env
 
-        return _ipv6_enabled(), validate_prefix(_ipv6_prefix()) or DEFAULT_PREFIX
+        enabled = _env("enable_ipv6", "0").lower() in ("1", "true", "yes", "on")
+        prefix = _env("ipv6_prefix", "fd42:42:42:42::/64")
+        return enabled, validate_prefix(prefix) or DEFAULT_PREFIX
     except Exception:
         return False, DEFAULT_PREFIX
 
 
 def read_state() -> dict[str, str]:
     """enabled/prefix from the state file ({} when unset or unreadable)."""
-    state: dict[str, str] = {}
-    try:
-        with open(state_path(), encoding="utf-8") as f:
-            for line in f:
-                if "=" not in line:
-                    continue
-                key, _, value = line.strip().partition("=")
-                if key in _STATE_KEYS and value.strip():
-                    state[key] = value.strip()
-    except OSError:
-        pass
-    return state
+    state = read_kv(state_path())
+    return {key: value for key, value in state.items() if key in _STATE_KEYS and value}
 
 
 def write_state(enabled: bool, prefix: str) -> bool:
@@ -88,22 +79,9 @@ def write_state(enabled: bool, prefix: str) -> bool:
     path = state_path()
     if read_state() == desired and os.path.exists(path):
         return False
-    directory = os.path.dirname(path)
+    content = "".join(f"{key}={desired[key]}\n" for key in _STATE_KEYS)
     try:
-        os.makedirs(directory, exist_ok=True)
-        fd, tmp = tempfile.mkstemp(dir=directory, prefix=".ipv6-")
-        try:
-            with os.fdopen(fd, "w", encoding="utf-8") as f:
-                for key in _STATE_KEYS:
-                    f.write(f"{key}={desired[key]}\n")
-            os.chmod(tmp, 0o644)
-            os.replace(tmp, path)
-        except BaseException:
-            try:
-                os.remove(tmp)
-            except OSError:
-                pass
-            raise
+        write_text_atomic(path, content, prefix=".ipv6-")
     except OSError as e:
         logger.error("ipv6: could not write state file %s: %s", path, e)
         return False

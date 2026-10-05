@@ -1,14 +1,14 @@
 # Copyright (c) 2026 anonysec
 # SPDX-License-Identifier: MIT
 
-"""Node-local lookups: this node's address, the openvpn binary, remote lines."""
+"""Node-local lookups: this node's address, ports, and the openvpn binary."""
 
 import os
 import shutil
 import socket
 import subprocess
 
-from core.openvpn import pki as _pki
+from core.openvpn.pki import paths as _paths
 
 
 def _node_public_ip() -> str:
@@ -34,7 +34,7 @@ def _node_public_ip() -> str:
 
 def _remote_lines(tunnel_addr: str, primary_port: int) -> str:
     """One `remote` line per reachable port — clients fail over in order."""
-    ports = [primary_port, *_pki._extra_vpn_ports()]
+    ports = [primary_port, *_paths._extra_vpn_ports()]
     return "\n".join(f"remote {tunnel_addr} {p}" for p in ports)
 
 

@@ -26,12 +26,9 @@ from core.openvpn import ipv6 as ipv6_policy
 from core.openvpn import ports as ports_policy
 from core.openvpn import store
 from core.openvpn.pki import _node_public_ip
+from core.openvpn.pki.paths import PID_FILE, openvpn_root
 
 logger = logging.getLogger("ovnode.openvpn")
-
-_OPENVPN_ROOT = os.getenv("OVNODE_OPENVPN_ROOT", "/etc/openvpn")
-SERVER_CONF = os.path.join(_OPENVPN_ROOT, "server", "server.conf")
-PID_FILE = os.path.join(_OPENVPN_ROOT, "server", "ovnode.pid")
 
 
 def openvpn_is_running() -> bool:
@@ -140,11 +137,9 @@ def read_config() -> dict:
     drift after a manual server.conf edit: port/proto from server.conf, tunnel
     address from the client template's first `remote` line.
     """
-    import os as _os
-
-    openvpn_root = _os.getenv("OVNODE_OPENVPN_ROOT", "/etc/openvpn")
-    setting_file = _os.path.join(openvpn_root, "server", "server.conf")
-    template_file = _os.path.join(openvpn_root, "server", "client-common.txt")
+    root = openvpn_root()
+    setting_file = os.path.join(root, "server", "server.conf")
+    template_file = os.path.join(root, "server", "client-common.txt")
     port: int | None = None
     proto: str | None = None
     tunnel_address: str | None = None
@@ -279,9 +274,9 @@ def change_config(request) -> bool:
       the template is only read when generating .ovpn profiles.
     - extra-ports change (template + NAT redirects, no rebind) → SIGHUP.
     """
-    openvpn_root = os.getenv("OVNODE_OPENVPN_ROOT", "/etc/openvpn")
-    setting_file = os.path.join(openvpn_root, "server", "server.conf")
-    template_file = os.path.join(openvpn_root, "server", "client-common.txt")
+    root = openvpn_root()
+    setting_file = os.path.join(root, "server", "server.conf")
+    template_file = os.path.join(root, "server", "client-common.txt")
     # Normalize protocol to tcp/udp (ignore any tcp-server/udp6 style variants).
     proto = "tcp" if str(request.protocol).lower().startswith("tcp") else "udp"
     # Validate the port before touching any file.

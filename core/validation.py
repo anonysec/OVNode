@@ -6,11 +6,9 @@
 OpenVPN's client identity is the certificate Common Name (CN), which the node
 stores on disk as /etc/openvpn/ccd/<name>, /etc/openvpn/limits/<name> and
 /etc/openvpn/clients/<name>.ovpn, and feeds to the interactive installer via
-pexpect. A bad `name` can therefore break file paths or the installer flow, so
-every user supplied `name` MUST pass validate_client_name() before it touches
-disk or a child process. The panel also sends a stable `id` (UUID or simple
-numeric/alphanumeric ID) which is used as the authoritative API key and is
-validated by validate_user_id().
+pexpect. The panel sends a stable `id` (UUID or simple numeric/alphanumeric
+ID) which becomes that identity and is validated by validate_user_id() before
+it touches disk or a child process; the store re-checks it with _safe_cn().
 """
 
 from __future__ import annotations
@@ -37,19 +35,6 @@ class DeleteResult(enum.Enum):
     OK = "ok"
     NOT_FOUND = "not_found"
     FAILED = "failed"
-
-
-def validate_client_name(name: str | None) -> str | None:
-    """Return `name` if it is a safe OpenVPN client CN, else None.
-
-    `None` is returned (caller should 400) rather than raising, so the router
-    can produce a clean error without importing exceptions here.
-    """
-    if not name or not isinstance(name, str):
-        return None
-    if not _CLIENT_NAME_RE.match(name):
-        return None
-    return name
 
 
 def validate_user_id(uid: str | None) -> str | None:

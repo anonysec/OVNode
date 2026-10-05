@@ -83,16 +83,12 @@ if [[ "$RENDER_SPINNER_UNICODE" -eq 1 ]]; then
     RENDER_OK='✓'
     RENDER_BAD='✗'
     RENDER_RULE='──────────────────────────────────────────────'
-    RENDER_BAR_FULL='█'
-    RENDER_BAR_EMPTY='░'
 else
     RENDER_FRAMES='-\|/-\'
     RENDER_POINTER='>'
     RENDER_OK='ok'
     RENDER_BAD='XX'
     RENDER_RULE='----------------------------------------------'
-    RENDER_BAR_FULL='#'
-    RENDER_BAR_EMPTY='.'
 fi
 
 _render_paint() {  # _render_paint <colour> <text> — no-op when colour is off
@@ -120,15 +116,6 @@ _render_cursor_advanced() {
 _render_ms() {
     [[ -n "${1:-}" ]] || { printf ''; return 0; }
     awk -v ms="${1}" 'BEGIN { s = ms / 1000; if (s >= 60) printf "%dm%02ds", int(s/60), s%60; else if (s >= 10) printf "%.0fs", s; else printf "%.1fs", s }' | tr -d '\n' | awk '{ printf "%7s", $0 }'
-}
-
-_render_bar() {  # _render_bar <fraction 0-1> <width>
-    local filled width="${2:-24}" frac="$1" i bar=""
-    filled="$(awk -v f="$frac" -v w="$width" 'BEGIN { n = int(f * w + 0.5); print (n < 0 ? 0 : (n > w ? w : n)) }')"
-    for (( i = 0; i < width; i++ )); do
-        if (( i < filled )); then bar+="$RENDER_BAR_FULL"; else bar+="$RENDER_BAR_EMPTY"; fi
-    done
-    printf '%s' "$bar"
 }
 
 # ── Banner / screen ─────────────────────────────────────────────────────
@@ -397,24 +384,6 @@ render_unwatch() {
     RENDER_SPIN_PID=""
     RENDER_SPIN_FLAG=""
     RENDER_SPIN_DETAIL=""
-    return 0
-}
-
-# render_bytes <have> <total> <kb_per_s> — the detail line for a transfer.
-# With a total it is a bar, without one it is a plain count that grows. The
-# bar appears the moment the size is known and not before, so the one number on
-# screen is never a fiction.
-_render_bytes() {
-    local have="${1:-0}" total="${2:-}" rate="${3:-0}"
-    if [[ "$total" =~ ^[0-9]+$ ]] && (( total > 0 )); then
-        local frac mb_have mb_total
-        frac="$(awk -v h="$have" -v t="$total" 'BEGIN{print h/t}')"
-        mb_have="$(awk -v b="$have" 'BEGIN{printf "%.1f", b/1048576}')"
-        mb_total="$(awk -v b="$total" 'BEGIN{printf "%.0f", b/1048576}')"
-        render_note "$(printf '%s  %s/%s MB · %s MB/s' "$(_render_bar "$frac" 16)" "$mb_have" "$mb_total" "$rate")"
-    else
-        render_note "$(awk -v b="$have" 'BEGIN{printf "%.1f MB · %s MB/s", b/1048576, '"$rate"'}')"
-    fi
     return 0
 }
 

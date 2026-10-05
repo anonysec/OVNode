@@ -60,7 +60,6 @@ IPV6="${OVN_IPV6:-0}"
 NO_NAT="${OVN_NO_NAT:-0}"
 YES="${OVN_YES:-0}"
 PURGE="${OVN_PURGE:-0}"
-QUIET="${OVN_QUIET:-0}"
 PIN="${OVN_VERSION:-}"
 # 1 when the caller passed a CLI flag (env defaults do not count).
 CLI_FLAGS=0
@@ -192,15 +191,15 @@ pkg_install() {
 }
 
 # ── Help / args ────────────────────────────────────────────────────────
-# Goes to stderr, not line()/warn(): those are silenced by --quiet and by a
-# non-TTY, and a deprecation nobody sees is not a deprecation.
+# Goes to stderr, like all human-readable output, so stdout stays clean for
+# callers; a deprecation nobody sees is not a deprecation.
 deprecated() {  # deprecated <flag> <what to do instead>
     printf '  %s⚠%s %s is deprecated; %s\n' "$YL" "$NC" "$1" "$2" >&2
 }
 
-# printf, not field(): field() is silenced by --quiet, and this command exists
-# to be read back by somebody else. A stale copy is normal (the raw CDN caches
-# for minutes); the commit prints only when something stamped it.
+# printf, not a renderer: this command exists to be read back by somebody else.
+# A stale copy is normal (the raw CDN caches for minutes); the commit prints
+# only when something stamped it.
 print_script_version() {
     printf '  %-18s %s\n' "Installer" "install.sh v${VERSION}" >&2
     printf '  %-18s %s\n' "Commit" \
@@ -262,8 +261,6 @@ show_help() {
     --ipv6                Enable IPv6 on the VPN            [OVN_IPV6=1]
     --no-nat              Skip forwarding/NAT/redirects     [OVN_NO_NAT=1]
     --purge               With uninstall: remove data too   [OVN_PURGE=1]
-    --quiet | -q          Suppress progress logs (errors still shown)
-                                                           [OVN_QUIET=1]
     -v, --version vX.Y.Z  Install/update this release instead of v${VERSION}
                                                           [OVN_VERSION]
     --from-release        Download the versioned release file [default]
@@ -315,7 +312,6 @@ parse_args() {
             --no-nat)     deprecated "--no-nat" "set OVN_NO_NAT=1 instead"; NO_NAT=1; CLI_FLAGS=1; shift ;;
             --yes|-y)     YES=1; CLI_FLAGS=1; shift ;;
             --purge)      deprecated "--purge" "set OVN_PURGE=1 instead"; PURGE=1; CLI_FLAGS=1; shift ;;
-            --quiet|-q)   deprecated "$1" "set OVN_QUIET=1 instead"; QUIET=1; shift ;;
             status|start|stop|restart|restart-vpn|logs|backup|auto-backup|tls)
                           die "'$1' moved to the manager — use: ovn $1" "$EX_USAGE" ;;
             menu)         die "The menu lives in the manager — run: ovn" "$EX_USAGE" ;;
@@ -852,11 +848,6 @@ fetch_release() {
     chown -R root:root "$dest"
     rm -rf "$work"
     render_ok "Release extracted"
-}
-
-fetch_source() {
-    # Source builds were removed: developers clone the repo and follow CONTRIBUTING.md.
-    die "Source installs were removed — the installer consumes verified releases only" "$EX_USAGE"
 }
 
 # Safety snapshot of every persistent state needed for rollback: identity
@@ -1871,12 +1862,8 @@ check_deps() {
 # ── Main ───────────────────────────────────────────────────────────────
 main() {
     parse_args "$@"
-    [[ -n "${OVN_SRC:-}" && "${OVN_SRC}" != "release" ]] && die "Source installs were removed — the installer consumes verified releases only (developers: clone the repo)" "$EX_USAGE"
+    [[ -n "${OVN_SRC:-}" && "${OVN_SRC}" != "release" ]] && die "Source installs were removed — the installer consumes verified releases only (developers: clone the repo and follow CONTRIBUTING.md)" "$EX_USAGE"
     [[ -n "${OVN_BRANCH:-}" ]] && die "OVN_BRANCH was removed with source installs — developers: git checkout the branch in a clone" "$EX_USAGE"
-    case "$SRC" in
-        release) ;;
-        *) die "Invalid source '$SRC' (releases only)" "$EX_USAGE" ;;
-    esac
     if [[ -n "$PIN" ]]; then
         valid_release_version "$PIN" \
             || die "Bad --version '$PIN' (use 1.2.3, v1.2.3, 1.2.3-rc1)" "$EX_USAGE"

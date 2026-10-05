@@ -14,9 +14,9 @@ from __future__ import annotations
 import ipaddress
 import os
 import re
-import tempfile
 
 from core.logger import logger
+from core.openvpn.atomic import openvpn_root, read_kv, write_text_atomic
 
 # Fresh server.conf emits push "dhcp-option DNS <ip>"; the unquoted form is
 # accepted too (hand-edited configs). `DNS6` never matches (DNS + \s+).
@@ -27,16 +27,15 @@ _STATE_KEYS = ("dns1", "dns2")
 
 def state_path() -> str:
     """Location of the desired-DNS state file (root read at call time)."""
-    root = os.getenv("OVNODE_OPENVPN_ROOT", "/etc/openvpn")
-    return os.path.join(root, "ovnode", "dns")
+    return os.path.join(openvpn_root(), "ovnode", "dns")
 
 
 def _default_dns() -> tuple[str, str]:
     """Installer defaults (env/settings), used for un-pinned state values."""
     try:
-        from core.openvpn.pki import _vpn_dns
+        from core.openvpn.pki.paths import _env
 
-        return _vpn_dns()
+        return _env("vpn_dns1", "1.1.1.1"), _env("vpn_dns2", "8.8.8.8")
     except Exception:
         return "1.1.1.1", "8.8.8.8"
 
@@ -57,18 +56,8 @@ def validate(value: object) -> str | None:
 
 def read_state() -> dict[str, str]:
     """dns1/dns2 from the state file ({} when unset or unreadable)."""
-    state: dict[str, str] = {}
-    try:
-        with open(state_path(), encoding="utf-8") as f:
-            for line in f:
-                if "=" not in line:
-                    continue
-                key, _, value = line.strip().partition("=")
-                if key in _STATE_KEYS and value.strip():
-                    state[key] = value.strip()
-    except OSError:
-        pass
-    return state
+    state = read_kv(state_path())
+    return {key: value for key, value in state.items() if key in _STATE_KEYS and value}
 
 
 def write_state(servers: list[str]) -> bool:
@@ -79,23 +68,9 @@ def write_state(servers: list[str]) -> bool:
     path = state_path()
     if desired and read_state() == desired and os.path.exists(path):
         return False
-    directory = os.path.dirname(path)
+    content = "".join(f"{key}={desired[key]}\n" for key in _STATE_KEYS if desired.get(key))
     try:
-        os.makedirs(directory, exist_ok=True)
-        fd, tmp = tempfile.mkstemp(dir=directory, prefix=".dns-")
-        try:
-            with os.fdopen(fd, "w", encoding="utf-8") as f:
-                for key in _STATE_KEYS:
-                    if desired.get(key):
-                        f.write(f"{key}={desired[key]}\n")
-            os.chmod(tmp, 0o644)
-            os.replace(tmp, path)
-        except BaseException:
-            try:
-                os.remove(tmp)
-            except OSError:
-                pass
-            raise
+        write_text_atomic(path, content, prefix=".dns-")
     except OSError as e:
         logger.error("dns: could not write state file %s: %s", path, e)
         return False

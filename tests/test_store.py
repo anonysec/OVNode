@@ -20,12 +20,12 @@ def test_user_folder_holds_all_state():
         d = store.user_dir(cn)
         assert sorted(os.listdir(d)) == ["name", "state"]
         assert store.get_name(cn) == "bob"
-        assert store.get_limit(cn) == 3
-        assert store.is_disabled(cn) is True
+        assert store.read_state(cn)["limit"] == 3
+        assert store.read_state(cn)["disabled"] is True
 
         store.set_disabled(cn, False)
-        assert store.is_disabled(cn) is False
-        assert store.get_limit(cn) == 3  # untouched field survives
+        assert store.read_state(cn)["disabled"] is False
+        assert store.read_state(cn)["limit"] == 3  # untouched field survives
 
         store.delete_user(cn)
         assert not store.user_exists(cn)
@@ -78,8 +78,8 @@ def test_legacy_layout_migration():
         store.ensure_layout()
 
         assert store.get_name("7001") == "dave"
-        assert store.get_limit("7001") == 2
-        assert store.is_disabled("7001") is True
+        assert store.read_state("7001")["limit"] == 2
+        assert store.read_state("7001")["disabled"] is True
         with open(store.ovpn_path("7001")) as f:
             assert f.read() == "client\n"
         assert os.path.isfile(os.path.join(store.SESSIONS_DIR, "7001.10.8.0.9"))
@@ -92,7 +92,7 @@ def test_legacy_layout_migration():
         # Re-running is a no-op and never clobbers migrated state.
         store.set_limit("7001", 5)
         store.ensure_layout()
-        assert store.get_limit("7001") == 5
+        assert store.read_state("7001")["limit"] == 5
     finally:
         store.delete_user("7001")
         for d in legacy.values():
@@ -114,7 +114,7 @@ def test_set_limit_by_username_reaches_cn():
     try:
         store.set_name("9003", "erin")
         assert set_user_limit("erin", 4) is True
-        assert store.get_limit("9003") == 4
+        assert store.read_state("9003")["limit"] == 4
     finally:
         store.delete_user("9003")
 
@@ -152,8 +152,6 @@ def test_state_read_falls_back_to_legacy_split_files():
             f.write("3")
         open(os.path.join(d, "disabled"), "w").close()
         assert store.read_state(cn) == {"limit": 3, "disabled": True}
-        assert store.get_limit(cn) == 3
-        assert store.is_disabled(cn) is True
         store.set_limit(cn, 4)
         assert sorted(os.listdir(d)) == ["state"]
         assert store.read_state(cn) == {"limit": 4, "disabled": True}
