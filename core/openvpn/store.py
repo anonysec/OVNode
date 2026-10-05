@@ -217,8 +217,7 @@ def write_state(cn: str, limit: int | None = None, disabled: bool | None = None)
     path = _attr_path(cn, "state")
     write_text_atomic(
         path,
-        f"limit={int(limit) if limit is not None else 1}\n"
-        f"disabled={1 if disabled else 0}\n",
+        f"limit={int(limit) if limit is not None else 1}\ndisabled={1 if disabled else 0}\n",
         prefix=".state-",
     )
     for legacy in ("limit", "disabled"):
