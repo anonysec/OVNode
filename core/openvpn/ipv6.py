@@ -17,7 +17,7 @@ import os
 import re
 
 from core.logger import logger
-from core.openvpn.atomic import openvpn_root, write_text_atomic
+from core.openvpn.atomic import openvpn_root, read_kv, write_text_atomic
 
 DEFAULT_PREFIX = "fd42:42:42:42::/64"
 
@@ -69,18 +69,8 @@ def _defaults() -> tuple[bool, str]:
 
 def read_state() -> dict[str, str]:
     """enabled/prefix from the state file ({} when unset or unreadable)."""
-    state: dict[str, str] = {}
-    try:
-        with open(state_path(), encoding="utf-8") as f:
-            for line in f:
-                if "=" not in line:
-                    continue
-                key, _, value = line.strip().partition("=")
-                if key in _STATE_KEYS and value.strip():
-                    state[key] = value.strip()
-    except OSError:
-        pass
-    return state
+    state = read_kv(state_path())
+    return {key: value for key, value in state.items() if key in _STATE_KEYS and value}
 
 
 def write_state(enabled: bool, prefix: str) -> bool:

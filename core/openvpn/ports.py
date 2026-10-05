@@ -24,7 +24,7 @@ import re
 import subprocess
 
 from core.logger import logger
-from core.openvpn.atomic import openvpn_root
+from core.openvpn.atomic import openvpn_root, read_kv
 from core.updater import is_docker
 
 # Installer-owned NAT files (native installs only — Docker applies the same
@@ -97,17 +97,10 @@ def read_state() -> list[int] | None:
     ``[]`` deliberately means "the panel explicitly cleared the extras" so
     :func:`effective` never resurrects the installer's ``OVNODE_EXTRA_PORTS``.
     """
-    try:
-        with open(state_path(), encoding="utf-8") as f:
-            for line in f:
-                if "=" not in line:
-                    continue
-                key, _, value = line.strip().partition("=")
-                if key == "ports":
-                    return _parse_state(value)
-    except OSError:
-        pass
-    return None
+    state = read_kv(state_path())
+    if "ports" not in state:
+        return None
+    return _parse_state(state["ports"])
 
 
 def _sync_env(ports: list[int]) -> None:

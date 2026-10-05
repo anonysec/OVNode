@@ -20,6 +20,7 @@ import threading
 import time
 
 from core.openvpn import sessions as sess_mod
+from core.openvpn import status as status_mod
 
 HOOK = os.path.join(os.path.dirname(__file__), "..", "core", "scripts", "ovnode-client-connect.sh")
 
@@ -584,8 +585,8 @@ def test_disconnect_only_stale_keeps_live():
         with open(status_path, "w") as f:
             f.write("HEADER\tX\n" + _status_row("u1", "9.9.9.9:5001", "10.8.0.2", 9) + "\n")
         # parse_sessions reads the canonical path; monkeypatch it.
-        orig_parse = sess_mod._read_status_sessions
-        sess_mod._read_status_sessions = lambda: [
+        orig_parse = status_mod.parse_sessions
+        status_mod.parse_sessions = lambda: [
             {
                 "common_name": "u1",
                 "virtual_address": "10.8.0.2",
@@ -601,7 +602,7 @@ def test_disconnect_only_stale_keeps_live():
             assert out["removed_markers"] == ["u1.10.8.0.1"], out
             assert os.path.exists(os.path.join(tmp, "u1.10.8.0.2")), "live marker removed!"
         finally:
-            sess_mod._read_status_sessions = orig_parse
+            status_mod.parse_sessions = orig_parse
             sess_mod.user_diagnostics = orig_diag
             sess_mod.SESSIONS_DIR = old_sessions
 

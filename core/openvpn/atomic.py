@@ -30,6 +30,25 @@ def openvpn_root() -> str:
     return os.getenv("OVNODE_OPENVPN_ROOT", "/etc/openvpn")
 
 
+def read_kv(path: str) -> dict[str, str]:
+    """Read a ``key=value`` state file into a dict (``{}`` when unreadable).
+
+    Whitespace around keys and values is stripped; lines without ``=`` are
+    skipped; duplicate keys keep the last occurrence.
+    """
+    out: dict[str, str] = {}
+    try:
+        with open(path, encoding="utf-8") as f:
+            for line in f:
+                if "=" not in line:
+                    continue
+                key, _, value = line.strip().partition("=")
+                out[key.strip()] = value.strip()
+    except OSError:
+        pass
+    return out
+
+
 @contextmanager
 def file_lock(path: str):
     """Hold an exclusive ``flock`` on ``path`` for the duration of the block.

@@ -16,7 +16,7 @@ import os
 import re
 
 from core.logger import logger
-from core.openvpn.atomic import openvpn_root, write_text_atomic
+from core.openvpn.atomic import openvpn_root, read_kv, write_text_atomic
 
 # Fresh server.conf emits push "dhcp-option DNS <ip>"; the unquoted form is
 # accepted too (hand-edited configs). `DNS6` never matches (DNS + \s+).
@@ -56,18 +56,8 @@ def validate(value: object) -> str | None:
 
 def read_state() -> dict[str, str]:
     """dns1/dns2 from the state file ({} when unset or unreadable)."""
-    state: dict[str, str] = {}
-    try:
-        with open(state_path(), encoding="utf-8") as f:
-            for line in f:
-                if "=" not in line:
-                    continue
-                key, _, value = line.strip().partition("=")
-                if key in _STATE_KEYS and value.strip():
-                    state[key] = value.strip()
-    except OSError:
-        pass
-    return state
+    state = read_kv(state_path())
+    return {key: value for key, value in state.items() if key in _STATE_KEYS and value}
 
 
 def write_state(servers: list[str]) -> bool:

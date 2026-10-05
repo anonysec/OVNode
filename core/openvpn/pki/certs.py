@@ -5,7 +5,7 @@
 
 import os
 import subprocess
-from datetime import UTC
+from datetime import UTC, datetime
 
 from core.logger import logger
 from core.openvpn.pki import easyrsa as _easyrsa_mod
@@ -40,28 +40,29 @@ _MONTHS = {
 }  # fmt: skip
 
 
-def _days_until_openssl_date(raw: str) -> int | None:
-    """Parse 'nextUpdate=Aug 28 12:00:00 2027 GMT' → whole days from now.
+def parse_openssl_date(raw: str) -> datetime:
+    """Parse an openssl date value ('nextUpdate=Aug 28 12:00:00 2027 GMT').
 
     Parsed by hand because openssl always prints English month names while
     strptime('%b') is locale-dependent.
     """
-    from datetime import datetime
+    month_s, day_s, time_s, year_s, _tz = raw.split("=", 1)[1].strip().split()
+    hour_s, minute_s, second_s = time_s.split(":")
+    return datetime(
+        int(year_s),
+        _MONTHS[month_s],
+        int(day_s),
+        int(hour_s),
+        int(minute_s),
+        int(second_s),
+        tzinfo=UTC,
+    )
 
+
+def _days_until_openssl_date(raw: str) -> int | None:
+    """Parse 'nextUpdate=Aug 28 12:00:00 2027 GMT' → whole days from now."""
     try:
-        value = raw.split("=", 1)[1].strip()
-        month_s, day_s, time_s, year_s, _tz = value.split()
-        hour_s, minute_s, second_s = time_s.split(":")
-        expiry = datetime(
-            int(year_s),
-            _MONTHS[month_s],
-            int(day_s),
-            int(hour_s),
-            int(minute_s),
-            int(second_s),
-            tzinfo=UTC,
-        )
-        return int((expiry - datetime.now(UTC)).total_seconds() // 86400)
+        return int((parse_openssl_date(raw) - datetime.now(UTC)).total_seconds() // 86400)
     except (IndexError, KeyError, ValueError) as e:
         logger.warning("Unparseable CRL date %r: %s", raw.strip(), e)
         return None

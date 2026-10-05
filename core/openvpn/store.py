@@ -33,7 +33,7 @@ import shutil
 import time
 
 from core.logger import logger
-from core.openvpn.atomic import file_lock, openvpn_root, write_text_atomic
+from core.openvpn.atomic import file_lock, openvpn_root, read_kv, write_text_atomic
 
 # A store key is any valid user identity: a client name (<=32 chars, dots
 # allowed) or a panel user id (UUID / simple id, <=64 chars). Path-safe by
@@ -166,26 +166,13 @@ def set_name(cn: str, name: str) -> None:
 # working with no migration step.
 
 
-def _parse_state_file(path: str) -> dict[str, str]:
-    try:
-        out: dict[str, str] = {}
-        with open(path, encoding="utf-8") as f:
-            for line in f:
-                if "=" in line:
-                    k, v = line.strip().split("=", 1)
-                    out[k.strip()] = v.strip()
-        return out
-    except OSError:
-        return {}
-
-
 def read_state(cn: str) -> dict[str, object]:
     """Merged {limit: int|None, disabled: bool} for a user.
 
     Prefers the `state` file; falls back per-field to the legacy `limit`
     value file and `disabled` existence marker.
     """
-    data = _parse_state_file(_attr_path(cn, "state"))
+    data = read_kv(_attr_path(cn, "state"))
     limit: int | None = None
     if data.get("limit", "").isdigit():
         limit = int(data["limit"])
