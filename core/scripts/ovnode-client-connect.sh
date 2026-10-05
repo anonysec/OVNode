@@ -9,7 +9,7 @@
 # changes on every reconnect; enforcement targets the management Client ID,
 # never the real address (recorded as metadata only).
 #
-# Policy:
+# Policy (the decision uses ONLY the live status count):
 # - max_logins=1: local takeover — kill the old session by CID, allow the new
 #   one. Verification reads the LIVE management status, not the 5s-cadence
 #   status file, so a successful kill is visible immediately and a legitimate
@@ -20,17 +20,14 @@
 #   ping-restart reap the corpse) instead of rejecting a legit reconnect.
 #   Strict cases (limit>1, disabled, unknown) still fail closed.
 #
-# Reconnection: the grace period absorbs a fresh marker ONLY when its
-# (CN, pool IP) is absent from the live status — a dropped session already
-# reaped, or a concurrent hook. One still live in status counts toward the
-# limit and goes through takeover (newest wins).
-
-# Performance budget (reconnect storm: 100 phones rejoining at once): marker
-# parsing is bash builtins, one awk prefilter over the status file, and one
-# python fork per takeover (auth once, pipelined kills + verify polls) with
-# zero forks on the allow path. Per-CN locks keep different users from
-# serializing behind each other. Remaining forks per allow: flock, logger,
-# ≤1 awk; takeover adds the python.
+# Kill reason is written to users/<cn>/last_kill.json so the panel can show a
+# toast on the user's next login.
+#
+# Performance budget (reconnect storm: 100 phones rejoining at once): one awk
+# prefilter over the status file, and one python fork per takeover (auth once,
+# pipelined kills + verify polls) with zero forks on the allow path. Per-CN
+# locks keep different users from serializing behind each other. Remaining
+# forks per allow: flock, logger, ≤1 awk; takeover adds the python.
 
 set -euo pipefail
 shopt -s nullglob
@@ -53,9 +50,6 @@ OPENVPN_ROOT="${OVNODE_OPENVPN_ROOT:-/etc/openvpn}"
 MGMT_PASS_FILE="${OVNODE_MGMT_PASS_FILE:-$OPENVPN_ROOT/server/mgmt-pass}"
 DEFAULT_LIMIT=1
 LOG_TAG="ovnode-mlogin"
-# Grace period (seconds): same-CN reconnects within this window are
-# treated as the same user reconnecting (IP may have changed).
-RECONNECT_GRACE="${OVNODE_RECONNECT_GRACE:-15}"
 
 cn="${common_name:-${1:-}}"
 
@@ -287,94 +281,23 @@ if [[ -f $STATUS_FILE ]]; then
     ' "$STATUS_FILE" 2>/dev/null || true)
 fi
 
-# Snapshot of this CN's markers (taken under the per-CN lock, so no sibling
-# hook can mutate it mid-run; other CNs never touch these files).
-cn_markers=("$ACTIVE_DIR"/${safe_cn}.*)
-
-# ── Reconnect detection (dynamic IP aware) ───────────────────────
-# A fresh marker (under grace) is absorbed as "the dropped session" only when
-# its (CN, pool IP) is absent from the live status: the corpse was already
-# reaped, or a concurrent hook is in flight. One still live counts toward the
-# limit below and loses via takeover (newest wins), never silent absorb.
-reconnected=0
-oldest_marker=""
-oldest_time=999999999
-
-for old_marker in ${cn_markers[@]+"${cn_markers[@]}"}; do
-    [[ -f $old_marker ]] || continue
-    read_marker "$old_marker"
-    created_s=$m_created
-    age=$(( time_s - created_s ))
-    if (( age < RECONNECT_GRACE )); then
-        if [[ -n $m_pool ]] && status_has_pool "$m_pool"; then
-            # Still live — not a dropped session; leave it for counting.
-            continue
-        fi
-        reconnected=1
-        if (( created_s < oldest_time )); then
-            oldest_time=$created_s
-            oldest_marker="$old_marker"
-        fi
-    fi
-done
-
-if [[ "$reconnected" -eq 1 && -n "$oldest_marker" ]]; then
-    rm -f "$oldest_marker" 2>/dev/null || true
-    log "CN=$cn reconnect (grace=${RECONNECT_GRACE}s); removed oldest marker=$(basename "$oldest_marker")"
-fi
-
-# ── Stale marker cleanup ─────────────────────────────────────────
-# Remove markers older than grace whose (CN, pool IP) is NOT in the status
-# file: matching on the pool IP is immune to the client's real IP changing.
-# Markers without a pool IP fall back to real-address matching.
-if [[ -f $STATUS_FILE ]]; then
-    for marker in ${cn_markers[@]+"${cn_markers[@]}"}; do
-        [[ -f $marker ]] || continue
-        read_marker "$marker"
-        created_s=$m_created
-        age=$(( time_s - created_s ))
-        if (( age < RECONNECT_GRACE )); then
-            continue
-        fi
-        if [[ -n $m_pool ]]; then
-            if ! status_has_pool "$m_pool"; then
-                rm -f "$marker" 2>/dev/null || true
-                log "CN=$cn removed_stale_marker=$(basename "$marker") age=${age}s (pool=$m_pool gone)"
-            fi
-        elif ! status_has_real "${m_ip}:${m_port}"; then
-            rm -f "$marker" 2>/dev/null || true
-            log "CN=$cn removed_stale_marker=$(basename "$marker") age=${age}s (legacy real-addr)"
-        fi
-    done
-fi
-
-# ── Count active sessions ────────────────────────────────────────
-active_files=0
-for _m in ${cn_markers[@]+"${cn_markers[@]}"}; do
-    [[ -f $_m ]] && active_files=$((active_files + 1))
-done
-cur="$active_files"
-if [[ "$status_count" -gt "$cur" ]]; then cur="$status_count"; fi
-
-if (( cur >= limit )); then
+if (( status_count >= limit )); then
     if [[ "$limit" -eq 1 ]]; then
         # One management session for the whole takeover (see mgmt_takeover).
         takeover_cmds=()
         for _cid in ${status_cids[@]+"${status_cids[@]}"}; do
             [[ ${_cid:-} =~ ^[0-9]+$ ]] && takeover_cmds+=("client-kill $_cid max-login-takeover")
         done
-        for marker in ${cn_markers[@]+"${cn_markers[@]}"}; do
-            [[ -f $marker && $marker != "$session_file" ]] || continue
-            read_marker "$marker"
-            [[ -n $m_ip && -n $m_port ]] || continue
-            [[ $m_ip =~ ^[0-9a-fA-F.:]+$ && $m_port =~ ^[0-9]+$ ]] || continue
-            takeover_cmds+=("kill $m_ip:$m_port")
-        done
-            log "CN=$cn ip=${trusted_ip:-?}:${trusted_port:-?} pool=${pool_ip:-none} limit=1 active=$active_files status=$status_count; TAKEOVER (${#takeover_cmds[@]} mgmt cmds, one session)"
-            # NOTE: the || guards set -e — a bare failing $() would kill
-            # the hook with python's code before rc=$? executes.
-            rc=0
-            takeover_out="$(mgmt_takeover "$cn" ${takeover_cmds[@]+"${takeover_cmds[@]}"} 2>/dev/null)" || rc=$?
+        log "CN=$cn ip=${trusted_ip:-?}:${trusted_port:-?} pool=${pool_ip:-none} limit=1 status=$status_count; TAKEOVER (${#takeover_cmds[@]} mgmt cmds, one session)"
+        last_kill_file="${USERS_DIR}/${safe_cn}/last_kill.json"
+        mkdir -p "${USERS_DIR}/${safe_cn}" 2>/dev/null || true
+        printf '{"reason":"replaced by newer session (limit=1)","at":%s,"cn":"%s","reason_code":"max_login_takeover"}\n' \
+            "$time_s" "$safe_cn" > "$last_kill_file" 2>/dev/null || true
+        log "CN=$cn wrote kill sidecar=$last_kill_file"
+        # NOTE: the || guards set -e — a bare failing $() would kill
+        # the hook with python's code before rc=$? executes.
+        rc=0
+        takeover_out="$(mgmt_takeover "$cn" ${takeover_cmds[@]+"${takeover_cmds[@]}"} 2>/dev/null)" || rc=$?
         while IFS= read -r _line; do log "CN=$cn mgmt: ${_line}"; done <<<"$takeover_out"
         if (( rc == 0 )); then
             rm -f "${ACTIVE_DIR}/${safe_cn}."* 2>/dev/null || true
@@ -385,13 +308,17 @@ if (( cur >= limit )); then
             # Degraded takeover: rejecting a legitimate reconnect is worse
             # than a transient double session — ping-restart reaps the dead
             # one and the marker swap below keeps accounting exact.
-            log "CN=$cn ip=${trusted_ip:-?}:${trusted_port:-?} pool=${pool_ip:-none} limit=1 active=$active_files status=$status_count; management unavailable; DEGRADE (markers replaced, corpse reaped by ping-restart)"
+            log "CN=$cn ip=${trusted_ip:-?}:${trusted_port:-?} pool=${pool_ip:-none} limit=1 status=$status_count; management unavailable; DEGRADE (markers replaced, corpse reaped by ping-restart)"
             rm -f "${ACTIVE_DIR}/${safe_cn}."* 2>/dev/null || true
         fi
     else
-        log "CN=$cn ip=${trusted_ip:-?}:${trusted_port:-?} pool=${pool_ip:-none} limit=$limit active=$active_files status=$status_count; REJECT"
+        log "CN=$cn ip=${trusted_ip:-?}:${trusted_port:-?} pool=${pool_ip:-none} limit=$limit status=$status_count; REJECT"
         exit 1
     fi
+fi
+
+if [[ "$limit" -eq 1 ]]; then
+    rm -f "${ACTIVE_DIR}/${safe_cn}."* 2>/dev/null || true
 fi
 
 cat > "$session_file" <<EOF
@@ -403,5 +330,5 @@ created=$time_s
 EOF
 chmod 600 "$session_file" 2>/dev/null || true
 
-log "CN=$cn ip=${trusted_ip:-?}:${trusted_port:-?} pool=${pool_ip:-none} limit=$limit active=$active_files status=$status_count; ALLOW session=$session_key"
+log "CN=$cn ip=${trusted_ip:-?}:${trusted_port:-?} pool=${pool_ip:-none} limit=$limit status=$status_count; ALLOW session=$session_key"
 exit 0

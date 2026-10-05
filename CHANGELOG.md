@@ -1,5 +1,12 @@
 # Changelog
 
+## 1.0.46 — 2026-10-05
+
+Multi-login policy simplified: the allow/reject decision uses only the live
+OpenVPN status count, dropping the reconnect-absorption and stale-cleanup
+loops. A new kill-reason sidecar lets the panel toast a user displaced by a
+limit=1 takeover.
+
 ## 1.0.45 — 2026-10-05
 
 Housekeeping: restore `.claude` to `.dockerignore` (OVManager kept

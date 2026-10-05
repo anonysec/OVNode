@@ -696,3 +696,55 @@ def test_legacy_disabled_marker_still_rejects():
             assert mgmt.conns == 0
         finally:
             mgmt.close()
+
+
+def test_last_kill_json_written_on_takeover():
+    """A successful limit=1 takeover leaves a kill-reason sidecar the panel
+    reads to toast the displaced user on their next login."""
+    import json
+    import tempfile
+
+    with tempfile.TemporaryDirectory() as tmp:
+        users, sessions, server, status = _mktree(tmp)
+        with open(status, "w") as f:
+            f.write("HEADER\tX\n" + _status_row("u1", "5.5.5.5:4000", "10.8.0.1", 7) + "\n")
+        os.makedirs(os.path.join(users, "u1"))
+        open(os.path.join(users, "u1", "limit"), "w").write("1")
+        mgmt = FakeMgmt(
+            status_script=[
+                [("u1", "5.5.5.5:4000", "10.8.0.1", "u1")],
+                [],
+            ]
+        )
+        try:
+            env = _hook_env(users, sessions, server, status, mgmt.port)
+            r = subprocess.run(["bash", HOOK], capture_output=True, text=True, timeout=60, env=env)
+            assert r.returncode == 0, r.stderr
+            sidecar = os.path.join(users, "u1", "last_kill.json")
+            assert os.path.exists(sidecar), "takeover must write last_kill.json"
+            with open(sidecar) as f:
+                data = json.load(f)
+            assert data["reason_code"] == "max_login_takeover"
+            assert data["cn"] == "u1"
+            assert isinstance(data["at"], int)
+            assert abs(time.time() - data["at"]) < 10, data
+        finally:
+            mgmt.close()
+
+
+def test_no_sidecar_when_allow_without_takeover():
+    """An ALLOW with no takeover must not leave a kill-reason sidecar."""
+    import tempfile
+
+    with tempfile.TemporaryDirectory() as tmp:
+        users, sessions, server, status = _mktree(tmp)
+        os.makedirs(os.path.join(users, "u1"))
+        open(os.path.join(users, "u1", "limit"), "w").write("1")
+        mgmt = FakeMgmt(status_script=[])
+        try:
+            env = _hook_env(users, sessions, server, status, mgmt.port)
+            r = subprocess.run(["bash", HOOK], capture_output=True, text=True, timeout=60, env=env)
+            assert r.returncode == 0, r.stderr
+            assert not os.path.exists(os.path.join(users, "u1", "last_kill.json"))
+        finally:
+            mgmt.close()
