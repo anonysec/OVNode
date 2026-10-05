@@ -68,7 +68,7 @@ def _ensure_crl_fresh_sync() -> None:
         return
     _crl_last_check = now
     try:
-        from core.openvpn.pki import _ensure_crl
+        from core.openvpn.pki.certs import _ensure_crl
 
         _ensure_crl()
     except Exception:
