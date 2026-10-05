@@ -1,22 +1,14 @@
 # Copyright (c) 2026 anonysec
 # SPDX-License-Identifier: MIT
 
-"""Node-local lookups: this node's address, ports, and OVNODE_* settings."""
+"""Node-local lookups: this node's address, ports, and the openvpn binary."""
 
 import os
 import shutil
 import socket
 import subprocess
 
-
-def _env(name: str, default: str) -> str:
-    """Read an OVNODE_* env var with a default (config.py is the source)."""
-    try:
-        from core.config import settings
-
-        return str(getattr(settings, f"ovnode_{name}", default) or default)
-    except Exception:
-        return os.getenv(f"OVNODE_{name.upper()}", default)
+from core.openvpn.pki import paths as _paths
 
 
 def _node_public_ip() -> str:
@@ -42,26 +34,8 @@ def _node_public_ip() -> str:
 
 def _remote_lines(tunnel_addr: str, primary_port: int) -> str:
     """One `remote` line per reachable port — clients fail over in order."""
-    ports = [primary_port, *_extra_vpn_ports()]
+    ports = [primary_port, *_paths._extra_vpn_ports()]
     return "\n".join(f"remote {tunnel_addr} {p}" for p in ports)
-
-
-def _openvpn_port() -> int:
-    try:
-        return int(os.getenv("OPENVPN_PORT", "1194"))
-    except ValueError:
-        return 1194
-
-
-def _extra_vpn_ports() -> list[int]:
-    """Extra ports the node is reachable on (iptables REDIRECT → primary)."""
-    from core.config import parse_extra_ports
-
-    return parse_extra_ports(os.getenv("OVNODE_EXTRA_PORTS", ""), _openvpn_port())
-
-
-def _vpn_dns() -> tuple[str, str]:
-    return _env("vpn_dns1", "1.1.1.1"), _env("vpn_dns2", "8.8.8.8")
 
 
 def _openvpn_bin() -> str:

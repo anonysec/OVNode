@@ -34,9 +34,9 @@ def state_path() -> str:
 def _default_dns() -> tuple[str, str]:
     """Installer defaults (env/settings), used for un-pinned state values."""
     try:
-        from core.openvpn.pki import _vpn_dns
+        from core.openvpn.pki.paths import _env
 
-        return _vpn_dns()
+        return _env("vpn_dns1", "1.1.1.1"), _env("vpn_dns2", "8.8.8.8")
     except Exception:
         return "1.1.1.1", "8.8.8.8"
 

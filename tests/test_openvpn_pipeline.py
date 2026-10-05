@@ -219,8 +219,8 @@ def test_generated_profile_never_contains_placeholder(monkeypatch, tmp_path):
     monkeypatch.setattr(
         "core.openvpn.pki.paths.CLIENT_TEMPLATE", str(tmp_path / "client-common.txt")
     )
-    monkeypatch.setattr("core.openvpn.pki.node._openvpn_port", lambda: 1194)
-    monkeypatch.setattr("core.openvpn.pki.node._extra_vpn_ports", lambda: [])
+    monkeypatch.setenv("OPENVPN_PORT", "1194")
+    monkeypatch.setenv("OVNODE_EXTRA_PORTS", "")
 
     pki._ensure_client_template()
     written = (tmp_path / "client-common.txt").read_text(encoding="utf-8")

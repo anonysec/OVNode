@@ -37,7 +37,7 @@ def ensure_mgmt_password() -> str:
 def mgmt_line() -> str:
     """Canonical management directive with password file."""
     try:
-        port = int(_node._env("management_port", "7505"))
+        port = int(_paths._env("management_port", "7505"))
     except Exception:
         port = 7505
     return f"management 127.0.0.1 {port} {_paths.MGMT_PASS_FILE}"
@@ -71,7 +71,7 @@ def _fresh_proto() -> str:
     existing files are never rewritten (change_config() owns later flips).
     """
     try:
-        choice = str(_node._env("proto", "tcp")).strip().lower()
+        choice = str(_paths._env("proto", "tcp")).strip().lower()
     except Exception:
         choice = "tcp"
     return "udp" if choice.startswith("udp") else "tcp"
@@ -80,18 +80,21 @@ def _fresh_proto() -> str:
 def _fresh_server_conf() -> str:
     """Modern hardened server.conf template for new installs."""
     ensure_mgmt_password()
-    port = _node._openvpn_port()
+    port = _paths._openvpn_port()
     proto = _fresh_proto()
     # Panel-managed DNS state wins over installer defaults, so a node whose
     # server.conf gets regenerated keeps the operator's chosen resolvers.
     dns_lines = [
-        f'push "dhcp-option DNS {server}"' for server in dns_policy.effective(_node._vpn_dns())
+        f'push "dhcp-option DNS {server}"'
+        for server in dns_policy.effective(
+            (_paths._env("vpn_dns1", "1.1.1.1"), _paths._env("vpn_dns2", "8.8.8.8"))
+        )
     ]
-    user, group = _node._env("runtime_user", "nobody"), _node._env("runtime_group", "nogroup")
-    vpn_network = _node._env("vpn_network", "10.8.0.0")
-    vpn_netmask = _node._env("vpn_netmask", "255.255.255.0")
+    user, group = _paths._env("runtime_user", "nobody"), _paths._env("runtime_group", "nogroup")
+    vpn_network = _paths._env("vpn_network", "10.8.0.0")
+    vpn_netmask = _paths._env("vpn_netmask", "255.255.255.0")
     try:
-        max_clients = max(1, int(_node._env("max_clients", "250")))
+        max_clients = max(1, int(_paths._env("max_clients", "250")))
     except ValueError:
         max_clients = 250
     lines = [
@@ -293,7 +296,7 @@ def _ensure_client_template() -> None:
     """Write client-common.txt if missing (tunnel address filled by panel)."""
     if os.path.exists(_paths.CLIENT_TEMPLATE):
         return
-    port = _node._openvpn_port()
+    port = _paths._openvpn_port()
     proto = _fresh_proto()
     tunnel_addr = os.getenv("TUNNEL_ADDRESS", "").strip()
     if not tunnel_addr:

@@ -59,7 +59,7 @@ def validate_prefix(value: object) -> str | None:
 def _defaults() -> tuple[bool, str]:
     """Installer/env defaults, used for un-pinned state values."""
     try:
-        from core.openvpn.pki.node import _env
+        from core.openvpn.pki.paths import _env
 
         enabled = _env("enable_ipv6", "0").lower() in ("1", "true", "yes", "on")
         prefix = _env("ipv6_prefix", "fd42:42:42:42::/64")

@@ -32,7 +32,7 @@ from core.openvpn.pki.certs import (
     tls_crypt_block,
 )
 from core.openvpn.pki.easyrsa import _write_easyrsa_vars, run_easyrsa
-from core.openvpn.pki.node import _node_public_ip, _vpn_dns
+from core.openvpn.pki.node import _node_public_ip
 from core.openvpn.pki.paths import (
     CA_CERT,
     CLIENT_TEMPLATE,
@@ -62,7 +62,6 @@ __all__ = [
     "_ensure_server_conf",
     "_fresh_server_conf",
     "_node_public_ip",
-    "_vpn_dns",
     "_write_easyrsa_vars",
     "crl_is_current",
     "init_pki",
