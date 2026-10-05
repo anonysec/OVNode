@@ -9,7 +9,9 @@ lazily), so the other submodules can depend on it without a circular import.
 
 import os
 
-_OPENVPN_ROOT = os.getenv("OVNODE_OPENVPN_ROOT", "/etc/openvpn")
+from core.openvpn.atomic import openvpn_root
+
+_OPENVPN_ROOT = openvpn_root()
 EASYRSA_DIR = os.path.join(_OPENVPN_ROOT, "server", "easy-rsa")
 PKI_DIR = os.path.join(_OPENVPN_ROOT, "server", "pki")
 SERVER_CONF = os.path.join(_OPENVPN_ROOT, "server", "server.conf")

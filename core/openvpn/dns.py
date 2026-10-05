@@ -17,6 +17,7 @@ import re
 
 from core.logger import logger
 from core.openvpn.atomic import write_text_atomic
+from core.openvpn.pki.paths import openvpn_root
 
 # Fresh server.conf emits push "dhcp-option DNS <ip>"; the unquoted form is
 # accepted too (hand-edited configs). `DNS6` never matches (DNS + \s+).
@@ -27,8 +28,7 @@ _STATE_KEYS = ("dns1", "dns2")
 
 def state_path() -> str:
     """Location of the desired-DNS state file (root read at call time)."""
-    root = os.getenv("OVNODE_OPENVPN_ROOT", "/etc/openvpn")
-    return os.path.join(root, "ovnode", "dns")
+    return os.path.join(openvpn_root(), "ovnode", "dns")
 
 
 def _default_dns() -> tuple[str, str]:

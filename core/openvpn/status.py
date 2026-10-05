@@ -21,10 +21,11 @@ import os
 import time
 from collections.abc import Iterator
 
+from core.openvpn.pki.paths import openvpn_root
+
 logger = logging.getLogger("ovnode")
 
-_OPENVPN_ROOT = os.getenv("OVNODE_OPENVPN_ROOT", "/etc/openvpn")
-STATUS_FILE = os.getenv("OVNODE_STATUS_FILE", os.path.join(_OPENVPN_ROOT, "server", "status.log"))
+STATUS_FILE = os.getenv("OVNODE_STATUS_FILE", os.path.join(openvpn_root(), "server", "status.log"))
 
 # Shared parse cache: one panel poll cycle hits /sync/usage + /sync/sessions
 # within milliseconds, and each used to re-read and re-parse the whole file.

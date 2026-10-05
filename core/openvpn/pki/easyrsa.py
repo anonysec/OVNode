@@ -4,9 +4,11 @@
 """easy-rsa invocation, its lock file, and the PKI directory tree."""
 
 import os
+import shutil
 import subprocess
 
 from core.logger import logger
+from core.openvpn.atomic import file_lock
 from core.openvpn.pki import node as _node
 from core.openvpn.pki import paths as _paths
 
@@ -17,61 +19,46 @@ def run_easyrsa(*args: str, timeout: int = 120, pki_dir: str | None = None) -> b
     Serialized with a lock file: parallel create/revoke calls corrupt
     index.txt otherwise (easyrsa has no internal locking).
     """
-    import fcntl
-
     easyrsa_bin = os.path.join(_paths.EASYRSA_DIR, "easyrsa")
     if not os.path.exists(easyrsa_bin):
         logger.error("easyrsa not found at %s", easyrsa_bin)
         return False
     lock_path = os.path.join(pki_dir or _paths.PKI_DIR, ".easyrsa.lock")
-    try:
-        lock_fh = open(lock_path, "a")
-    except OSError as e:
-        logger.error("easyrsa lock unavailable (%s) — refusing to run unlocked", e)
-        return False
-    try:
-        fcntl.flock(lock_fh.fileno(), fcntl.LOCK_EX)
-    except OSError as e:
-        logger.error("easyrsa lock failed (%s)", e)
-        lock_fh.close()
-        return False
-    try:
-        cmd = [easyrsa_bin, f"--pki-dir={pki_dir or _paths.PKI_DIR}"] + list(args)
-        # Minimal env: don't leak API_KEY / panel secrets to the child.
-        minimal_env = {
-            "PATH": os.environ.get("PATH", "/usr/sbin:/usr/bin:/sbin:/bin"),
-            "EASYRSA_BATCH": "1",
-            "HOME": os.environ.get("HOME", "/root"),
-        }
-        subprocess.run(
-            cmd,
-            cwd=_paths.EASYRSA_DIR,
-            env=minimal_env,
-            check=True,
-            capture_output=True,
-            timeout=timeout,
-        )
-        return True
-    except subprocess.CalledProcessError as e:
-        logger.error(
-            "easyrsa %s failed (rc=%d): %s",
-            " ".join(args),
-            e.returncode,
-            e.stderr[-500:].decode() if e.stderr else str(e),
-        )
-        return False
-    except subprocess.TimeoutExpired:
-        logger.error("easyrsa %s timed out after %ds", " ".join(args), timeout)
-        return False
-    except Exception as e:
-        logger.error("easyrsa %s error: %s", " ".join(args), e)
-        return False
-    finally:
+    with file_lock(lock_path) as lock_err:
+        if lock_err is not None:
+            logger.error("easyrsa lock unavailable (%s) — refusing to run unlocked", lock_err)
+            return False
         try:
-            fcntl.flock(lock_fh.fileno(), fcntl.LOCK_UN)
-        except OSError:
-            pass
-        lock_fh.close()
+            cmd = [easyrsa_bin, f"--pki-dir={pki_dir or _paths.PKI_DIR}"] + list(args)
+            # Minimal env: don't leak API_KEY / panel secrets to the child.
+            minimal_env = {
+                "PATH": os.environ.get("PATH", "/usr/sbin:/usr/bin:/sbin:/bin"),
+                "EASYRSA_BATCH": "1",
+                "HOME": os.environ.get("HOME", "/root"),
+            }
+            subprocess.run(
+                cmd,
+                cwd=_paths.EASYRSA_DIR,
+                env=minimal_env,
+                check=True,
+                capture_output=True,
+                timeout=timeout,
+            )
+            return True
+        except subprocess.CalledProcessError as e:
+            logger.error(
+                "easyrsa %s failed (rc=%d): %s",
+                " ".join(args),
+                e.returncode,
+                e.stderr[-500:].decode() if e.stderr else str(e),
+            )
+            return False
+        except subprocess.TimeoutExpired:
+            logger.error("easyrsa %s timed out after %ds", " ".join(args), timeout)
+            return False
+        except Exception as e:
+            logger.error("easyrsa %s error: %s", " ".join(args), e)
+            return False
 
 
 _easyrsa = run_easyrsa
@@ -89,14 +76,8 @@ def _setup_easyrsa() -> None:
         return
     os.makedirs(_paths.EASYRSA_DIR, exist_ok=True)
     src = "/usr/share/easy-rsa"
-    if not os.path.exists(src):
-        r = subprocess.run(["dpkg", "-L", "easy-rsa"], capture_output=True, text=True)
-        for line in r.stdout.splitlines():
-            if line.startswith("/usr/share/easy-rsa/"):
-                src = "/usr/share/easy-rsa"
-                break
     if os.path.exists(src):
-        subprocess.run(["cp", "-r", f"{src}/.", _paths.EASYRSA_DIR], check=True)
+        shutil.copytree(src, _paths.EASYRSA_DIR, dirs_exist_ok=True)
         os.chmod(os.path.join(_paths.EASYRSA_DIR, "easyrsa"), 0o755)
     _write_easyrsa_vars()
 

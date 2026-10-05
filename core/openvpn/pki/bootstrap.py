@@ -6,6 +6,7 @@
 import os
 
 from core.logger import logger
+from core.openvpn.atomic import file_lock
 from core.openvpn.pki import certs as _certs_mod
 from core.openvpn.pki import easyrsa as _easyrsa_mod
 from core.openvpn.pki import paths as _paths
@@ -22,25 +23,14 @@ def init_pki() -> None:
     two agent processes sharing one PKI (e.g. a stray manual start next to
     the service) would otherwise both see "no CA" and race build-ca.
     """
-    import fcntl
-
     os.makedirs(_paths.PKI_DIR, exist_ok=True)
     lock_path = os.path.join(_paths.PKI_DIR, ".pki-init.lock")
-    try:
-        lock_fh = open(lock_path, "a")
-    except OSError as e:
-        logger.warning("PKI init lock unavailable (%s) — initializing unguarded", e)
+    with file_lock(lock_path) as lock_err:
+        if lock_err is not None:
+            logger.warning("PKI init lock unavailable (%s) — initializing unguarded", lock_err)
+            _init_pki_locked()
+            return
         _init_pki_locked()
-        return
-    try:
-        fcntl.flock(lock_fh.fileno(), fcntl.LOCK_EX)
-        _init_pki_locked()
-    finally:
-        try:
-            fcntl.flock(lock_fh.fileno(), fcntl.LOCK_UN)
-        except OSError:
-            pass
-        lock_fh.close()
 
 
 def _init_pki_locked() -> None:

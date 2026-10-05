@@ -33,14 +33,14 @@ import shutil
 import time
 
 from core.logger import logger
-from core.openvpn.atomic import write_text_atomic
+from core.openvpn.atomic import file_lock, openvpn_root, write_text_atomic
 
 # A store key is any valid user identity: a client name (<=32 chars, dots
 # allowed) or a panel user id (UUID / simple id, <=64 chars). Path-safe by
 # construction — no separators, no traversal.
 _STORE_KEY_RE = re.compile(r"^[A-Za-z0-9._-]{1,64}$")
 
-_OPENVPN_ROOT = os.getenv("OVNODE_OPENVPN_ROOT", "/etc/openvpn")
+_OPENVPN_ROOT = openvpn_root()
 
 OVNODE_DIR = os.path.join(_OPENVPN_ROOT, "ovnode")
 USERS_DIR = os.path.join(OVNODE_DIR, "users")
@@ -328,14 +328,10 @@ def reset_usage(cn: str) -> None:
     usage_file = os.path.join(USAGE_DIR, safe)
     lock_path = os.path.join(USAGE_DIR, f".lock.{safe}")
     try:
-        import fcntl
-
-        with open(lock_path, "a") as lock_fh:
-            fcntl.flock(lock_fh.fileno(), fcntl.LOCK_EX)
-            try:
-                os.remove(usage_file)
-            finally:
-                fcntl.flock(lock_fh.fileno(), fcntl.LOCK_UN)
+        with file_lock(lock_path) as lock_err:
+            if lock_err is not None:
+                raise lock_err
+            os.remove(usage_file)
     except FileNotFoundError:
         pass
     except OSError as e:

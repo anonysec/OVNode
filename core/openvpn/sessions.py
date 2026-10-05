@@ -25,10 +25,11 @@ from collections import Counter
 from typing import Any
 
 from core.logger import logger
+from core.openvpn.pki.paths import openvpn_root
 from core.openvpn.store import OVNODE_DIR, SESSIONS_DIR
 from core.validation import _CLIENT_NAME_RE, _SIMPLE_ID_RE, _UUID_RE
 
-_OPENVPN_ROOT = os.getenv("OVNODE_OPENVPN_ROOT", "/etc/openvpn")
+_OPENVPN_ROOT = openvpn_root()
 STATUS_FILE = os.getenv("OVNODE_STATUS_FILE", os.path.join(_OPENVPN_ROOT, "server", "status.log"))
 # Canonical host var is OVNODE_MANAGEMENT_HOST; the connect hook
 # historically reads OVNODE_MGMT_HOST, so accept both (canonical wins).

@@ -24,6 +24,7 @@ import re
 import subprocess
 
 from core.logger import logger
+from core.openvpn.pki.paths import openvpn_root
 from core.updater import is_docker
 
 # Installer-owned NAT files (native installs only — Docker applies the same
@@ -38,14 +39,12 @@ _NAT_KEYS = ("VPN_PRIMARY_PORT", "VPN_EXTRA_PORTS")
 
 def state_path() -> str:
     """Location of the desired-extra-ports state file (root read at call time)."""
-    root = os.getenv("OVNODE_OPENVPN_ROOT", "/etc/openvpn")
-    return os.path.join(root, "ovnode", "ports")
+    return os.path.join(openvpn_root(), "ovnode", "ports")
 
 
 def template_path() -> str:
     """Location of the client template shared with OpenVPN (read at call time)."""
-    root = os.getenv("OVNODE_OPENVPN_ROOT", "/etc/openvpn")
-    return os.path.join(root, "server", "client-common.txt")
+    return os.path.join(openvpn_root(), "server", "client-common.txt")
 
 
 def validate(raw: object, primary: int) -> list[int] | None:

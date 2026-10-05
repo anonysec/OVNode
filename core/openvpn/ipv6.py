@@ -18,6 +18,7 @@ import re
 
 from core.logger import logger
 from core.openvpn.atomic import write_text_atomic
+from core.openvpn.pki.paths import openvpn_root
 
 DEFAULT_PREFIX = "fd42:42:42:42::/64"
 
@@ -33,8 +34,7 @@ _ROUTE_IPV6_RE = re.compile(r'^\s*push\s+"?route-ipv6\s+2000::/3"?\s*$')
 
 def state_path() -> str:
     """Location of the desired-IPv6 state file (root read at call time)."""
-    root = os.getenv("OVNODE_OPENVPN_ROOT", "/etc/openvpn")
-    return os.path.join(root, "ovnode", "ipv6")
+    return os.path.join(openvpn_root(), "ovnode", "ipv6")
 
 
 def validate_prefix(value: object) -> str | None:
