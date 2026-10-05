@@ -72,7 +72,7 @@ ok("remote " in tpl and " 1194" in tpl, "tpl remote line present")
 
 # client .ovpn embeds tls-crypt
 from core.openvpn.users import create_user_on_server
-from core.openvpn.store import ovpn_path, get_limit
+from core.openvpn.store import ovpn_path, read_state
 uid = "testuser42"
 ok(create_user_on_server(uid, "Test User", max_logins=2), "create user")
 ovpn = read(ovpn_path(uid))
@@ -83,8 +83,7 @@ import glob as _glob
 _prof_dir = os.path.dirname(ovpn_path(uid))
 ok((os.stat(ovpn_path(uid)).st_mode & 0o777) == 0o600, "ovpn mode 0600")
 ok(not _glob.glob(os.path.join(_prof_dir, ".client-ovpn-*")), "no temp profiles")
-from core.openvpn.store import get_limit
-ok(get_limit(uid) == 2, "limit state")
+ok(read_state(uid)["limit"] == 2, "limit state")
 
 # existing conf hardening preserves admin edits
 with open(SERVER_CONF, "w") as f:

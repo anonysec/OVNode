@@ -214,19 +214,10 @@ def write_state(cn: str, limit: int | None = None, disabled: bool | None = None)
             pass
 
 
-def get_limit(cn: str) -> int | None:
-    value = read_state(cn)["limit"]
-    return int(value) if value is not None else None
-
-
 def set_limit(cn: str, max_logins: int) -> None:
     # Read by the connect hook (as the OpenVPN runtime user) → the merged
     # file stays world-readable.
     write_state(cn, limit=max(0, int(max_logins)))
-
-
-def is_disabled(cn: str) -> bool:
-    return bool(read_state(cn)["disabled"])
 
 
 def set_disabled(cn: str, disabled: bool) -> None:
