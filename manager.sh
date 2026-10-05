@@ -30,7 +30,6 @@ EX_OK=0 EX_ERROR=1 EX_USAGE=2 EX_ALREADY=3 EX_NOTINSTALLED=4
 ACTION=""
 YES="${OVN_YES:-0}"
 PURGE="${OVN_PURGE:-0}"
-QUIET="${OVN_QUIET:-0}"
 FIX=0
 SHOW_ALL=0
 PIN=""
@@ -90,7 +89,6 @@ run_installer() {
 delegate_update() {
     local args=()
     [[ "$YES" -eq 1 ]] && args+=(-y)
-    [[ "$QUIET" -eq 1 ]] && args+=(--quiet)
     [[ -n "$PIN" ]] && args+=(--version "$PIN")
 
     # A previous update that died mid-flight leaves the install needing recovery
@@ -120,7 +118,6 @@ node_update_needs_recovery() {
 delegate_uninstall() {
     local args=()
     [[ "$YES" -eq 1 ]] && args+=(-y)
-    [[ "$QUIET" -eq 1 ]] && args+=(--quiet)
     [[ "$PURGE" -eq 1 ]] && args+=(--purge)
     run_installer uninstall "${args[@]}"
 }
@@ -579,8 +576,8 @@ do_rollback() {
 }
 
 # Node registration values, re-readable at any time — the installer shows them
-# once on the Ready card, and this is how they come back after --quiet or a
-# closed terminal. Read from the same .env the agent loads, so they cannot drift.
+# once on the Ready card, and this is how they come back after a closed terminal.
+# Read from the same .env the agent loads, so they cannot drift.
 # `ovn auth`. The node has one credential and two states — before the panel
 # has it, and after — and the right action differs between them, so the state
 # comes first and the action follows from it. Same shape as the panel's
@@ -696,7 +693,7 @@ _ovn_completions() {
     COMPREPLY=()
     cur="${COMP_WORDS[COMP_CWORD]}"
     local cmds="status credentials config update enable disable restart restart-vpn logs backup restore auto-backup tls doctor rollback recover-update uninstall completion help start stop"
-    local flags="--yes -y --help -h --quiet -q --purge --keep -v --version --fix -a --all"
+    local flags="--yes -y --help -h --purge --keep -v --version --fix -a --all"
     if [[ "$cur" == -* ]]; then
         COMPREPLY=( $(compgen -W "$flags" -- "$cur") )
     else
@@ -802,13 +799,11 @@ show_help_full() {
     --keep N            backup: how many backups to keep
     --purge             uninstall: also delete data and PKI
     -v, --version V     update: pin a release, e.g. -v v1.0.15
-    -q, --quiet         Suppress progress logs        [OVN_QUIET=1]
     -h, --help          This help
 
   ENVIRONMENT
     OVN_YES=1           same as -y
     OVN_PURGE=1         same as --purge
-    OVN_QUIET=1         same as -q
     CI=true             implies -y
 
   .env
@@ -926,7 +921,6 @@ parse_args() {
             --yes|-y)     YES=1; shift ;;
             --purge)      PURGE=1; shift ;;
             --fix)        FIX=1; shift ;;
-            -q|--quiet)   QUIET=1; shift ;;
             -a|--all)     SHOW_ALL=1; shift ;;
             -v|--version) eval "$need2"; PIN="$2"; shift 2 ;;
             *)            die "Unknown option: $1 (ovn help for usage)" "$EX_USAGE" ;;

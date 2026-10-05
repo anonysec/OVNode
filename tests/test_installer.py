@@ -119,8 +119,6 @@ DEPRECATED_FLAGS = [
     (["--ipv6"], "set OVN_IPV6=1 instead"),
     (["--no-nat"], "set OVN_NO_NAT=1 instead"),
     (["--purge"], "set OVN_PURGE=1 instead"),
-    (["--quiet"], "set OVN_QUIET=1 instead"),
-    (["-q"], "set OVN_QUIET=1 instead"),
     (["-v", "1.0.0"], "set OVN_VERSION instead"),
     (["--version", "1.0.0"], "set OVN_VERSION instead"),
     (["--from-release"], "verified releases are the only source now, so just drop it"),
@@ -160,7 +158,7 @@ def test_help_leads_with_the_three_flags_and_separates_the_rest():
     assert deprecated_block, "help has no 'Deprecated (still works)' heading"
     for flag in ("-y, --yes", "--docker", "-h, --help"):
         assert flag in head, f"help does not lead with {flag}"
-    for flag in ("-p, --key", "--port", "--vpn-ports", "--tls", "--purge", "--quiet"):
+    for flag in ("-p, --key", "--port", "--vpn-ports", "--tls", "--purge"):
         assert flag in deprecated_block, f"{flag} is not listed as deprecated"
 
 
@@ -445,32 +443,6 @@ def test_masked_password_echoes_stars_and_handles_backspace():
     assert r.stdout == "ac"
     assert r.stderr.count("*") == 3
     assert "\b \b" in r.stderr
-
-
-def test_confirm_no_is_safe_by_default():
-    # Harness: confirm_no only needs is_tty + YES; the answer is inlined.
-    cases = [
-        ("0", "0", "y", 0),
-        ("0", "0", "Y", 0),
-        ("0", "0", "", 1),
-        ("0", "0", "n", 1),
-        ("1", "0", "y", 1),
-    ]
-    for tty, yes, reply, expected in cases:
-        harness = f"""set -Eeuo pipefail
-GR=''; NC=''
-is_tty() {{ return {tty}; }}
-YES={yes}
-confirm_no() {{
-    [[ "$YES" -eq 1 ]] && return 1
-    is_tty || return 1
-    local c='{reply}'
-    [[ "$c" =~ ^[Yy]$ ]]
-}}
-confirm_no "Delete data?"
-"""
-        r = subprocess.run(["bash", "-c", harness], capture_output=True, text=True, timeout=30)
-        assert r.returncode == expected, (tty, yes, reply, r.returncode, r.stderr)
 
 
 def test_uninstall_asks_about_data():

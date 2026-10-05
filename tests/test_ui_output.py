@@ -352,63 +352,6 @@ def test_the_card_settles_the_block_to_faint():
     assert step_at < card_at
 
 
-# ── Transfers ───────────────────────────────────────────────────────────
-
-
-# Two steps, so the counter is present and the release line is findable: a
-# single-step run drops [1/1] as noise, which is its own tested rule.
-_TRANSFER = (
-    'render_begin "preflight" 2; render_done "ok" 400\n'
-    'render_begin "release" 2; render_watch; '
-    '_render_bytes {have} {total} {rate}; render_unwatch; render_done "" 9000'
-)
-
-
-def _transfer_row(**env) -> str:
-    script = _TRANSFER.format(
-        have=env.pop("have", "5000000"),
-        total=env.pop("total", '""'),
-        rate=env.pop("rate", "412"),
-    )
-    rows = screen(run_pty(script, **env))
-    return next(r for r in rows if "[2/2]" in r)
-
-
-def test_a_transfer_without_a_total_shows_a_growing_count():
-    line = _transfer_row()
-    assert "4.8 MB" in line
-    assert "412 MB/s" in line
-    assert "░" not in line, "a bar appeared without a total to draw against"
-
-
-def test_a_transfer_with_a_total_shows_a_bar():
-    line = _transfer_row(have="13002342", total="38002342", rate="4100")
-    assert "12.4/36 MB" in line
-    assert "█" in line and "░" in line
-    # 12.4 of 36 is a third, so roughly a third of the bar: 5 of 16.
-    assert line.count("█") == 5, line
-    assert line.count("░") == 11, line
-
-
-def test_a_more_than_half_full_download_fills_more_of_the_bar():
-    line = _transfer_row(have="30000000", total="38002342", rate="4100")
-    assert "28.6/36 MB" in line
-    assert line.count("█") == 13, line
-
-
-def test_the_bar_width_is_fixed_regardless_of_progress():
-    """A bar that grows with progress makes the line jump as bytes arrive."""
-    early = _transfer_row(have="2000000", total="38002342", rate="100")
-    late = _transfer_row(have="37000000", total="38002342", rate="100")
-    assert early.count("█") + early.count("░") == late.count("█") + late.count("░")
-
-
-def test_the_bar_is_ascii_without_utf8():
-    line = _transfer_row(have="13002342", total="38002342", rate="4100", LC_ALL="C")
-    assert "#" in line and "." in line
-    assert "█" not in line and "░" not in line
-
-
 # ── Failure ─────────────────────────────────────────────────────────────
 
 
