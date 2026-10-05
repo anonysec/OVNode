@@ -30,10 +30,10 @@ import json
 import os
 import re
 import shutil
-import tempfile
 import time
 
 from core.logger import logger
+from core.openvpn.atomic import write_text_atomic
 
 # A store key is any valid user identity: a client name (<=32 chars, dots
 # allowed) or a panel user id (UUID / simple id, <=64 chars). Path-safe by
@@ -215,21 +215,12 @@ def write_state(cn: str, limit: int | None = None, disabled: bool | None = None)
         disabled = current["disabled"]
     create_user(cn)
     path = _attr_path(cn, "state")
-    # mkstemp (O_EXCL) instead of a predictable pid-suffixed name: the store
-    # is touched by the runtime user, so a guessable tmp path is symlink bait.
-    fd, tmp = tempfile.mkstemp(dir=os.path.dirname(path), prefix=".state-")
-    try:
-        with os.fdopen(fd, "w", encoding="utf-8") as f:
-            f.write(f"limit={int(limit) if limit is not None else 1}\n")
-            f.write(f"disabled={1 if disabled else 0}\n")
-        os.chmod(tmp, 0o644)
-        os.replace(tmp, path)
-    except BaseException:
-        try:
-            os.remove(tmp)
-        except OSError:
-            pass
-        raise
+    write_text_atomic(
+        path,
+        f"limit={int(limit) if limit is not None else 1}\n"
+        f"disabled={1 if disabled else 0}\n",
+        prefix=".state-",
+    )
     for legacy in ("limit", "disabled"):
         try:
             os.remove(_attr_path(cn, legacy))

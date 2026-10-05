@@ -15,9 +15,9 @@ from __future__ import annotations
 import ipaddress
 import os
 import re
-import tempfile
 
 from core.logger import logger
+from core.openvpn.atomic import write_text_atomic
 
 DEFAULT_PREFIX = "fd42:42:42:42::/64"
 
@@ -90,22 +90,9 @@ def write_state(enabled: bool, prefix: str) -> bool:
     path = state_path()
     if read_state() == desired and os.path.exists(path):
         return False
-    directory = os.path.dirname(path)
+    content = "".join(f"{key}={desired[key]}\n" for key in _STATE_KEYS)
     try:
-        os.makedirs(directory, exist_ok=True)
-        fd, tmp = tempfile.mkstemp(dir=directory, prefix=".ipv6-")
-        try:
-            with os.fdopen(fd, "w", encoding="utf-8") as f:
-                for key in _STATE_KEYS:
-                    f.write(f"{key}={desired[key]}\n")
-            os.chmod(tmp, 0o644)
-            os.replace(tmp, path)
-        except BaseException:
-            try:
-                os.remove(tmp)
-            except OSError:
-                pass
-            raise
+        write_text_atomic(path, content, prefix=".ipv6-")
     except OSError as e:
         logger.error("ipv6: could not write state file %s: %s", path, e)
         return False

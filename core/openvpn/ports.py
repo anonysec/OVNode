@@ -22,7 +22,6 @@ from __future__ import annotations
 import os
 import re
 import subprocess
-import tempfile
 
 from core.logger import logger
 from core.updater import is_docker
@@ -134,21 +133,8 @@ def write_state(ports: list[int]) -> bool:
                 return False
     except OSError:
         pass
-    directory = os.path.dirname(path)
     try:
-        os.makedirs(directory, exist_ok=True)
-        fd, tmp = tempfile.mkstemp(dir=directory, prefix=".ports-")
-        try:
-            with os.fdopen(fd, "w", encoding="utf-8") as f:
-                f.write(content)
-            os.chmod(tmp, 0o644)
-            os.replace(tmp, path)
-        except BaseException:
-            try:
-                os.remove(tmp)
-            except OSError:
-                pass
-            raise
+        _atomic_write(path, content)
     except OSError as e:
         logger.error("ports: could not write state file %s: %s", path, e)
         return False
