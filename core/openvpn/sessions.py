@@ -25,7 +25,7 @@ from collections import Counter
 from typing import Any
 
 from core.logger import logger
-from core.openvpn.pki.paths import openvpn_root
+from core.openvpn.atomic import openvpn_root
 from core.openvpn.store import OVNODE_DIR, SESSIONS_DIR
 from core.validation import _CLIENT_NAME_RE, _SIMPLE_ID_RE, _UUID_RE
 

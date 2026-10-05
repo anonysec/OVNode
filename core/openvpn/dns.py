@@ -16,8 +16,7 @@ import os
 import re
 
 from core.logger import logger
-from core.openvpn.atomic import write_text_atomic
-from core.openvpn.pki.paths import openvpn_root
+from core.openvpn.atomic import openvpn_root, write_text_atomic
 
 # Fresh server.conf emits push "dhcp-option DNS <ip>"; the unquoted form is
 # accepted too (hand-edited configs). `DNS6` never matches (DNS + \s+).

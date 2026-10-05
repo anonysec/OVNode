@@ -35,8 +35,11 @@ def file_lock(path: str):
     """Hold an exclusive ``flock`` on ``path`` for the duration of the block.
 
     Yields ``None`` while the lock is held, or the :class:`OSError` when the
-    lock file cannot be opened or locked — the caller decides whether to
-    refuse or proceed unlocked. The lock (and file) is always released.
+    lock file cannot be *opened* — the caller decides whether to refuse or
+    proceed unlocked. A failure to acquire the lock itself (``flock``) is
+    re-raised: it means the lock exists but is unusable, so silently
+    proceeding unlocked would defeat the mutual exclusion. The lock (and
+    file) is always released.
     """
     import fcntl
 
@@ -44,9 +47,15 @@ def file_lock(path: str):
     err: OSError | None = None
     try:
         fh = open(path, "a")
-        fcntl.flock(fh.fileno(), fcntl.LOCK_EX)
     except OSError as e:
         err = e
+    else:
+        try:
+            fcntl.flock(fh.fileno(), fcntl.LOCK_EX)
+        except OSError:
+            fh.close()
+            fh = None
+            raise
     try:
         yield err
     finally:

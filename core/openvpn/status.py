@@ -21,7 +21,7 @@ import os
 import time
 from collections.abc import Iterator
 
-from core.openvpn.pki.paths import openvpn_root
+from core.openvpn.atomic import openvpn_root
 
 logger = logging.getLogger("ovnode")
 

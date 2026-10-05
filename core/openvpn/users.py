@@ -79,12 +79,18 @@ def _build_ovpn(cn: str) -> bool:
         directory = os.path.dirname(out_path) or "."
         fd, tmp_path = tempfile.mkstemp(dir=directory, prefix=".client-ovpn-")
         try:
-            with os.fdopen(fd, "w", encoding="utf-8") as out:
+            with os.fdopen(fd, "w", encoding="utf-8", errors="surrogateescape") as out:
                 for src in (_paths.CLIENT_TEMPLATE, cert_src):
-                    with open(src, encoding="utf-8", errors="ignore") as source:
-                        for line in source:
-                            if not line.startswith("#"):
-                                out.write(line)
+                    with open(src, encoding="utf-8", errors="surrogateescape") as source:
+                        for line in source.read().splitlines(keepends=True):
+                            if line.startswith("#"):
+                                continue
+                            out.write(line)
+                            # grep always terminates its last output line with a
+                            # newline; without this a file lacking a final newline
+                            # concatenates onto the next source's first line.
+                            if not line.endswith(("\n", "\r")):
+                                out.write("\n")
                 # Embed the private key in the standard <key>…</key> block.
                 with open(key_path, encoding="utf-8") as kf:
                     out.write("<key>\n")

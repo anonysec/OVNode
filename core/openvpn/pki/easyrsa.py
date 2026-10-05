@@ -24,41 +24,45 @@ def run_easyrsa(*args: str, timeout: int = 120, pki_dir: str | None = None) -> b
         logger.error("easyrsa not found at %s", easyrsa_bin)
         return False
     lock_path = os.path.join(pki_dir or _paths.PKI_DIR, ".easyrsa.lock")
-    with file_lock(lock_path) as lock_err:
-        if lock_err is not None:
-            logger.error("easyrsa lock unavailable (%s) — refusing to run unlocked", lock_err)
-            return False
-        try:
-            cmd = [easyrsa_bin, f"--pki-dir={pki_dir or _paths.PKI_DIR}"] + list(args)
-            # Minimal env: don't leak API_KEY / panel secrets to the child.
-            minimal_env = {
-                "PATH": os.environ.get("PATH", "/usr/sbin:/usr/bin:/sbin:/bin"),
-                "EASYRSA_BATCH": "1",
-                "HOME": os.environ.get("HOME", "/root"),
-            }
-            subprocess.run(
-                cmd,
-                cwd=_paths.EASYRSA_DIR,
-                env=minimal_env,
-                check=True,
-                capture_output=True,
-                timeout=timeout,
-            )
-            return True
-        except subprocess.CalledProcessError as e:
-            logger.error(
-                "easyrsa %s failed (rc=%d): %s",
-                " ".join(args),
-                e.returncode,
-                e.stderr[-500:].decode() if e.stderr else str(e),
-            )
-            return False
-        except subprocess.TimeoutExpired:
-            logger.error("easyrsa %s timed out after %ds", " ".join(args), timeout)
-            return False
-        except Exception as e:
-            logger.error("easyrsa %s error: %s", " ".join(args), e)
-            return False
+    try:
+        with file_lock(lock_path) as lock_err:
+            if lock_err is not None:
+                logger.error("easyrsa lock unavailable (%s) — refusing to run unlocked", lock_err)
+                return False
+            try:
+                cmd = [easyrsa_bin, f"--pki-dir={pki_dir or _paths.PKI_DIR}"] + list(args)
+                # Minimal env: don't leak API_KEY / panel secrets to the child.
+                minimal_env = {
+                    "PATH": os.environ.get("PATH", "/usr/sbin:/usr/bin:/sbin:/bin"),
+                    "EASYRSA_BATCH": "1",
+                    "HOME": os.environ.get("HOME", "/root"),
+                }
+                subprocess.run(
+                    cmd,
+                    cwd=_paths.EASYRSA_DIR,
+                    env=minimal_env,
+                    check=True,
+                    capture_output=True,
+                    timeout=timeout,
+                )
+                return True
+            except subprocess.CalledProcessError as e:
+                logger.error(
+                    "easyrsa %s failed (rc=%d): %s",
+                    " ".join(args),
+                    e.returncode,
+                    e.stderr[-500:].decode() if e.stderr else str(e),
+                )
+                return False
+            except subprocess.TimeoutExpired:
+                logger.error("easyrsa %s timed out after %ds", " ".join(args), timeout)
+                return False
+            except Exception as e:
+                logger.error("easyrsa %s error: %s", " ".join(args), e)
+                return False
+    except OSError as e:
+        logger.error("easyrsa lock failed (%s)", e)
+        return False
 
 
 _easyrsa = run_easyrsa

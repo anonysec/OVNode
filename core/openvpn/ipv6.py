@@ -17,8 +17,7 @@ import os
 import re
 
 from core.logger import logger
-from core.openvpn.atomic import write_text_atomic
-from core.openvpn.pki.paths import openvpn_root
+from core.openvpn.atomic import openvpn_root, write_text_atomic
 
 DEFAULT_PREFIX = "fd42:42:42:42::/64"
 

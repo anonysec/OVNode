@@ -24,7 +24,7 @@ import re
 import subprocess
 
 from core.logger import logger
-from core.openvpn.pki.paths import openvpn_root
+from core.openvpn.atomic import openvpn_root
 from core.updater import is_docker
 
 # Installer-owned NAT files (native installs only — Docker applies the same
