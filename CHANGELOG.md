@@ -1,6 +1,12 @@
 # Changelog
 
-## 1.0.44 — 2026-10-04
+## 1.0.45 — 2026-10-05
+
+Housekeeping: restore `.claude` to `.dockerignore` (OVManager kept
+it as belt-and-suspenders) and ignore `docs/` in `.gitignore` so
+the untracked superpowers plan artifact from the reverted refactor
+is not staged by mistake.
+## 1.0.45 — 2026-10-04
 
 The installer's menu takes numbers, and waits for nobody.
 

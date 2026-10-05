@@ -49,6 +49,7 @@ PROJECT_PLAN.md
 *_PLAN.md
 .plan/
 .local/
+docs/
 
 # graphify knowledge graph output (local trial, never publish)
 graphify-out/

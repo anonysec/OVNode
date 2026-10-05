@@ -24,6 +24,7 @@ data
 # Not needed inside the image
 tests
 install.sh
+.claude
 docker-compose.yml
 .pre-commit-config.yaml
 .python-version
