@@ -13,6 +13,7 @@ limits — and reports usage in the exact shape OVManager consumes.
 from __future__ import annotations
 
 import os
+import shutil
 import subprocess
 import tempfile
 
@@ -43,6 +44,16 @@ def _cert_paths(cn: str) -> tuple[str, str]:
     )
 
 
+def _pushed_paths(cn: str) -> tuple[str, str, str]:
+    """(cert, key, ca) paths for panel-pushed credentials under users/<cn>/."""
+    user_dir = store.user_dir(cn)
+    return (
+        os.path.join(user_dir, "cert.pem"),
+        os.path.join(user_dir, "key.pem"),
+        os.path.join(user_dir, "ca.pem"),
+    )
+
+
 # ── profile generation ───────────────────────────────────────────────
 
 
@@ -57,18 +68,32 @@ def _profile_head_is_valid(path: str) -> bool:
 
 
 def _build_ovpn(cn: str) -> bool:
-    """(Re)build users/<cn>/client.ovpn from the template + cert bundle."""
+    """(Re)build users/<cn>/client.ovpn from the template + cert bundle.
+
+    Panel-pushed material (users/<cn>/cert.pem + key.pem, optional ca.pem)
+    wins; the local easy-rsa tree stays as the legacy/install fallback.
+    """
     crt, inline = _cert_paths(cn)
-    cert_src = inline if os.path.exists(inline) else crt if os.path.exists(crt) else None
+    pushed_cert, pushed_key, pushed_ca = _pushed_paths(cn)
+    ca_src: str | None = None
+    if os.path.exists(pushed_cert) and os.path.exists(pushed_key):
+        cert_src = pushed_cert
+        key_path = pushed_key
+        # Pushed material carries no CA chain, so embed the CA explicitly.
+        ca_src = pushed_ca if os.path.exists(pushed_ca) else os.path.join(PKI_DIR, "ca.crt")
+        if not os.path.exists(ca_src):
+            ca_src = None
+    else:
+        cert_src = inline if os.path.exists(inline) else crt if os.path.exists(crt) else None
+        # The inline bundle is the cert + CA chain; the private key lives next
+        # to it and MUST be embedded in the .ovpn or the handshake fails.
+        key_path = os.path.join(PKI_DIR, "private", f"{cn}.key")
     if cert_src is None:
         logger.warning("No certificate material for cn='%s'; cannot build .ovpn", cn)
         return False
     if not os.path.exists(CLIENT_TEMPLATE):
         logger.warning("client-common.txt missing; cannot build .ovpn for cn='%s'", cn)
         return False
-    # The inline bundle is the cert + CA chain; the private key lives next
-    # to it and MUST be embedded in the .ovpn or the handshake fails.
-    key_path = os.path.join(PKI_DIR, "private", f"{cn}.key")
     if not os.path.exists(key_path):
         logger.warning("No private key for cn='%s'; cannot build .ovpn", cn)
         return False
@@ -89,6 +114,14 @@ def _build_ovpn(cn: str) -> bool:
                     check=True,
                     timeout=30,
                 )
+                # Pushed profiles need the CA chain inline; the legacy inline
+                # bundle already carries it, so this block only fires for the
+                # panel-pushed path.
+                if ca_src:
+                    with open(ca_src, encoding="utf-8") as cf:
+                        out.write("<ca>\n")
+                        out.write(cf.read())
+                        out.write("</ca>\n")
                 # Embed the private key in the standard <key>…</key> block.
                 with open(key_path, encoding="utf-8") as kf:
                     out.write("<key>\n")
@@ -123,21 +156,79 @@ def _build_ovpn(cn: str) -> bool:
 # ── lifecycle ────────────────────────────────────────────────────────
 
 
-def create_user_on_server(uid: str, name: str, max_logins: int = 1) -> bool:
-    """Create (or repair) a user: cert, profile, name, limit. Idempotent."""
-    cn = cn_from_uid(uid)
-    crt, inline = _cert_paths(cn)
+def _write_pushed_credentials(
+    cn: str, cert_pem: str, key_pem: str, ca_pem: str | None = None
+) -> bool:
+    """Store panel-pushed cert/key/ca under users/<cn>/. Idempotent overwrite."""
+    store.create_user(cn)
+    cert_path, key_path, ca_path = _pushed_paths(cn)
+    try:
+        for path, pem, mode in ((cert_path, cert_pem, 0o644), (key_path, key_pem, 0o600)):
+            with open(path, "w", encoding="utf-8") as f:
+                f.write(pem if pem.endswith("\n") else pem + "\n")
+            os.chmod(path, mode)
+        # CA: prefer the pushed copy, else mirror the node's PKI CA. Never
+        # clobber an existing per-user CA on a re-push.
+        if ca_pem:
+            source = ca_pem
+            with open(ca_path, "w", encoding="utf-8") as f:
+                f.write(source if source.endswith("\n") else source + "\n")
+            os.chmod(ca_path, 0o644)
+        elif not os.path.exists(ca_path):
+            pki_ca = os.path.join(PKI_DIR, "ca.crt")
+            if os.path.exists(pki_ca):
+                shutil.copyfile(pki_ca, ca_path)
+                os.chmod(ca_path, 0o644)
+    except OSError as e:
+        logger.error("Failed to store pushed credentials for cn='%s': %s", cn, e)
+        return False
+    return True
 
-    # State is written only after issuance succeeds, so a failed create
-    # leaves nothing behind.
-    if not os.path.exists(crt) and not os.path.exists(inline):
-        if not os.path.exists(os.path.join(PKI_DIR, "ca.crt")):
-            logger.error("PKI not initialized — init_pki() runs at startup.")
+
+def create_user_on_server(
+    uid: str,
+    name: str,
+    max_logins: int = 1,
+    cert_pem: str | None = None,
+    key_pem: str | None = None,
+    ca_pem: str | None = None,
+    disabled: bool | None = None,
+) -> bool:
+    """Create (or repair) a user: cert, profile, name, limit. Idempotent.
+
+    When the panel pushes PEM material, it is written verbatim and easy-rsa is
+    never invoked. Without a cert the node falls back to local generation for
+    legacy installs (no panel yet); if no PKI exists either, only the user dir
+    and its `state` file are created so limits/disabled are still tracked.
+    """
+    cn = cn_from_uid(uid)
+
+    if cert_pem or key_pem:
+        if not (cert_pem and key_pem):
+            logger.error("Incomplete pushed credentials for cn='%s' (need cert + key)", cn)
             return False
-        if not _easyrsa("build-client-full", cn, "nopass"):
-            logger.error("Certificate generation failed for cn='%s' (uid=%s)", cn, uid)
+        if not _write_pushed_credentials(cn, cert_pem, key_pem, ca_pem):
             return False
-        logger.info("Client certificate generated for cn='%s' (uid=%s)", cn, uid)
+    else:
+        crt, inline = _cert_paths(cn)
+        pushed_cert, _, _ = _pushed_paths(cn)
+        if not os.path.exists(crt) and not os.path.exists(inline) and not os.path.exists(
+            pushed_cert
+        ):
+            if not os.path.exists(os.path.join(PKI_DIR, "ca.crt")):
+                # No pushed cert and no PKI to generate one: keep the dir +
+                # state so limits are tracked, but the user cannot auth.
+                if name:
+                    store.set_name(cn, name)
+                store.set_limit(cn, max_logins if max_logins is not None else 1)
+                if disabled is not None:
+                    store.set_disabled(cn, bool(disabled))
+                logger.error("No PKI and no pushed cert for cn='%s' (uid=%s)", cn, uid)
+                return False
+            if not _easyrsa("build-client-full", cn, "nopass"):
+                logger.error("Certificate generation failed for cn='%s' (uid=%s)", cn, uid)
+                return False
+            logger.info("Client certificate generated for cn='%s' (uid=%s)", cn, uid)
 
     # Profile is cheap to rebuild and must reflect the current template.
     if not _build_ovpn(cn) and not os.path.exists(store.ovpn_path(cn)):
@@ -146,6 +237,8 @@ def create_user_on_server(uid: str, name: str, max_logins: int = 1) -> bool:
     if name:
         store.set_name(cn, name)
     store.set_limit(cn, max_logins if max_logins is not None else 1)
+    if disabled is not None:
+        store.set_disabled(cn, bool(disabled))
     return True
 
 
@@ -153,17 +246,24 @@ def delete_user_on_server(uid: str) -> DeleteResult:
     """Revoke the certificate and remove the user folder."""
     cn = cn_from_uid(uid)
     crt, inline = _cert_paths(cn)
+    pushed_cert, _, _ = _pushed_paths(cn)
 
     # A user exists when there is certificate material or a cached profile. A
     # folder holding only a pre-set limit/name (the panel may push those before
     # the first download) is residue — clear it and report NOT_FOUND.
-    if not os.path.exists(crt) and not os.path.exists(store.ovpn_path(cn)):
+    if (
+        not os.path.exists(crt)
+        and not os.path.exists(pushed_cert)
+        and not os.path.exists(store.ovpn_path(cn))
+    ):
         store.delete_user(cn)
         logger.warning("User '%s' (uid=%s) not found on node", cn, uid)
         return DeleteResult.NOT_FOUND
 
     # Revoke first and require success — deleting local files after a failed
-    # revoke would leave an untracked but still-valid certificate.
+    # revoke would leave an untracked but still-valid certificate. Panel-pushed
+    # certs were never issued by the local easy-rsa CA, so revocation is the
+    # panel's job; only locally-issued certs go through easyrsa here.
     if os.path.exists(crt):
         if not _easyrsa("revoke", cn):
             logger.error("Failed to revoke user '%s'", cn)
@@ -248,11 +348,13 @@ def download_ovpn_file(uid: str) -> str | None:
     """Path to the user's .ovpn, creating cert/profile lazily if needed."""
     cn = cn_from_uid(uid)
     _, inline = _cert_paths(cn)
+    pushed_cert, pushed_key, _ = _pushed_paths(cn)
 
     path = store.ovpn_path(cn)
     if os.path.exists(path) and _profile_head_is_valid(path):
         return path
-    if os.path.exists(inline) and _build_ovpn(cn):
+    has_pushed = os.path.exists(pushed_cert) and os.path.exists(pushed_key)
+    if (os.path.exists(inline) or has_pushed) and _build_ovpn(cn):
         return path
     if create_user_on_server(uid, store.get_name(cn) or ""):
         return path if os.path.exists(path) and _profile_head_is_valid(path) else None

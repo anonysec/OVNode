@@ -26,6 +26,8 @@ client (backend/node/requests.py):
     POST   /sync/update                      trigger_update
     POST   /sync/renew-cert                  renew_server_cert
     POST   /sync/users                       set_user_limits (bulk)
+    PUT    /sync/users/{cn}                  push_user_credentials
+    PUT    /sync/pki                         push_pki
 
 The panel treats a call as successful ONLY when the response is HTTP 200
 with ``{"success": true}``, so handlers report business failures inside the
@@ -37,13 +39,13 @@ Authentication: the panel sends the node API key in the ``key`` header.
 
 import os
 
-from fastapi import APIRouter, Depends, Request
+from fastapi import APIRouter, Depends, HTTPException, Request
 from fastapi.concurrency import run_in_threadpool
 from fastapi.responses import FileResponse
 
 from backend.api.auth import check_api_key, check_api_key_heavy
 from backend.api.routes.system import _resolve_identity
-from backend.api.schemas import BulkUserLimits, ResponseModel, User, UserLimit
+from backend.api.schemas import BulkUserLimits, ResponseModel, SyncUserCredential, User, UserLimit
 from backend.openvpn.sessions import disconnect_user
 from backend.openvpn.users import (
     change_user_status as change_user_status_on_server,
@@ -128,6 +130,40 @@ async def bulk_user_limits(payload: BulkUserLimits, api_key: str = Depends(check
         msg=f"{len(results)} limit(s) applied, {len(failed)} failed",
         data={"applied": len(results), "failed": failed},
     )
+
+
+@router.put("/users/{cn}", response_model=None)
+async def push_user_credentials(
+    cn: str,
+    payload: SyncUserCredential,
+    api_key: str = Depends(check_api_key),
+):
+    """Store panel-pushed user credentials + state (PUT /sync/users/{cn}).
+
+    The panel owns the PKI: it signs the user cert and pushes it here. The node
+    stores it passively (no local CA/cert generation). ``state`` is always
+    written; ``cert.pem``/``key.pem`` are required for a usable user, and
+    ``ca.pem`` mirrors the panel CA. Idempotent — a re-push overwrites.
+    """
+    safe_id = validate_user_id(cn)
+    if safe_id is None:
+        raise HTTPException(status_code=400, detail="Invalid user id (must be UUID or simple id)")
+    if not payload.cert_pem or not payload.key_pem:
+        raise HTTPException(status_code=400, detail="cert_pem and key_pem are required")
+    # Writing PEM + building the profile touches disk (and no easyrsa fork).
+    ok = await run_in_threadpool(
+        create_user_on_server,
+        safe_id,
+        "",
+        payload.max_logins,
+        payload.cert_pem,
+        payload.key_pem,
+        payload.ca_pem,
+        payload.disabled,
+    )
+    if not ok:
+        raise HTTPException(status_code=400, detail="Failed to store pushed credentials")
+    return {"ok": True, "success": True, "msg": "User credentials stored", "id": safe_id}
 
 
 @router.post("/user", response_model=ResponseModel)

@@ -92,6 +92,26 @@ def _sighup_fallback() -> bool:
     return True
 
 
+def reload_openvpn() -> bool:
+    """Reload OpenVPN through the management socket (SIGHUP), no service restart.
+
+    Preferred over a full restart after a PKI push: clients keep their tunnel
+    while the daemon re-reads the cert/key. Falls back to a raw SIGHUP when the
+    management interface is unavailable.
+    """
+    try:
+        from backend.openvpn.sessions import _management_send
+
+        result = _management_send("signal SIGHUP")
+        if result.get("ok"):
+            logger.info("OpenVPN reloaded via the management socket.")
+            return True
+        logger.warning("Management reload did not confirm: %s", result.get("error") or result)
+    except Exception as e:
+        logger.warning("Management reload failed (%s); falling back to SIGHUP.", e)
+    return _sighup_fallback()
+
+
 def restart_openvpn() -> bool:
     """Restart/reload the OpenVPN server. Returns True on success."""
     store.fix_runtime_permissions()

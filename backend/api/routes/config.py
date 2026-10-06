@@ -26,6 +26,8 @@ client (backend/node/requests.py):
     POST   /sync/update                      trigger_update
     POST   /sync/renew-cert                  renew_server_cert
     POST   /sync/users                       set_user_limits (bulk)
+    PUT    /sync/users/{cn}                  push_user_credentials
+    PUT    /sync/pki                         push_pki
 
 The panel treats a call as successful ONLY when the response is HTTP 200
 with ``{"success": true}``, so handlers report business failures inside the
@@ -35,12 +37,12 @@ itself (ovpn download must be a raw 200 body starting with "client").
 Authentication: the panel sends the node API key in the ``key`` header.
 """
 
-from fastapi import APIRouter, Depends
+from fastapi import APIRouter, Depends, HTTPException
 from fastapi.concurrency import run_in_threadpool
 
 from backend.api.auth import check_api_key, check_api_key_heavy
 from backend.api.routes.system import _openssl_enddate
-from backend.api.schemas import ResponseModel, SetSettingsModel
+from backend.api.schemas import ResponseModel, SetSettingsModel, SyncPKI
 from backend.logger import logger
 from backend.openvpn.control import change_config
 
@@ -118,6 +120,44 @@ async def restart_openvpn_service(api_key: str = Depends(check_api_key_heavy)):
         )
     msg = f"OpenVPN restart failed: {error}" if error else "OpenVPN restart failed"
     return ResponseModel(success=False, msg=msg, data={"openvpn_running": running})
+
+
+@router.put("/pki", response_model=None)
+async def push_pki(payload: SyncPKI, api_key: str = Depends(check_api_key_heavy)):
+    """Bootstrap the node PKI from panel-pushed material (PUT /sync/pki).
+
+    Writes the panel CA, server cert and server key to the paths server.conf
+    reads, then reloads OpenVPN via the management socket when it is running
+    (never a systemctl restart). This is the panel-owned PKI path; local
+    ``init_pki()`` stays as the install-time fallback before a panel registers.
+    """
+    import os
+
+    from backend.openvpn import pki
+    from backend.openvpn.atomic import write_text_atomic
+    from backend.openvpn.control import openvpn_is_running, reload_openvpn
+
+    for label, pem in (
+        ("ca_pem", payload.ca_pem),
+        ("server_cert_pem", payload.server_cert_pem),
+        ("server_key_pem", payload.server_key_pem),
+    ):
+        if "-----BEGIN" not in (pem or ""):
+            raise HTTPException(status_code=400, detail=f"{label} is not a PEM block")
+
+    server_key = os.path.join(pki.PKI_DIR, "private", "server.key")
+    try:
+        write_text_atomic(pki.CA_CERT, payload.ca_pem, mode=0o644)
+        write_text_atomic(pki.SERVER_CERT, payload.server_cert_pem, mode=0o644)
+        write_text_atomic(server_key, payload.server_key_pem, mode=0o600)
+    except OSError as e:
+        logger.error("Failed to store pushed PKI: %s", e)
+        raise HTTPException(status_code=400, detail="Failed to store pushed PKI") from e
+
+    reloaded = False
+    if await run_in_threadpool(openvpn_is_running):
+        reloaded = bool(await run_in_threadpool(reload_openvpn))
+    return {"ok": True, "success": True, "msg": "PKI stored", "reloaded": reloaded}
 
 
 @router.post("/renew-cert", response_model=ResponseModel)

@@ -1,5 +1,13 @@
 # Changelog
 
+## 1.2.0 — 2026-10-06
+
+Panel-owned PKI: node accepts pushed credentials. New endpoints PUT /sync/users/{cn}
+(pushes cert + key + state) and PUT /sync/pki (pushes CA + server cert + server key).
+create_user_on_server writes request PEMs (no local easy-rsa fork); legacy local
+generation kept as documented fallback. OpenVPN reload via management socket (no
+systemctl). Cert validation on connect now trusts the panel-pushed CA.
+
 ## 1.0.48 — 2026-10-06
 
 Hot-path forks removed from the max-login hook: `sanitize()` uses a bash

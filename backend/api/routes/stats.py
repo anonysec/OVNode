@@ -26,6 +26,8 @@ client (backend/node/requests.py):
     POST   /sync/update                      trigger_update
     POST   /sync/renew-cert                  renew_server_cert
     POST   /sync/users                       set_user_limits (bulk)
+    PUT    /sync/users/{cn}                  push_user_credentials
+    PUT    /sync/pki                         push_pki
 
 The panel treats a call as successful ONLY when the response is HTTP 200
 with ``{"success": true}``, so handlers report business failures inside the

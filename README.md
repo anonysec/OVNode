@@ -6,7 +6,7 @@ The VPN server half of an [OVManager](https://github.com/anonysec/OVManager) dep
   <img src=".github/assets/banner.svg" alt="OVNode — the VPN server agent for OVManager" width="820">
   <br><br>
 
-  [![Version](https://img.shields.io/badge/version-1.0.48-blue)](CHANGELOG.md)
+  [![Version](https://img.shields.io/badge/version-1.2.0-blue)](CHANGELOG.md)
   [![License: MIT](https://img.shields.io/badge/License-MIT-green.svg)](LICENSE)
   [![CI](https://github.com/anonysec/OVNode/actions/workflows/ci.yml/badge.svg)](https://github.com/anonysec/OVNode/actions/workflows/ci.yml)
   [![Python](https://img.shields.io/badge/python-3.12%2B-3776ab?logo=python&logoColor=white)](pyproject.toml)
@@ -180,6 +180,8 @@ All traffic is panel → node, authenticated with the node's API key in a `key` 
 | `PUT /sync/user` | `change_user_status` | `activate` / `deactivate`, optional `max_logins` |
 | `PUT /sync/user/limit` | `set_user_limit` | `id` may be numeric id or username |
 | `POST /sync/users` | `set_user_limits` (bulk) | Many users in one call, cap 500; per-item failures in `data.failed` |
+| `PUT /sync/users/{cn}` | panel PKI push | Pushed `cert_pem`/`key_pem` (+ optional `ca_pem`), `max_logins`, `disabled`; writes `state`, `cert.pem`, `key.pem`, `ca.pem` |
+| `PUT /sync/pki` | panel PKI bootstrap | Pushed `ca_pem`/`server_cert_pem`/`server_key_pem`; reloads OpenVPN via the management socket |
 | `DELETE /sync/user/{uid}` | `delete_user` | NOT_FOUND counts as success so panel cleanup proceeds |
 | `POST /sync/user/{uid}/disconnect` | `disconnect_user` | Kills sessions + clears stale markers |
 | `POST /sync/user/{uid}/reset-usage` | `reset_user_usage` | Zero the banked counters |
