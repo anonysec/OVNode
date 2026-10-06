@@ -1,5 +1,29 @@
 # Changelog
 
+## 1.0.48 — 2026-10-06
+
+Hot-path forks removed from the max-login hook: `sanitize()` uses a bash
+builtin instead of forking `sed`, and `log()` appends to
+`/var/log/ovnode/hook-events.log` instead of forking `logger` (rotation is
+handled by a new `/etc/logrotate.d/ovnode` stanza). The allow path now forks
+only `flock`, `awk` and `mkdir -p` for the log directory.
+
+The hook also fails closed on a malformed identity: an empty CN after
+sanitize, a CN longer than 64 characters, or one that does not match
+`[A-Za-z0-9_.][A-Za-z0-9_.-]*` is rejected. This is a deliberate hardening —
+the empty-CN path previously allowed the connection.
+
+OpenVPN now runs under a dedicated `ovnode-openvpn.service` unit instead of
+the distro's `openvpn-server@server`, so install, restart, log rotation and
+repair no longer touch the system unit. Docker mode still stops
+`openvpn-server@server` when it conflicts on the shared host network.
+
+Stale session markers are purged daily by `ovnode-cleanup.timer` running
+`backend/scripts/cleanup_stale_sessions.py`: a marker older than 24h whose
+pool IP is absent from the live status file is removed. The purge touches only
+`sessions/*`; user config (`limit`, `disabled`, `state`, `.ovpn`) is never
+modified.
+
 ## 1.0.47 — 2026-10-06
 
 Structural harmonization with OVManager. The agent's code directory is renamed

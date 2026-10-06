@@ -25,9 +25,9 @@
 #
 # Performance budget (reconnect storm: 100 phones rejoining at once): one awk
 # prefilter over the status file, and one python fork per takeover (auth once,
-# pipelined kills + verify polls) with zero forks on the allow path. Per-CN
-# locks keep different users from serializing behind each other. Remaining
-# forks per allow: flock, logger, ≤1 awk; takeover adds the python.
+# pipelined kills + verify polls). Per-CN locks keep different users from
+# serializing behind each other. Forks on the allow path: flock, ≤1 awk, and
+# mkdir -p for the log dir; takeover adds the python.
 
 set -euo pipefail
 shopt -s nullglob
@@ -50,11 +50,17 @@ OPENVPN_ROOT="${OVNODE_OPENVPN_ROOT:-/etc/openvpn}"
 MGMT_PASS_FILE="${OVNODE_MGMT_PASS_FILE:-$OPENVPN_ROOT/server/mgmt-pass}"
 DEFAULT_LIMIT=1
 LOG_TAG="ovnode-mlogin"
+LOG_DIR="${OVNODE_LOG_DIR:-/var/log/ovnode}"
+LOG_FILE="${OVNODE_LOG_FILE:-$LOG_DIR/hook-events.log}"
+mkdir -p "$LOG_DIR" 2>/dev/null || true
 
 cn="${common_name:-${1:-}}"
 
-log() { logger -t "$LOG_TAG" "$*" 2>/dev/null || echo "$LOG_TAG: $*" >&2; }
-sanitize() { printf '%s' "$1" | sed 's/[^A-Za-z0-9_.-]/_/g'; }
+log() {
+    local ts; ts="${EPOCHSECONDS:-$(date +%s)}"
+    printf '%s [%s] %s\n' "$ts" "$LOG_TAG" "$*" >> "$LOG_FILE" 2>/dev/null || true
+}
+sanitize() { printf '%s' "${1//[^A-Za-z0-9_.-]/_}"; }
 
 # mgmt_takeover runs the kill commands AND the verify poll over ONE management
 # connection (auth once); the exit code mirrors the printed verdict (0/1/2):
@@ -181,12 +187,13 @@ status_has_real() {
     return 1
 }
 
-if [[ -z "$cn" ]]; then
-    log "no common_name provided; allowing"
-    exit 0
-fi
-
 safe_cn="$(sanitize "$cn")"
+
+# Sanity fail closed: empty CN after sanitize, or CN too long, or pool IP malformed
+if [[ -z "$safe_cn" || ${#safe_cn} -gt 64 || ! "$safe_cn" =~ ^[A-Za-z0-9_.][A-Za-z0-9_.-]*$ ]]; then
+    log "CN=$cn (sanitized=$safe_cn) rejected: malformed; REJECT"
+    exit 1
+fi
 
 # Fail closed when USERS_DIR is missing or unreadable: denying the connection
 # beats risking an allowed disabled user. The agent creates the tree at

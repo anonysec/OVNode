@@ -10,12 +10,13 @@
 set -Eeuo pipefail
 
 # ── Constants ──────────────────────────────────────────────────────────
-VERSION="1.0.47"
+VERSION="1.0.48"
 APP_DIR="${OVN_APP_DIR:-/opt/ovnode}"
 DATA_BASE="/var/lib/ovnode"
 OPENVPN_ROOT="/etc/openvpn"
 DEFAULT_PORT=2083
 SYSTEMD_SERVICE="ovnode.service"
+OPENVPN_SERVICE="ovnode-openvpn.service"
 INSTALLER="$APP_DIR/install.sh"
 BIN_DIR="${OVN_BIN_DIR:-/usr/local/bin}"
 CLI_NAME="ovnode"
@@ -155,7 +156,7 @@ do_status() {
         else
             if has_systemd; then
                 agent="$(systemctl is-active "$SYSTEMD_SERVICE" 2>/dev/null || true)"
-                openvpn="$(systemctl is-active openvpn-server@server 2>/dev/null || true)"
+                openvpn="$(systemctl is-active $OPENVPN_SERVICE 2>/dev/null || true)"
             fi
         fi
 
@@ -222,7 +223,7 @@ node_autostart() {  # enable|disable
 }
 
 restart_vpn() {
-    if timeout "$STOP_TIMEOUT" systemctl restart openvpn-server@server 2>/dev/null; then
+    if timeout "$STOP_TIMEOUT" systemctl restart "$OPENVPN_SERVICE" 2>/dev/null; then
         render_ok "OpenVPN restarted (systemd)"
         return 0
     fi
@@ -381,7 +382,7 @@ do_restore() {
         node_service_action stop
     else
         systemctl_bounded stop "$SYSTEMD_SERVICE" >/dev/null 2>&1 || true
-        systemctl_bounded stop openvpn-server@server >/dev/null 2>&1 || true
+        systemctl_bounded stop "$OPENVPN_SERVICE" >/dev/null 2>&1 || true
     fi
     tar -xzf "$src" -C "$(restore_target_dir "$src")" \
         || die "Restore failed — $name was not fully unpacked; the safety copies above hold the previous state" "$EX_ERROR"

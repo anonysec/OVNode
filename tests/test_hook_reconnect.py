@@ -750,3 +750,26 @@ def test_no_sidecar_when_allow_without_takeover():
             assert not os.path.exists(os.path.join(users, "u1", "last_kill.json"))
         finally:
             mgmt.close()
+
+
+def test_empty_cn_rejected():
+    """B15 hardening: an empty CN fails closed (previously allowed)."""
+    import tempfile
+
+    with tempfile.TemporaryDirectory() as tmp:
+        users, sessions, server, status = _mktree(tmp)
+        env = _hook_env(users, sessions, server, status, 1, cn="")
+        r = subprocess.run(["bash", HOOK], capture_output=True, text=True, timeout=60, env=env)
+        assert r.returncode == 1, f"empty CN must be rejected: {r.stderr}"
+        assert [n for n in os.listdir(sessions) if not n.startswith(".")] == []
+
+
+def test_malformed_cn_rejected():
+    """B15: a leading dash (an easyrsa option) is rejected after sanitize."""
+    import tempfile
+
+    with tempfile.TemporaryDirectory() as tmp:
+        users, sessions, server, status = _mktree(tmp)
+        env = _hook_env(users, sessions, server, status, 1, cn="-flag")
+        r = subprocess.run(["bash", HOOK], capture_output=True, text=True, timeout=60, env=env)
+        assert r.returncode == 1, f"malformed CN must be rejected: {r.stderr}"

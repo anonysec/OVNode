@@ -20,7 +20,7 @@
 set -Eeuo pipefail
 
 # ── Constants ──────────────────────────────────────────────────────────
-VERSION="1.0.47"
+VERSION="1.0.48"
 # Forks: point source downloads (and update pulls) at your own repo.
 REPO="${OVN_REPO:-anonysec/OVNode}"
 # Versioned GitHub Release tarballs only: verified checksum, no git needed.
@@ -33,6 +33,9 @@ DEFAULT_PORT=2083
 DEFAULT_VPN=1194
 SYSTEMD_SERVICE="ovnode.service"
 NAT_SERVICE="ovnode-nat.service"
+OPENVPN_SERVICE="ovnode-openvpn.service"
+CLEANUP_SERVICE="ovnode-cleanup.service"
+CLEANUP_TIMER="ovnode-cleanup.timer"
 NAT_SCRIPT="/usr/local/sbin/ovnode-nat.sh"
 NAT_CONF="/etc/default/ovnode-nat"
 SYSCTL_CONF="/etc/sysctl.d/99-ovnode.conf"
@@ -591,11 +594,25 @@ ${OPENVPN_ROOT}/server/openvpn.log {
     missingok
     notifempty
     postrotate
-        systemctl kill -s HUP openvpn-server@server >/dev/null 2>&1 || true
+        systemctl kill -s HUP $OPENVPN_SERVICE >/dev/null 2>&1 || true
     endscript
 }
 ROTATE
     fi
+    cat >> "$LOGROTATE_CONF" << 'ROTATE'
+
+/var/log/ovnode/hook-events.log {
+    daily
+    rotate 7
+    compress
+    missingok
+    notifempty
+    create 0640 root root
+    postrotate
+        # OpenVPN hooks continue to append to the new file; no signal needed
+    endscript
+}
+ROTATE
     render_ok "Log rotation configured ($LOGROTATE_CONF)"
 }
 
@@ -619,19 +636,69 @@ ensure_openvpn_dirs() {
     fi
 }
 
+write_openvpn_unit() {
+    cat > "/etc/systemd/system/$OPENVPN_SERVICE" << UNIT
+[Unit]
+Description=OVNode OpenVPN daemon
+After=network-online.target
+Wants=network-online.target
+Documentation=https://github.com/anonysec/OVNode
+
+[Service]
+Type=simple
+ExecStart=/usr/sbin/openvpn --config $OPENVPN_ROOT/server/server.conf
+Restart=on-failure
+RestartSec=5
+LimitNOFILE=65536
+RuntimeDirectory=ovnode-openvpn
+RuntimeDirectoryMode=0755
+
+[Install]
+WantedBy=multi-user.target
+UNIT
+    systemctl daemon-reload >/dev/null 2>&1
+    systemctl enable "$OPENVPN_SERVICE" >/dev/null 2>&1 || true
+}
+
 start_openvpn_service() {
     # The agent generates server.conf + PKI on first boot.
     if has_systemd; then
-        systemctl enable openvpn-server@server >/dev/null 2>&1 || true
-        systemctl restart openvpn-server@server >/dev/null 2>&1 && \
+        write_openvpn_unit
+        systemctl restart "$OPENVPN_SERVICE" >/dev/null 2>&1 && \
             render_ok "OpenVPN server service started" || \
-            render_warn "Could not start openvpn-server@server — check: journalctl -u openvpn-server@server -n 50"
+            render_warn "Could not start $OPENVPN_SERVICE — check: journalctl -u $OPENVPN_SERVICE -n 50"
     elif command -v rc-service >/dev/null 2>&1; then
         rc-update add openvpn default >/dev/null 2>&1 || true
         rc-service openvpn start >/dev/null 2>&1 && render_ok "OpenVPN started (OpenRC)" || render_warn "Start OpenVPN manually"
     else
         render_warn "No init system detected — start OpenVPN manually: openvpn --config $OPENVPN_ROOT/server/server.conf"
     fi
+}
+
+write_cleanup_units() {
+    cat > "/etc/systemd/system/$CLEANUP_SERVICE" << UNIT
+[Unit]
+Description=OVNode stale session marker purge
+
+[Service]
+Type=oneshot
+ExecStart=${APP_DIR}/.venv/bin/python ${APP_DIR}/backend/scripts/cleanup_stale_sessions.py
+UNIT
+    cat > "/etc/systemd/system/$CLEANUP_TIMER" << UNIT
+[Unit]
+Description=Daily OVNode stale session purge
+
+[Timer]
+OnCalendar=daily
+Persistent=true
+
+[Install]
+WantedBy=timers.target
+UNIT
+    systemctl daemon-reload >/dev/null 2>&1
+    systemctl enable --now "$CLEANUP_TIMER" >/dev/null 2>&1 \
+        && render_ok "Stale session purge scheduled ($CLEANUP_TIMER)" \
+        || render_warn "Could not enable $CLEANUP_TIMER"
 }
 
 # Docker mode post-flight: a native daemon holding 1194/7505 on the shared host
@@ -1189,6 +1256,7 @@ do_install() {
     # evicts any host daemon holding the VPN/management ports.
     if [[ "$DOCKER" -eq 0 ]]; then
         start_openvpn_service
+        write_cleanup_units
     else
         stop_native_openvpn
     fi
@@ -1633,6 +1701,8 @@ do_repair_unit() {
         DOCKER=0
         has_systemd || die "systemd not found — cannot install the agent unit" "$EX_ERROR"
         write_systemd_unit
+        write_openvpn_unit
+        write_cleanup_units
         setup_nat
         setup_logrotate
     fi
@@ -1654,7 +1724,7 @@ do_uninstall() {
     render_screen
     render_line "  $(printf '%bthis removes%b' "$B" "$NC")"
     render_rule
-    render_kv "services" "$SYSTEMD_SERVICE, $NAT_SERVICE, openvpn-server@server"
+    render_kv "services" "$SYSTEMD_SERVICE, $NAT_SERVICE, $OPENVPN_SERVICE, $CLEANUP_TIMER"
     render_kv "files" "$(dir_size "$APP_DIR")   $APP_DIR"
     if [[ "$PURGE" -eq 1 ]]; then
         render_kv "data" "$(printf '%s%s%s   %s← users, keys, the CA private key' "$RD" "$DATA_BASE" "$NC" "$GY")"
@@ -1671,9 +1741,12 @@ do_uninstall() {
     # Stopping the NAT unit runs its ExecStop cleanup (rules removed).
     systemctl_bounded stop "$SYSTEMD_SERVICE"
     systemctl_bounded stop "$NAT_SERVICE"
-    systemctl_bounded stop openvpn-server@server
-    systemctl disable "$SYSTEMD_SERVICE" "$NAT_SERVICE" openvpn-server@server 2>/dev/null || true
-    rm -f "/etc/systemd/system/$SYSTEMD_SERVICE" "/etc/systemd/system/$NAT_SERVICE"
+    systemctl_bounded stop "$OPENVPN_SERVICE"
+    systemctl disable --now "$CLEANUP_TIMER" >/dev/null 2>&1 || true
+    systemctl disable "$SYSTEMD_SERVICE" "$NAT_SERVICE" "$OPENVPN_SERVICE" 2>/dev/null || true
+    rm -f "/etc/systemd/system/$SYSTEMD_SERVICE" "/etc/systemd/system/$NAT_SERVICE" \
+          "/etc/systemd/system/$OPENVPN_SERVICE" "/etc/systemd/system/$CLEANUP_SERVICE" \
+          "/etc/systemd/system/$CLEANUP_TIMER"
     systemctl daemon-reload 2>/dev/null || true
 
     if command -v docker >/dev/null 2>&1 && [[ -f "$(compose_file)" ]]; then

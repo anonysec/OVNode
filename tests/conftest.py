@@ -24,6 +24,9 @@ TEST_OPENVPN_ROOT.mkdir(parents=True, exist_ok=True)
 os.environ.setdefault("API_KEY", "test-api-key-1234567890")
 os.environ.setdefault("OVNODE_OPENVPN_ROOT", str(TEST_OPENVPN_ROOT))
 os.environ.setdefault("OVNODE_STATUS_FILE", str(TEST_OPENVPN_ROOT / "server" / "status.log"))
+# The max-login hook appends to a file now (no syslog fork); keep those writes
+# inside the sandbox instead of the real /var/log/ovnode.
+os.environ.setdefault("OVNODE_LOG_DIR", str(TEST_OPENVPN_ROOT / "logs"))
 
 
 # ── The suite must not write to the real system ──────────────────────────

@@ -29,19 +29,32 @@ def test_kill_gate_accepts_uuid_and_rejects_injection():
     assert _kill_target_ok("../x") is False
 
 
-def test_journal_missing_returns_empty_quietly(monkeypatch, caplog):
+def test_journal_missing_returns_empty_quietly(monkeypatch, tmp_path):
     import backend.openvpn.sessions as sessions
 
-    monkeypatch.setattr(sessions.shutil, "which", lambda *_a, **_k: None)
-    monkeypatch.setattr(sessions, "_journal_available", None)
-    monkeypatch.setattr(sessions, "_journal_cache", {})
-    with caplog.at_level("WARNING", logger="ovnode"):
-        assert sessions._journal_lines(8) == []
-    assert sessions._journal_available is False
-    # Second call must not fork or warn again (cached unavailability).
-    with caplog.at_level("WARNING", logger="ovnode"):
-        assert sessions._journal_lines(8) == []
-    assert not [r for r in caplog.records if "journal" in r.message.lower()]
+    monkeypatch.setenv("OVNODE_LOG_FILE", str(tmp_path / "missing.log"))
+    sessions._journal_cache.clear()
+    assert sessions._journal_lines(8) == []
+
+
+def test_journal_filters_by_age(monkeypatch, tmp_path):
+    import time
+
+    import backend.openvpn.sessions as sessions
+
+    log = tmp_path / "hook-events.log"
+    now = int(time.time())
+    old = now - 10 * 3600
+    fresh = now - 1
+    log.write_text(
+        f"{old} [ovnode-mlogin] CN=u1 limit=1; REJECT\n"
+        f"{fresh} [ovnode-mlogin] CN=u2 ip=1.2.3.4:5000; ALLOW\n"
+    )
+    monkeypatch.setenv("OVNODE_LOG_FILE", str(log))
+    sessions._journal_cache.clear()
+    lines = sessions._journal_lines(8)
+    assert len(lines) == 1
+    assert "ALLOW" in lines[0]
 
 
 def test_mgmt_port_garbage_falls_back():

@@ -17,9 +17,7 @@ import glob
 import json
 import os
 import re
-import shutil
 import socket
-import subprocess
 import time
 from collections import Counter
 from typing import Any
@@ -190,36 +188,25 @@ def _journal_lines(hours: int) -> list[str]:
     cached = _journal_cache.get("last")
     if cached and cached[0] == bounded and now - cached[1] < _JOURNAL_TTL:
         return cached[2]
-    if _journal_available is None:
-        _journal_available = shutil.which("journalctl") is not None
-        if not _journal_available:
-            logger.debug("journalctl not available; max-login auth stats disabled")
-    if not _journal_available:
-        lines: list[str] = []
-    else:
-        try:
-            out = subprocess.check_output(
-                [
-                    "journalctl",
-                    "-t",
-                    "ovnode-mlogin",
-                    "--since",
-                    f"{bounded} hours ago",
-                    "--no-pager",
-                    # Epoch prefix: the panel showed a guessed year/time parsed
-                    # back out of the human-readable stamp, which was wrong for
-                    # any event near a new year. short-unix gives a real ts.
-                    "-o",
-                    "short-unix",
-                ],
-                text=True,
-                errors="ignore",
-                timeout=8,
-            )
-            lines = out.splitlines()
-        except Exception as e:
-            logger.warning("Failed to read ovnode-mlogin journal: %s", e)
-            lines = []
+    # Hook writes one line per event to OVNODE_LOG_FILE (default
+    # /var/log/ovnode/hook-events.log) with epoch prefix; replaced the
+    # previous journalctl -t ovnode-mlogin read so a fork-free hook
+    # stays fork-free at the reader.
+    log_path = os.getenv("OVNODE_LOG_FILE", "/var/log/ovnode/hook-events.log")
+    cutoff = time.time() - bounded * 3600
+    lines = []
+    try:
+        with open(log_path, encoding="utf-8", errors="ignore") as fh:
+            for raw in fh:
+                head, _, msg = raw.partition(" ")
+                try:
+                    ts = float(head)
+                except ValueError:
+                    continue
+                if ts >= cutoff:
+                    lines.append(f"{ts:.0f} {msg}".rstrip())
+    except OSError:
+        pass
     _journal_cache.clear()
     _journal_cache["last"] = (bounded, now, lines)
     return lines
