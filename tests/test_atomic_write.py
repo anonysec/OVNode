@@ -16,7 +16,7 @@ import pytest
 
 
 def test_writes_the_content(tmp_path):
-    from core.openvpn.atomic import write_text_atomic
+    from backend.openvpn.atomic import write_text_atomic
 
     target = tmp_path / "server.conf"
     write_text_atomic(str(target), "port 1194\n")
@@ -24,7 +24,7 @@ def test_writes_the_content(tmp_path):
 
 
 def test_creates_the_parent_directory(tmp_path):
-    from core.openvpn.atomic import write_text_atomic
+    from backend.openvpn.atomic import write_text_atomic
 
     target = tmp_path / "server" / "nested" / "server.conf"
     write_text_atomic(str(target), "port 1194\n")
@@ -33,7 +33,7 @@ def test_creates_the_parent_directory(tmp_path):
 
 def test_applies_the_requested_mode(tmp_path):
     """mkstemp makes 0600; a dropped-privilege OpenVPN user must still read it."""
-    from core.openvpn.atomic import write_text_atomic
+    from backend.openvpn.atomic import write_text_atomic
 
     target = tmp_path / "server.conf"
     write_text_atomic(str(target), "x")
@@ -41,7 +41,7 @@ def test_applies_the_requested_mode(tmp_path):
 
 
 def test_keeps_a_backup_when_asked(tmp_path):
-    from core.openvpn.atomic import write_text_atomic
+    from backend.openvpn.atomic import write_text_atomic
 
     target = tmp_path / "server.conf"
     write_text_atomic(str(target), "old\n", keep_backup=True)
@@ -51,7 +51,7 @@ def test_keeps_a_backup_when_asked(tmp_path):
 
 
 def test_no_backup_when_not_asked(tmp_path):
-    from core.openvpn.atomic import write_text_atomic
+    from backend.openvpn.atomic import write_text_atomic
 
     target = tmp_path / "state"
     write_text_atomic(str(target), "old\n")
@@ -61,7 +61,7 @@ def test_no_backup_when_not_asked(tmp_path):
 
 def test_a_failed_write_leaves_the_old_content_intact(tmp_path, monkeypatch):
     """The whole point: a reader never sees a half-written file."""
-    from core.openvpn import atomic
+    from backend.openvpn import atomic
 
     target = tmp_path / "server.conf"
     target.write_text("original\n")
@@ -77,7 +77,7 @@ def test_a_failed_write_leaves_the_old_content_intact(tmp_path, monkeypatch):
 
 
 def test_no_temp_files_are_left_behind(tmp_path, monkeypatch):
-    from core.openvpn import atomic
+    from backend.openvpn import atomic
 
     target = tmp_path / "server.conf"
 
@@ -94,7 +94,7 @@ def test_no_temp_files_are_left_behind(tmp_path, monkeypatch):
 
 def test_pki_creates_server_conf_atomically(monkeypatch, tmp_path):
     """The PKI hardening path must not use a plain open(..., "w")."""
-    from core.openvpn import pki
+    from backend.openvpn import pki
 
     target = tmp_path / "server.conf"
     monkeypatch.setattr(pki, "SERVER_CONF", str(target))

@@ -51,7 +51,7 @@ def _directive_names(conf: str) -> set[str]:
 
 @pytest.fixture
 def generated_conf(monkeypatch, tmp_path):
-    from core.openvpn import pki
+    from backend.openvpn import pki
 
     monkeypatch.setattr(pki, "_OPENVPN_ROOT", str(tmp_path))
     monkeypatch.setattr(pki, "SERVER_CONF", str(tmp_path / "server" / "server.conf"))

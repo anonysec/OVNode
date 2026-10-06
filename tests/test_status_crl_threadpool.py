@@ -13,14 +13,14 @@ from fastapi.testclient import TestClient
 
 
 def _client():
-    from core.app import api
-    from core.config import settings
+    from backend.app import api
+    from backend.config import settings
 
     return TestClient(api), {"key": settings.api_key}
 
 
 def _clear_limits():
-    from core.api import auth
+    from backend.api import auth
 
     auth._ratelimit_buckets.clear()
     auth._heavy_buckets.clear()
@@ -29,7 +29,7 @@ def _clear_limits():
 def test_status_offloads_the_crl_check_to_the_threadpool(monkeypatch):
     from fastapi.concurrency import run_in_threadpool as real_run_in_threadpool
 
-    from core.api.routes import system as routes
+    from backend.api.routes import system as routes
 
     threaded: list[str] = []
 
@@ -42,7 +42,7 @@ def test_status_offloads_the_crl_check_to_the_threadpool(monkeypatch):
 
     monkeypatch.setattr(routes, "run_in_threadpool", recording_run_in_threadpool)
     monkeypatch.setattr(routes, "_crl_last_check", 0.0, raising=False)
-    monkeypatch.setattr("core.openvpn.pki._ensure_crl", fake_ensure_crl, raising=False)
+    monkeypatch.setattr("backend.openvpn.pki._ensure_crl", fake_ensure_crl, raising=False)
 
     _clear_limits()
     c, headers = _client()
@@ -55,13 +55,13 @@ def test_status_offloads_the_crl_check_to_the_threadpool(monkeypatch):
 
 def test_status_still_answers_when_the_crl_check_explodes(monkeypatch):
     """Renewal is best-effort: a broken PKI must not take /sync/status down."""
-    from core.api.routes import system as routes
+    from backend.api.routes import system as routes
 
     def boom():
         raise RuntimeError("easyrsa is missing")
 
     monkeypatch.setattr(routes, "_crl_last_check", 0.0, raising=False)
-    monkeypatch.setattr("core.openvpn.pki._ensure_crl", boom, raising=False)
+    monkeypatch.setattr("backend.openvpn.pki._ensure_crl", boom, raising=False)
 
     _clear_limits()
     c, headers = _client()
@@ -74,7 +74,7 @@ def test_the_crl_check_is_rate_limited_to_once_a_day(monkeypatch):
     """It is a daily maintenance fork, not a per-poll one."""
     import time
 
-    from core.api.routes import system as routes
+    from backend.api.routes import system as routes
 
     calls: list[float] = []
 
@@ -83,7 +83,7 @@ def test_the_crl_check_is_rate_limited_to_once_a_day(monkeypatch):
         return True
 
     monkeypatch.setattr(routes, "_crl_last_check", time.monotonic(), raising=False)
-    monkeypatch.setattr("core.openvpn.pki._ensure_crl", fake_ensure_crl, raising=False)
+    monkeypatch.setattr("backend.openvpn.pki._ensure_crl", fake_ensure_crl, raising=False)
 
     _clear_limits()
     c, headers = _client()

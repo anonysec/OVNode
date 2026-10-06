@@ -19,9 +19,11 @@ import tempfile
 import threading
 import time
 
-from core.openvpn import sessions as sess_mod
+from backend.openvpn import sessions as sess_mod
 
-HOOK = os.path.join(os.path.dirname(__file__), "..", "core", "scripts", "ovnode-client-connect.sh")
+HOOK = os.path.join(
+    os.path.dirname(__file__), "..", "backend", "scripts", "ovnode-client-connect.sh"
+)
 
 
 def _free_port():

@@ -214,7 +214,7 @@ def test_manager_version_matches_agent():
     manager_src = MANAGER_PATH.read_text(encoding="utf-8")
     mver = re.search(r'^VERSION="([^"]+)"', manager_src, re.M).group(1)
     agent_ver = re.search(
-        r'__version__ = "([^"]+)"', (REPO / "core" / "version.py").read_text(encoding="utf-8")
+        r'__version__ = "([^"]+)"', (REPO / "backend" / "version.py").read_text(encoding="utf-8")
     ).group(1)
     assert mver == agent_ver, f"manager {mver} != agent {agent_ver}"
 

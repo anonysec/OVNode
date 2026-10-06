@@ -1,5 +1,21 @@
 # Changelog
 
+## 1.0.47 — 2026-10-06
+
+Structural harmonization with OVManager. The agent's code directory is renamed
+`core/` → `backend/`, matching the panel's layout, with every import and path
+reference updated (Python, shell, Dockerfile, CI, docs). Docker assets move
+under `scripts/compose/`: the reference `docker-compose.yml` and
+`docker/entrypoint.sh` now live there, and the image copies the entrypoint from
+its new location.
+
+Root docs are standardized: the duplicate `CONTRIBUTING.md` and
+`CODE_OF_CONDUCT.md` are removed in favour of `.github/CONTRIBUTING.md` and a
+Contributor Covenant `.github/CODE_OF_CONDUCT.md`; `NOTICE`, `roadmap.md` and a
+`.github/pull_request_template.md` are added. AI/tooling files (`.opencode/`,
+`AGENTS.md`, `docs/superpowers/`) are gitignored and the local brainstorming
+artifacts removed from the working tree.
+
 ## 1.0.46 — 2026-10-05
 
 Multi-login policy simplified: the allow/reject decision uses only the live

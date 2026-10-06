@@ -13,7 +13,7 @@ import types
 
 import pytest
 
-from core.openvpn import control, store
+from backend.openvpn import control, store
 
 CONF = """port 1194
 proto udp
@@ -50,7 +50,7 @@ def root(tmp_path, monkeypatch):
 
     monkeypatch.setattr(control, "restart_openvpn", _restart)
     monkeypatch.setattr(control, "_sighup_fallback", _sighup)
-    import core.openvpn.multilogin as ml
+    import backend.openvpn.multilogin as ml
 
     monkeypatch.setattr(ml, "ensure_multilogin_setup", lambda: None)
     return tmp_path, calls

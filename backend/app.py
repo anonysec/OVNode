@@ -1,0 +1,167 @@
+# Copyright (c) 2026 anonysec
+# SPDX-License-Identifier: MIT
+
+import os
+import uuid
+from contextlib import asynccontextmanager
+
+from fastapi import FastAPI, Request
+from fastapi.exceptions import RequestValidationError
+from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import JSONResponse
+from starlette.exceptions import HTTPException as StarletteHTTPException
+from starlette.middleware.base import BaseHTTPMiddleware
+
+from backend.api.routes import router as core_router
+from backend.config import settings
+from backend.logger import logger
+from backend.openvpn.pki import init_pki
+
+
+class SecurityHeadersMiddleware(BaseHTTPMiddleware):
+    async def dispatch(self, request, call_next):
+        response = await call_next(request)
+        response.headers["X-Content-Type-Options"] = "nosniff"
+        response.headers["X-Frame-Options"] = "DENY"
+        # API-only service: no inline scripts/styles needed anywhere.
+        response.headers["Content-Security-Policy"] = (
+            "default-src 'none'; frame-ancestors 'none'; form-action 'none'"
+        )
+        if request.url.scheme == "https":
+            response.headers["Strict-Transport-Security"] = "max-age=31536000"
+        return response
+
+
+def _maintenance_marker() -> str:
+    base = (settings.data_dir or "").strip() or "/var/lib/ovnode"
+    return os.path.join(base, "update-maintenance")
+
+
+class MaintenanceMiddleware(BaseHTTPMiddleware):
+    """Block writes while a release candidate is being checked; reads and the
+    health probe keep answering so the panel's own checks do not go blind."""
+
+    async def dispatch(self, request, call_next):
+        blocked = request.method not in ("GET", "HEAD", "OPTIONS")
+        if blocked and os.path.isfile(_maintenance_marker()):
+            return JSONResponse(
+                status_code=503,
+                content={
+                    "success": False,
+                    "msg": "Node is verifying an update — writes are blocked; retry in a minute",
+                    "data": None,
+                },
+            )
+        return await call_next(request)
+
+
+@asynccontextmanager
+async def lifespan(app: FastAPI):
+    """Initialize PKI + OpenVPN config (idempotent).
+
+    PKI failures must not kill the API: the panel needs /sync/status most
+    when the node is broken.
+    """
+    logger.info("Starting OV-Node — initializing PKI...")
+    app.state.degraded = None
+    try:
+        init_pki()
+    except Exception as e:
+        app.state.degraded = str(e)
+        logger.error("PKI init failed — starting degraded API: %s", e, exc_info=e)
+    try:
+        from backend.openvpn.multilogin import ensure_multilogin_setup
+
+        ensure_multilogin_setup()
+    except Exception as e:
+        logger.error("multilogin setup failed: %s", e, exc_info=e)
+        if app.state.degraded is None:
+            app.state.degraded = str(e)
+
+    from backend.openvpn.control import openvpn_is_running
+
+    if openvpn_is_running():
+        logger.info("OpenVPN server is running.")
+    else:
+        logger.warning(
+            "OpenVPN server is not running — start it with: "
+            "systemctl restart openvpn-server@server (or check /dev/net/tun)"
+        )
+    yield
+    logger.info("OV-Node shutting down.")
+
+
+api = FastAPI(
+    title="OV Node",
+    # Docs are opt-in: hide all three surfaces or none.
+    docs_url="/doc" if settings.doc else None,
+    redoc_url="/redoc" if settings.doc else None,
+    openapi_url="/openapi.json" if settings.doc else None,
+    lifespan=lifespan,
+)
+
+_panel_origins = [
+    origin.strip() for origin in os.getenv("PANEL_ORIGINS", "").split(",") if origin.strip()
+]
+api.add_middleware(
+    CORSMiddleware,
+    allow_origins=_panel_origins,
+    allow_credentials=False,
+    allow_methods=["GET", "POST", "PUT", "DELETE", "OPTIONS"],
+    allow_headers=["key", "content-type", "authorization", "x-requested-with"],
+)
+api.add_middleware(SecurityHeadersMiddleware)
+api.add_middleware(MaintenanceMiddleware)
+
+api.include_router(core_router)
+
+
+# ── error handling ───────────────────────────────────────────────────
+# The panel accepts a call only when it gets HTTP 200 + {"success": true},
+# so every failure has to come back in that envelope.
+
+
+@api.exception_handler(StarletteHTTPException)
+async def http_exception_handler(request: Request, exc: StarletteHTTPException):
+    return JSONResponse(
+        status_code=exc.status_code,
+        content={"success": False, "msg": str(exc.detail), "data": None},
+        headers=getattr(exc, "headers", None),
+    )
+
+
+@api.exception_handler(RequestValidationError)
+async def validation_exception_handler(request: Request, exc: RequestValidationError):
+    problems = "; ".join(
+        f"{'.'.join(str(p) for p in e.get('loc', []))}: {e.get('msg', '')}" for e in exc.errors()
+    )
+    logger.warning("Invalid request %s %s — %s", request.method, request.url.path, problems)
+    return JSONResponse(
+        status_code=422,
+        content={"success": False, "msg": f"Invalid request: {problems}", "data": None},
+    )
+
+
+@api.exception_handler(Exception)
+async def unhandled_exception_handler(request: Request, exc: Exception):
+    """Last-resort handler: never leak a traceback, always leave a trail.
+
+    ``ref`` ties the response to the full stack trace in the node log.
+    """
+    ref = uuid.uuid4().hex[:8]
+    logger.error(
+        "Unhandled error ref=%s on %s %s: %s",
+        ref,
+        request.method,
+        request.url.path,
+        exc,
+        exc_info=exc,
+    )
+    return JSONResponse(
+        status_code=500,
+        content={
+            "success": False,
+            "msg": f"Internal node error (ref={ref}, see node logs)",
+            "data": None,
+        },
+    )

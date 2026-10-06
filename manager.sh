@@ -10,7 +10,7 @@
 set -Eeuo pipefail
 
 # ── Constants ──────────────────────────────────────────────────────────
-VERSION="1.0.46"
+VERSION="1.0.47"
 APP_DIR="${OVN_APP_DIR:-/opt/ovnode}"
 DATA_BASE="/var/lib/ovnode"
 OPENVPN_ROOT="/etc/openvpn"
@@ -142,7 +142,7 @@ do_status() {
         mode="native"
         [[ -f "$(node_data_dir)/docker-compose.yml" ]] && mode="docker"
 
-        agent_version="$(grep -Eo '"[0-9]+\.[0-9]+\.[0-9]+"' "$APP_DIR/core/version.py" 2>/dev/null | head -1 | tr -d '"' || true)"
+        agent_version="$(grep -Eo '"[0-9]+\.[0-9]+\.[0-9]+"' "$APP_DIR/backend/version.py" 2>/dev/null | head -1 | tr -d '"' || true)"
 
         if [[ "$mode" == "docker" ]]; then
             if command -v docker >/dev/null 2>&1 \

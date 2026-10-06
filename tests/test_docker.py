@@ -16,8 +16,8 @@ import subprocess
 
 ROOT = os.path.join(os.path.dirname(__file__), "..")
 DOCKERFILE = os.path.join(ROOT, "Dockerfile")
-ENTRYPOINT = os.path.join(ROOT, "docker", "entrypoint.sh")
-COMPOSE = os.path.join(ROOT, "docker-compose.yml")
+ENTRYPOINT = os.path.join(ROOT, "scripts", "compose", "entrypoint.sh")
+COMPOSE = os.path.join(ROOT, "scripts", "compose", "docker-compose.yml")
 
 
 def _read(path: str) -> str:
@@ -76,7 +76,7 @@ def test_compose_contract():
     assert "SYS_MODULE" not in content  # deliberately dropped: not needed
     assert "/etc/openvpn" in content  # state volume — node survives replacement
     assert "/dev/net/tun:/dev/net/tun" in content
-    assert "env_file: .env" in content
+    assert "env_file: ../../.env" in content
 
 
 def test_dockerignore_keeps_secrets_and_state_out():

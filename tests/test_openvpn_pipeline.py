@@ -4,7 +4,7 @@
 """Functional test of the overhauled OpenVPN PKI/config pipeline.
 
 Runs the whole pipeline in an isolated subprocess with a dedicated
-OVNODE_OPENVPN_ROOT, so module-level path constants in core.openvpn.pki freeze
+OVNODE_OPENVPN_ROOT, so module-level path constants in backend.openvpn.pki freeze
 with the correct env and no state leaks into (or from) other test modules
 which share this pytest process.
 """
@@ -20,7 +20,7 @@ import os, sys
 os.environ["OPENVPN_PORT"] = "1194"
 os.environ["API_KEY"] = "test-api-key-1234567890"
 
-from core.openvpn.pki import init_pki, SERVER_CONF, CLIENT_TEMPLATE, TLS_KEY, PKI_DIR
+from backend.openvpn.pki import init_pki, SERVER_CONF, CLIENT_TEMPLATE, TLS_KEY, PKI_DIR
 
 PASS = FAIL = 0
 def ok(cond, name):
@@ -71,8 +71,8 @@ ok("UPDATE_VIA_PANEL" not in tpl, "tpl remote is a real address, never the place
 ok("remote " in tpl and " 1194" in tpl, "tpl remote line present")
 
 # client .ovpn embeds tls-crypt
-from core.openvpn.users import create_user_on_server
-from core.openvpn.store import ovpn_path, get_limit
+from backend.openvpn.users import create_user_on_server
+from backend.openvpn.store import ovpn_path, get_limit
 uid = "testuser42"
 ok(create_user_on_server(uid, "Test User", max_logins=2), "create user")
 ovpn = read(ovpn_path(uid))
@@ -83,7 +83,7 @@ import glob as _glob
 _prof_dir = os.path.dirname(ovpn_path(uid))
 ok((os.stat(ovpn_path(uid)).st_mode & 0o777) == 0o600, "ovpn mode 0600")
 ok(not _glob.glob(os.path.join(_prof_dir, ".client-ovpn-*")), "no temp profiles")
-from core.openvpn.store import get_limit
+from backend.openvpn.store import get_limit
 ok(get_limit(uid) == 2, "limit state")
 
 # existing conf hardening preserves admin edits
@@ -106,8 +106,8 @@ ok("dh none" in dh_fixed, "missing dh replaced with dh none")
 ok("dh /etc/openvpn/server/pki/dh.pem" not in dh_fixed, "broken dh reference removed")
 
 # /sync/config
-from core.api.schemas import SetSettingsModel
-from core.openvpn.control import change_config
+from backend.api.schemas import SetSettingsModel
+from backend.openvpn.control import change_config
 req = SetSettingsModel(
     tunnel_address="vpn.example.com", protocol="udp", ovpn_port=1195, set_new_setting=True
 )
@@ -125,7 +125,7 @@ except Exception:
 ok(bad is None or not change_config(bad), "bad port rejected")
 
 # Failed profile builds must not leave a partial world-readable file behind.
-from core.openvpn.users import _build_ovpn, _cert_paths
+from backend.openvpn.users import _build_ovpn, _cert_paths
 bad_uid = "testuser43"
 ok(create_user_on_server(bad_uid, "Bad Template", max_logins=1), "create user for failure test")
 _os.remove(ovpn_path(bad_uid))
@@ -159,9 +159,9 @@ ok(read(CLIENT_TEMPLATE).lstrip().startswith("client"), "template restored")
 
 # Retried delete: the cert is already revoked/moved but the CRL predates the
 # revocation — the delete must regenerate the CRL instead of reporting OK.
-from core.openvpn.users import delete_user_on_server
-from core.validation import DeleteResult
-from core.openvpn.pki import CRL_FILE, PKI_DIR, run_easyrsa as _run_easyrsa
+from backend.openvpn.users import delete_user_on_server
+from backend.validation import DeleteResult
+from backend.openvpn.pki import CRL_FILE, PKI_DIR, run_easyrsa as _run_easyrsa
 retry_uid = "testuser44"
 ok(create_user_on_server(retry_uid, "Retry User", max_logins=1), "create retry user")
 ok(_run_easyrsa("revoke", retry_uid), "revoke directly (simulating a crashed delete)")
@@ -212,7 +212,7 @@ def test_generated_profile_never_contains_placeholder(monkeypatch, tmp_path):
     """Regression: a client .ovpn shipped the literal 'UPDATE_VIA_PANEL'
     remote when the panel had not pushed a tunnel address yet. The node
     now falls back to its own public address."""
-    import core.openvpn.pki as pki
+    import backend.openvpn.pki as pki
 
     monkeypatch.setenv("TUNNEL_ADDRESS", "")
     monkeypatch.setattr(pki, "_node_public_ip", lambda: "203.0.113.7")

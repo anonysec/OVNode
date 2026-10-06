@@ -28,21 +28,21 @@ lint:
 	# --output-format=github is what puts findings on the PR diff as inline
 	# annotations. It was only on the CI copy of this command, so calling
 	# `make lint` from the workflow would have silently dropped them.
-	ruff check core/ tests/ --output-format=github
-	ruff format --check core/ tests/
+	ruff check backend/ tests/ --output-format=github
+	ruff format --check backend/ tests/
 	bash -n install.sh manager.sh scripts/lib/*.sh
 
 format:
-	ruff format core/
-	ruff check --fix core/
+	ruff format backend/
+	ruff check --fix backend/
 
 verify: lint
-	uv run python -c "from core.app import api; print('App imports OK')"
-	uv run python -c "from core.config import settings; print('Config loads OK')"
+	uv run python -c "from backend.app import api; print('App imports OK')"
+	uv run python -c "from backend.config import settings; print('Config loads OK')"
 
 openapi:
 	uv run python scripts/export_openapi.py
 
 clean:
 	rm -rf .pytest_cache .ruff_cache
-	find core tests -name '__pycache__' -type d -prune -exec rm -rf {} +
+	find backend tests -name '__pycache__' -type d -prune -exec rm -rf {} +

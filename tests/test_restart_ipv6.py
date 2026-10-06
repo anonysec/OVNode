@@ -50,7 +50,7 @@ def root(tmp_path, monkeypatch):
     users.mkdir()
     calls = {"restart": 0, "sighup": 0}
 
-    from core.openvpn import control, store
+    from backend.openvpn import control, store
 
     def _restart():
         calls["restart"] += 1
@@ -63,15 +63,15 @@ def root(tmp_path, monkeypatch):
     monkeypatch.setattr(control, "restart_openvpn", _restart)
     monkeypatch.setattr(control, "_sighup_fallback", _sighup)
     monkeypatch.setattr(store, "USERS_DIR", str(users))
-    import core.openvpn.multilogin as ml
+    import backend.openvpn.multilogin as ml
 
     monkeypatch.setattr(ml, "ensure_multilogin_setup", lambda: None)
     return tmp_path, calls
 
 
 def _client():
-    from core.app import api
-    from core.config import settings
+    from backend.app import api
+    from backend.config import settings
 
     return TestClient(api), {"key": settings.api_key}
 
@@ -103,7 +103,7 @@ def _config_payload(**extra):
 
 
 def test_restart_endpoint_reports_success_and_liveness(monkeypatch):
-    from core.openvpn import control
+    from backend.openvpn import control
 
     monkeypatch.setattr(control, "restart_openvpn", lambda: True)
     monkeypatch.setattr(control, "openvpn_is_running", lambda: True)
@@ -116,7 +116,7 @@ def test_restart_endpoint_reports_success_and_liveness(monkeypatch):
 
 
 def test_restart_endpoint_maps_restart_failure(monkeypatch):
-    from core.openvpn import control
+    from backend.openvpn import control
 
     monkeypatch.setattr(control, "restart_openvpn", lambda: False)
     monkeypatch.setattr(control, "openvpn_is_running", lambda: False)
@@ -131,7 +131,7 @@ def test_restart_endpoint_maps_restart_failure(monkeypatch):
 
 def test_restart_endpoint_survives_restart_exception(monkeypatch):
     """A raising service manager must still produce a contract envelope."""
-    from core.openvpn import control
+    from backend.openvpn import control
 
     def boom():
         raise RuntimeError("systemctl exploded")
@@ -148,7 +148,7 @@ def test_restart_endpoint_survives_restart_exception(monkeypatch):
 
 
 def test_restart_endpoint_requires_auth():
-    from core.app import api
+    from backend.app import api
 
     assert TestClient(api).post("/sync/restart").status_code == 401
 
@@ -158,7 +158,7 @@ def test_restart_endpoint_requires_auth():
 
 def test_enable_ipv6_adds_exactly_one_block(root):
     tmp_path, calls = root
-    from core.openvpn.control import change_config
+    from backend.openvpn.control import change_config
 
     assert change_config(_req(enable_ipv6=True, ipv6_prefix="fd42:1:2:3::/64")) is True
     conf = (tmp_path / "server" / "server.conf").read_text()
@@ -181,7 +181,7 @@ def test_enable_ipv6_replaces_old_prefix_without_duplicates(root):
             'push "route-ipv6 2000::/3"\ntun-ipv6\nserver-ipv6 fd42:42:42:42::/64',
         )
     )
-    from core.openvpn.control import change_config
+    from backend.openvpn.control import change_config
 
     assert change_config(_req(enable_ipv6=True, ipv6_prefix="fd42:9:9:9::/64")) is True
     conf = conf_path.read_text()
@@ -197,7 +197,7 @@ def test_disable_ipv6_removes_generated_lines(root):
     tmp_path, calls = root
     conf_path = tmp_path / "server" / "server.conf"
     conf_path.write_text(CONF_IPV6)
-    from core.openvpn.control import change_config
+    from backend.openvpn.control import change_config
 
     assert change_config(_req(enable_ipv6=False)) is True
     conf = conf_path.read_text()
@@ -212,7 +212,7 @@ def test_invalid_ipv6_prefix_rejected_before_any_write(root):
     tmp_path, calls = root
     conf_path = tmp_path / "server" / "server.conf"
     before = conf_path.read_bytes()
-    from core.openvpn.control import change_config
+    from backend.openvpn.control import change_config
 
     assert change_config(_req(enable_ipv6=True, ipv6_prefix="not-a-prefix")) is False
     assert change_config(_req(enable_ipv6=True, ipv6_prefix="10.0.0.0/24")) is False
@@ -226,7 +226,7 @@ def test_omitted_ipv6_fields_leave_conf_unchanged(root):
     tmp_path, calls = root
     conf_path = tmp_path / "server" / "server.conf"
     before = conf_path.read_bytes()
-    from core.openvpn.control import change_config
+    from backend.openvpn.control import change_config
 
     assert change_config(_req()) is True
     assert conf_path.read_bytes() == before
@@ -236,8 +236,8 @@ def test_omitted_ipv6_fields_leave_conf_unchanged(root):
 
 def test_prefix_only_keeps_current_enabled_state(root):
     tmp_path, _ = root
-    from core.openvpn import ipv6 as ipv6_policy
-    from core.openvpn.control import change_config
+    from backend.openvpn import ipv6 as ipv6_policy
+    from backend.openvpn.control import change_config
 
     ipv6_policy.write_state(True, "fd42:1:2:3::/64")
     assert change_config(_req(ipv6_prefix="fd42:7:7:7::/64")) is True
@@ -252,7 +252,7 @@ def test_prefix_only_keeps_enabled_state_from_conf(root):
     tmp_path, calls = root
     conf_path = tmp_path / "server" / "server.conf"
     conf_path.write_text(CONF_IPV6)
-    from core.openvpn.control import change_config
+    from backend.openvpn.control import change_config
 
     assert change_config(_req(ipv6_prefix="fd42:4:4:4::/64")) is True
     conf = conf_path.read_text()
@@ -293,8 +293,8 @@ def test_sync_config_endpoint_rejects_invalid_ipv6_prefix(root):
 
 
 def test_fresh_conf_honours_ipv6_state(root):
-    from core.openvpn import ipv6 as ipv6_policy
-    from core.openvpn import pki
+    from backend.openvpn import ipv6 as ipv6_policy
+    from backend.openvpn import pki
 
     ipv6_policy.write_state(True, "fd42:5:5:5::/64")
     conf = pki._fresh_server_conf()

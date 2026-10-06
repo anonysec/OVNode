@@ -25,8 +25,8 @@ sudo apt-get install -y openvpn easy-rsa iptables iproute2 logrotate
 
 ```bash
 .venv/bin/python -m pytest tests/ -q          # 343 passed, 1 skipped
-.venv/bin/ruff check core tests
-.venv/bin/ruff format --check core tests
+.venv/bin/ruff check backend tests
+.venv/bin/ruff format --check backend tests
 bash -n install.sh manager.sh scripts/lib/*.sh
 ```
 

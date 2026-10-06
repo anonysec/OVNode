@@ -6,7 +6,7 @@ both 429 responses carry a Retry-After header the panel honors."""
 
 import time
 
-import core.api.auth as auth
+import backend.api.auth as auth
 
 
 def _drain(bucket_fn, limit, key="rl-test-key"):
@@ -60,7 +60,7 @@ def test_bruteforce_limited_by_client_not_by_submitted_key():
     """
     from fastapi.testclient import TestClient
 
-    from core.app import api
+    from backend.app import api
 
     auth._ratelimit_buckets.clear()
     try:

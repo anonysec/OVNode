@@ -170,7 +170,7 @@ def test_version_script_reports_the_installers_own_version():
     reported only when something actually stamped one."""
     import re
 
-    from core.version import __version__
+    from backend.version import __version__
 
     declared = re.search(
         r'^VERSION="([^"]+)"', Path(INSTALLER).read_text(encoding="utf-8"), re.M
@@ -745,7 +745,7 @@ def test_native_wording_is_gone_from_installer_text():
 
 
 def test_version_constants_are_synchronized():
-    """install.sh, manager.sh and core/version.py must agree; --help must
+    """install.sh, manager.sh and backend/version.py must agree; --help must
     show the real version (was hardcoding v1.1.2)."""
     import pathlib
     import re
@@ -757,7 +757,7 @@ def test_version_constants_are_synchronized():
         assert m, name
         shell_versions.add(m.group(1))
     core_ns: dict = {}
-    exec((repo / "core" / "version.py").read_text(encoding="utf-8"), core_ns)
+    exec((repo / "backend" / "version.py").read_text(encoding="utf-8"), core_ns)
     shell_versions.add(core_ns["__version__"])
     assert len(shell_versions) == 1, shell_versions
     r = subprocess.run(["bash", INSTALLER, "help"], capture_output=True, text=True, timeout=30)

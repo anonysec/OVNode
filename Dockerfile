@@ -5,7 +5,7 @@
 #
 # Multi-stage: dependencies are resolved from uv.lock in a builder layer,
 # the runtime image ships only the venv + source + OpenVPN. The entrypoint
-# (docker/entrypoint.sh) supervises BOTH processes: the sync agent and the
+# (scripts/compose/entrypoint.sh) supervises BOTH processes: the sync agent and the
 # OpenVPN daemon it configures.
 
 # ── build: locked dependency venv ──────────────────────────────────────
@@ -48,9 +48,9 @@ RUN apt-get update \
 
 WORKDIR /app
 COPY --from=builder /app/.venv ./.venv
-COPY core/ ./core/
+COPY backend/ ./backend/
 COPY main.py ./
-COPY docker/entrypoint.sh /usr/local/bin/ovnode-entrypoint
+COPY scripts/compose/entrypoint.sh /usr/local/bin/ovnode-entrypoint
 RUN chmod 755 /usr/local/bin/ovnode-entrypoint
 
 # All node state lives under /etc/openvpn (PKI + ovnode store) and /app/data

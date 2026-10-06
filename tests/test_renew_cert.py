@@ -10,9 +10,9 @@ from fastapi.testclient import TestClient
 
 
 def _client():
-    from core.api.auth import _heavy_buckets, _ratelimit_buckets
-    from core.app import api
-    from core.config import settings
+    from backend.api.auth import _heavy_buckets, _ratelimit_buckets
+    from backend.app import api
+    from backend.config import settings
 
     # Fresh buckets: several calls in one test file would otherwise brush the
     # cert-issuing limiter.
@@ -22,7 +22,7 @@ def _client():
 
 
 def test_renew_cert_success(monkeypatch):
-    from core.api.routes import config as routes
+    from backend.api.routes import config as routes
 
     calls: list[str] = []
 
@@ -34,8 +34,8 @@ def test_renew_cert_success(monkeypatch):
         calls.append("restart")
         return True
 
-    monkeypatch.setattr("core.openvpn.pki.renew_server_certificate", fake_renew)
-    monkeypatch.setattr("core.openvpn.control.restart_openvpn", fake_restart)
+    monkeypatch.setattr("backend.openvpn.pki.renew_server_certificate", fake_renew)
+    monkeypatch.setattr("backend.openvpn.control.restart_openvpn", fake_restart)
     monkeypatch.setattr(routes, "_openssl_enddate", lambda path: "2028-01-01")
 
     c, headers = _client()
@@ -46,7 +46,7 @@ def test_renew_cert_success(monkeypatch):
 
 
 def test_renew_cert_requires_auth():
-    from core.app import api
+    from backend.app import api
 
     c = TestClient(api)
     assert c.post("/sync/renew-cert").status_code == 401
@@ -54,7 +54,7 @@ def test_renew_cert_requires_auth():
 
 
 def test_renew_cert_renewal_failure(monkeypatch):
-    monkeypatch.setattr("core.openvpn.pki.renew_server_certificate", lambda: False)
+    monkeypatch.setattr("backend.openvpn.pki.renew_server_certificate", lambda: False)
     c, headers = _client()
     body = c.post("/sync/renew-cert", headers=headers).json()
     assert body["success"] is False
@@ -62,8 +62,8 @@ def test_renew_cert_renewal_failure(monkeypatch):
 
 
 def test_renew_cert_restart_failure(monkeypatch):
-    monkeypatch.setattr("core.openvpn.pki.renew_server_certificate", lambda: True)
-    monkeypatch.setattr("core.openvpn.control.restart_openvpn", lambda: False)
+    monkeypatch.setattr("backend.openvpn.pki.renew_server_certificate", lambda: True)
+    monkeypatch.setattr("backend.openvpn.control.restart_openvpn", lambda: False)
     c, headers = _client()
     body = c.post("/sync/renew-cert", headers=headers).json()
     assert body["success"] is False

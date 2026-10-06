@@ -11,7 +11,7 @@ import pytest
 
 
 def test_parse_extra_ports():
-    from core.config import parse_extra_ports
+    from backend.config import parse_extra_ports
 
     assert parse_extra_ports("443,8443", 1194) == [443, 8443]
     # primary port and duplicates are excluded, junk is skipped
@@ -22,7 +22,7 @@ def test_parse_extra_ports():
 
 def test_client_template_lists_all_ports(tmp_path, monkeypatch):
     """A fresh client template must carry one remote line per reachable port."""
-    from core.openvpn import pki
+    from backend.openvpn import pki
 
     monkeypatch.setenv("OPENVPN_PORT", "1194")
     monkeypatch.setenv("OVNODE_EXTRA_PORTS", "443,8443")
@@ -41,8 +41,8 @@ def test_client_template_lists_all_ports(tmp_path, monkeypatch):
 
 def test_change_config_rebuilds_remote_block(tmp_path, monkeypatch):
     """POST /sync/config must rewrite ALL remote lines (primary + extras)."""
-    from core.api.schemas import SetSettingsModel
-    from core.openvpn import control
+    from backend.api.schemas import SetSettingsModel
+    from backend.openvpn import control
 
     server_dir = tmp_path / "server"
     server_dir.mkdir()
@@ -58,7 +58,7 @@ def test_change_config_rebuilds_remote_block(tmp_path, monkeypatch):
     monkeypatch.setenv("OVNODE_EXTRA_PORTS", "443,8443")
     monkeypatch.setattr(control, "restart_openvpn", lambda: True)
     monkeypatch.setattr(control, "_invalidate_cached_ovpn", lambda: None)
-    import core.openvpn.multilogin as ml
+    import backend.openvpn.multilogin as ml
 
     monkeypatch.setattr(ml, "ensure_multilogin_setup", lambda: None)
 
@@ -82,8 +82,8 @@ def test_change_config_rebuilds_remote_block(tmp_path, monkeypatch):
 
 def test_change_config_keeps_address_without_tunnel(tmp_path, monkeypatch):
     """Without tunnel_address, the existing remote address must be kept."""
-    from core.api.schemas import SetSettingsModel
-    from core.openvpn import control
+    from backend.api.schemas import SetSettingsModel
+    from backend.openvpn import control
 
     server_dir = tmp_path / "server"
     server_dir.mkdir()
@@ -95,7 +95,7 @@ def test_change_config_keeps_address_without_tunnel(tmp_path, monkeypatch):
     monkeypatch.delenv("OVNODE_EXTRA_PORTS", raising=False)
     monkeypatch.setattr(control, "restart_openvpn", lambda: True)
     monkeypatch.setattr(control, "_invalidate_cached_ovpn", lambda: None)
-    import core.openvpn.multilogin as ml
+    import backend.openvpn.multilogin as ml
 
     monkeypatch.setattr(ml, "ensure_multilogin_setup", lambda: None)
 
@@ -123,7 +123,7 @@ _V3_STATUS = _V2_STATUS.replace(",", "\t")
 def test_status_parser_counts_both_directions(tmp_path, payload):
     """Bytes Received AND Bytes Sent must both be parsed (regression:
     the old fixed-column parser dropped Bytes Sent on OpenVPN >= 2.4)."""
-    from core.openvpn.status import parse_sessions, parse_usage
+    from backend.openvpn.status import parse_sessions, parse_usage
 
     status = tmp_path / "status.log"
     status.write_text(payload)
@@ -140,7 +140,7 @@ def test_status_parser_counts_both_directions(tmp_path, payload):
 
 def test_status_parser_old_openvpn_layout(tmp_path):
     """OpenVPN 2.3 had no Virtual IPv6 column — the header must drive parsing."""
-    from core.openvpn.status import parse_usage
+    from backend.openvpn.status import parse_usage
 
     status = tmp_path / "status.log"
     status.write_text(
@@ -175,7 +175,7 @@ def _live(cn, virtual, trusted_ip="9.9.9.9", trusted_port="2222"):
 def test_marker_live_despite_ip_change():
     """A marker stays live when the client's real IP changed mid-session —
     matching is on (CN, pool IP), never on the real address."""
-    from core.openvpn.sessions import _marker_is_live
+    from backend.openvpn.sessions import _marker_is_live
 
     marker = _marker("42", "10.8.0.2", trusted_ip="1.2.3.4")
     live = [_live("42", "10.8.0.2", trusted_ip="5.6.7.8")]  # real IP changed
@@ -183,7 +183,7 @@ def test_marker_live_despite_ip_change():
 
 
 def test_marker_stale_when_pool_ip_gone():
-    from core.openvpn.sessions import _marker_is_live
+    from backend.openvpn.sessions import _marker_is_live
 
     marker = _marker("42", "10.8.0.2")
     assert _marker_is_live(marker, [_live("42", "10.8.0.9")]) is False
@@ -192,7 +192,7 @@ def test_marker_stale_when_pool_ip_gone():
 
 def test_marker_legacy_fallback_uses_real_address():
     """Markers without a pool IP (legacy) fall back to real-address matching."""
-    from core.openvpn.sessions import _marker_is_live
+    from backend.openvpn.sessions import _marker_is_live
 
     marker = _marker("42", "", trusted_ip="1.2.3.4", trusted_port="1111")
     assert _marker_is_live(marker, [_live("42", "10.8.0.2", "1.2.3.4", "1111")]) is True
@@ -202,7 +202,7 @@ def test_marker_legacy_fallback_uses_real_address():
 def test_connect_script_uses_pool_ip_session_key():
     """The connect hook must key sessions by CN + pool IP, not real IP."""
     script = os.path.join(
-        os.path.dirname(__file__), "..", "core", "scripts", "ovnode-client-connect.sh"
+        os.path.dirname(__file__), "..", "backend", "scripts", "ovnode-client-connect.sh"
     )
     with open(script) as f:
         content = f.read()
@@ -220,7 +220,7 @@ def test_connect_script_uses_pool_ip_session_key():
 
 def test_crl_date_parsing():
     """openssl `nextUpdate=` output must parse into days-remaining."""
-    from core.openvpn.pki import _days_until_openssl_date
+    from backend.openvpn.pki import _days_until_openssl_date
 
     assert _days_until_openssl_date("nextUpdate=Jan  1 00:00:00 2020 GMT") < 0
     assert _days_until_openssl_date("nextUpdate=Dec 31 23:59:59 2099 GMT") > 300
@@ -231,7 +231,7 @@ def test_crl_date_parsing():
 def test_crl_renewed_when_near_expiry(tmp_path, monkeypatch):
     """An existing CRL close to (or past) nextUpdate must be regenerated —
     with crl-verify, an expired CRL locks every client out."""
-    from core.openvpn import pki
+    from backend.openvpn import pki
 
     crl = tmp_path / "crl.pem"
     crl.write_text("dummy")
@@ -270,7 +270,7 @@ def test_status_parse_cache_shared_and_invalidated(tmp_path, monkeypatch):
     (mtime+size) invalidates; missing file parses empty without caching."""
     import os
 
-    from core.openvpn import status as status_mod
+    from backend.openvpn import status as status_mod
 
     monkeypatch.setattr(status_mod, "_parse_cache", {})
     status = tmp_path / "status.log"
@@ -320,7 +320,7 @@ def test_parse_sessions_cannot_be_poisoned_by_a_caller():
     """
     import tempfile
 
-    from core.openvpn import status as status_mod
+    from backend.openvpn import status as status_mod
 
     sample = (
         "OpenVPN CLIENT LIST\n"

@@ -24,7 +24,7 @@ def _declared_endpoints(module_name: str) -> set[tuple[str, str]]:
     """(METHOD, path) pairs documented in that module's docstring."""
     import importlib
 
-    module = importlib.import_module(f"core.api.routes.{module_name}")
+    module = importlib.import_module(f"backend.api.routes.{module_name}")
     doc = module.__doc__ or ""
     found = set()
     for match in re.finditer(r"^\s{4}(GET|POST|PUT|DELETE|PATCH)\s+(/\S+)", doc, re.MULTILINE):
@@ -38,7 +38,7 @@ def _real_endpoints() -> set[tuple[str, str]]:
 
     real: set[tuple[str, str]] = set()
     for name in ROUTE_MODULES:
-        module = importlib.import_module(f"core.api.routes.{name}")
+        module = importlib.import_module(f"backend.api.routes.{name}")
         for route in module.router.routes:
             methods = getattr(route, "methods", None)
             if not methods:
@@ -97,5 +97,5 @@ def test_the_readme_table_matches_the_live_router():
 def test_the_table_is_identical_in_every_module(module_name):
     """Four copies is the bug; they must at least not drift."""
     assert _declared_endpoints(module_name) == _declared_endpoints("config"), (
-        f"core/api/routes/{module_name}.py documents a different endpoint set"
+        f"backend/api/routes/{module_name}.py documents a different endpoint set"
     )

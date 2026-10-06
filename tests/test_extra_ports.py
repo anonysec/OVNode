@@ -1,7 +1,7 @@
 # Copyright (c) 2026 anonysec
 # SPDX-License-Identifier: MIT
 
-"""Panel-managed extra VPN ports (core.openvpn.ports + POST /sync/config).
+"""Panel-managed extra VPN ports (backend.openvpn.ports + POST /sync/config).
 
 Isolated like the other core tests: OVNODE_OPENVPN_ROOT points at a tmp tree
 and the installer NAT paths at (non-)tmp files, so no real config, state file
@@ -39,7 +39,7 @@ def root(tmp_path, monkeypatch):
     users.mkdir()
     calls = {"restart": 0, "sighup": 0}
 
-    from core.openvpn import control, ports, store
+    from backend.openvpn import control, ports, store
 
     def _restart():
         calls["restart"] += 1
@@ -56,15 +56,15 @@ def root(tmp_path, monkeypatch):
     monkeypatch.setattr(ports, "NAT_CONF", str(tmp_path / "no-ovnode-nat"))
     monkeypatch.setattr(ports, "NAT_SCRIPT", str(tmp_path / "no-ovnode-nat.sh"))
     monkeypatch.setattr(ports, "is_docker", lambda: False)
-    import core.openvpn.multilogin as ml
+    import backend.openvpn.multilogin as ml
 
     monkeypatch.setattr(ml, "ensure_multilogin_setup", lambda: None)
     return tmp_path, calls
 
 
 def _client():
-    from core.app import api
-    from core.config import settings
+    from backend.app import api
+    from backend.config import settings
 
     return TestClient(api), {"key": settings.api_key}
 
@@ -124,14 +124,14 @@ def _remotes(tmp_path):
     ],
 )
 def test_validate_table(raw, expected):
-    from core.openvpn.ports import validate
+    from backend.openvpn.ports import validate
 
     assert validate(raw, 1194) == expected
 
 
 def test_extra_ports_state_roundtrip(root):
     tmp_path, _ = root
-    from core.openvpn import ports
+    from backend.openvpn import ports
 
     assert ports.read_state() is None
     assert ports.write_state([443, 8443]) is True
@@ -148,7 +148,7 @@ def test_extra_ports_state_roundtrip(root):
 
 def test_state_overrides_env_and_empty_stays_cleared(root, monkeypatch):
     tmp_path, _ = root
-    from core.openvpn import ports
+    from backend.openvpn import ports
 
     monkeypatch.setenv("OVNODE_EXTRA_PORTS", "53")
     assert ports.effective(1194) == [53]
@@ -166,7 +166,7 @@ def test_state_overrides_env_and_empty_stays_cleared(root, monkeypatch):
 
 def test_template_has_one_remote_per_port_without_duplicates(root):
     tmp_path, _ = root
-    from core.openvpn import ports
+    from backend.openvpn import ports
 
     ok, msg = ports.set_extra_ports(1194, "443, 443, 8443")
     assert ok is True
@@ -181,7 +181,7 @@ def test_template_has_one_remote_per_port_without_duplicates(root):
 
 def test_duplicate_and_stale_remote_lines_collapse(root):
     tmp_path, _ = root
-    from core.openvpn import ports
+    from backend.openvpn import ports
 
     template = tmp_path / "server" / "client-common.txt"
     template.write_text(
@@ -201,7 +201,7 @@ def test_duplicate_and_stale_remote_lines_collapse(root):
 
 def test_missing_remote_block_is_inserted_after_client(root):
     tmp_path, _ = root
-    from core.openvpn import ports
+    from backend.openvpn import ports
 
     (tmp_path / "server" / "client-common.txt").write_text("client\ndev tun\n")
     assert ports.set_extra_ports(1194, "443")[0] is True
@@ -216,7 +216,7 @@ def test_missing_remote_block_is_inserted_after_client(root):
 
 def test_cached_profiles_invalidated(root):
     tmp_path, _ = root
-    from core.openvpn import ports
+    from backend.openvpn import ports
 
     profile = tmp_path / "users" / "alice" / "client.ovpn"
     profile.parent.mkdir()
@@ -228,7 +228,7 @@ def test_cached_profiles_invalidated(root):
 def test_template_generation_honours_state(root, monkeypatch):
     """A regenerated client-common.txt must list the panel's ports."""
     tmp_path, _ = root
-    from core.openvpn import pki, ports
+    from backend.openvpn import pki, ports
 
     template = tmp_path / "server" / "client-common.txt"
     monkeypatch.setattr(pki, "CLIENT_TEMPLATE", str(template))
@@ -249,7 +249,7 @@ def test_template_generation_honours_state(root, monkeypatch):
 
 def test_change_config_applies_extra_ports_with_reload(root):
     tmp_path, calls = root
-    from core.openvpn.control import change_config
+    from backend.openvpn.control import change_config
 
     assert change_config(_req(extra_ports="443,8443")) is True
     assert _remotes(tmp_path) == [
@@ -264,7 +264,7 @@ def test_change_config_applies_extra_ports_with_reload(root):
 
 def test_change_config_unchanged_extra_ports_is_a_total_noop(root):
     tmp_path, calls = root
-    from core.openvpn.control import change_config
+    from backend.openvpn.control import change_config
 
     assert change_config(_req(extra_ports="443,8443")) is True
     assert calls == {"restart": 0, "sighup": 1}
@@ -280,7 +280,7 @@ def test_change_config_unchanged_extra_ports_is_a_total_noop(root):
 
 def test_change_config_empty_string_clears(root):
     tmp_path, calls = root
-    from core.openvpn.control import change_config
+    from backend.openvpn.control import change_config
 
     assert change_config(_req(extra_ports="443,8443")) is True
     assert change_config(_req(extra_ports="")) is True
@@ -291,7 +291,7 @@ def test_change_config_empty_string_clears(root):
 
 def test_change_config_rejects_invalid_ports_before_any_write(root):
     tmp_path, calls = root
-    from core.openvpn.control import change_config
+    from backend.openvpn.control import change_config
 
     conf = tmp_path / "server" / "server.conf"
     template = tmp_path / "server" / "client-common.txt"
@@ -308,8 +308,8 @@ def test_change_config_rejects_invalid_ports_before_any_write(root):
 
 def test_change_config_keeps_state_when_field_omitted(root, monkeypatch):
     tmp_path, calls = root
-    from core.openvpn import ports
-    from core.openvpn.control import change_config
+    from backend.openvpn import ports
+    from backend.openvpn.control import change_config
 
     assert ports.set_extra_ports(1194, "8443")[0] is True
     monkeypatch.setenv("OVNODE_EXTRA_PORTS", "53")
@@ -323,7 +323,7 @@ def test_change_config_keeps_state_when_field_omitted(root, monkeypatch):
 
 def test_change_config_falls_back_to_env_without_state(root, monkeypatch):
     tmp_path, calls = root
-    from core.openvpn.control import change_config
+    from backend.openvpn.control import change_config
 
     monkeypatch.setenv("OVNODE_EXTRA_PORTS", "443")
     assert change_config(_req_old_panel()) is True
@@ -350,7 +350,7 @@ def _tmp_nat(tmp_path):
 
 def test_nat_conf_rewritten_and_script_invoked_when_present(root, monkeypatch):
     tmp_path, _ = root
-    from core.openvpn import ports
+    from backend.openvpn import ports
 
     conf, script, marker = _tmp_nat(tmp_path)
     monkeypatch.setattr(ports, "NAT_CONF", str(conf))
@@ -371,7 +371,7 @@ def test_nat_conf_rewritten_and_script_invoked_when_present(root, monkeypatch):
 
 def test_nat_skipped_when_files_absent(root):
     tmp_path, _ = root
-    from core.openvpn import ports
+    from backend.openvpn import ports
 
     ok, msg = ports.set_extra_ports(1194, "443")
     assert ok is True
@@ -384,7 +384,7 @@ def test_nat_skipped_when_files_absent(root):
 
 def test_nat_skipped_in_docker_even_with_files(root, monkeypatch):
     tmp_path, _ = root
-    from core.openvpn import ports
+    from backend.openvpn import ports
 
     conf, script, marker = _tmp_nat(tmp_path)
     monkeypatch.setattr(ports, "NAT_CONF", str(conf))
@@ -400,7 +400,7 @@ def test_nat_skipped_in_docker_even_with_files(root, monkeypatch):
 
 def test_nat_failure_is_reported_not_fatal(root, monkeypatch):
     tmp_path, _ = root
-    from core.openvpn import ports
+    from backend.openvpn import ports
 
     conf, script, _ = _tmp_nat(tmp_path)
     script.write_text("#!/bin/sh\nexit 1\n")

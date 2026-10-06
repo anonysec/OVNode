@@ -10,7 +10,7 @@
 #
 # Commands: install (default) | update | recover-update | repair-unit |
 #           uninstall | interactive | version-script | help
-# Modes   : host (systemd, default) | --docker (see docker/entrypoint.sh)
+# Modes   : host (systemd, default) | --docker (see scripts/compose/entrypoint.sh)
 # Day-to-day ops (status, logs, backup, TLS, completion) live in the manager: ovn.
 #
 # Non-interactive: -y never prompts, OVN_* env vars mirror
@@ -20,7 +20,7 @@
 set -Eeuo pipefail
 
 # ── Constants ──────────────────────────────────────────────────────────
-VERSION="1.0.46"
+VERSION="1.0.47"
 # Forks: point source downloads (and update pulls) at your own repo.
 REPO="${OVN_REPO:-anonysec/OVNode}"
 # Versioned GitHub Release tarballs only: verified checksum, no git needed.
@@ -1328,7 +1328,7 @@ do_update() {
         render_line "Detected Docker deployment (compose file present)"
     fi
     local from_version safety snapshot scheme activated=0 identity
-    from_version="$(grep -Eo '"[0-9]+\.[0-9]+\.[0-9]+"' "$APP_DIR/core/version.py" 2>/dev/null | head -1 | tr -d '"' || true)"
+    from_version="$(grep -Eo '"[0-9]+\.[0-9]+\.[0-9]+"' "$APP_DIR/backend/version.py" 2>/dev/null | head -1 | tr -d '"' || true)"
     : "${from_version:=unknown}"
     identity="$(identity_sha "$NODE_NAME" "$API_KEY")"
     scheme="http"; [[ "$TLS_METHOD" != "none" ]] && scheme="https"
@@ -1356,7 +1356,7 @@ do_update() {
         ensure_uv
         ( cd "$UPDATE_STAGE" && run "Staged Python dependencies" uv_sync ) \
             || die "Could not prepare the staged release; current version is still running" "$EX_ERROR"
-        [[ -f "$UPDATE_STAGE/core/version.py" ]] || die "Staged release is incomplete" "$EX_ERROR"
+        [[ -f "$UPDATE_STAGE/backend/version.py" ]] || die "Staged release is incomplete" "$EX_ERROR"
     fi
     render_done ""
 

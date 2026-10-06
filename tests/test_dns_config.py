@@ -42,7 +42,7 @@ def root(tmp_path, monkeypatch):
     users.mkdir()
     calls = {"restart": 0, "sighup": 0}
 
-    from core.openvpn import control, store
+    from backend.openvpn import control, store
 
     def _restart():
         calls["restart"] += 1
@@ -55,15 +55,15 @@ def root(tmp_path, monkeypatch):
     monkeypatch.setattr(control, "restart_openvpn", _restart)
     monkeypatch.setattr(control, "_sighup_fallback", _sighup)
     monkeypatch.setattr(store, "USERS_DIR", str(users))
-    import core.openvpn.multilogin as ml
+    import backend.openvpn.multilogin as ml
 
     monkeypatch.setattr(ml, "ensure_multilogin_setup", lambda: None)
     return tmp_path, calls
 
 
 def _client():
-    from core.app import api
-    from core.config import settings
+    from backend.app import api
+    from backend.config import settings
 
     return TestClient(api), {"key": settings.api_key}
 
@@ -94,7 +94,7 @@ def _config_payload(**extra):
 
 def test_applied_dns_appears_exactly_once(root):
     tmp_path, calls = root
-    from core.openvpn.control import change_config
+    from backend.openvpn.control import change_config
 
     assert change_config(_req(dns1="9.9.9.9", dns2="149.112.112.112")) is True
     conf = (tmp_path / "server" / "server.conf").read_text()
@@ -112,7 +112,7 @@ def test_applied_dns_appears_exactly_once(root):
 
 def test_duplicate_push_lines_collapse(root):
     tmp_path, _ = root
-    from core.openvpn.control import change_config
+    from backend.openvpn.control import change_config
 
     conf_path = tmp_path / "server" / "server.conf"
     conf_path.write_text(
@@ -132,7 +132,7 @@ def test_duplicate_push_lines_collapse(root):
 
 def test_omitted_field_keeps_existing_value(root):
     tmp_path, _ = root
-    from core.openvpn.control import change_config
+    from backend.openvpn.control import change_config
 
     assert change_config(_req(dns1="9.9.9.9")) is True
     conf = (tmp_path / "server" / "server.conf").read_text()
@@ -146,7 +146,7 @@ def test_omitted_field_keeps_existing_value(root):
 
 def test_invalid_dns_rejected_before_any_write(root):
     tmp_path, calls = root
-    from core.openvpn.control import change_config
+    from backend.openvpn.control import change_config
 
     conf_path = tmp_path / "server" / "server.conf"
     before = conf_path.read_bytes()
@@ -159,7 +159,7 @@ def test_invalid_dns_rejected_before_any_write(root):
 
 def test_missing_push_lines_are_inserted(root):
     tmp_path, calls = root
-    from core.openvpn.control import change_config
+    from backend.openvpn.control import change_config
 
     conf_path = tmp_path / "server" / "server.conf"
     conf_path.write_text(
@@ -177,8 +177,8 @@ def test_missing_push_lines_are_inserted(root):
 
 def test_fresh_conf_generation_honours_dns_state(root):
     tmp_path, _ = root
-    from core.openvpn import dns as dns_policy
-    from core.openvpn import pki
+    from backend.openvpn import dns as dns_policy
+    from backend.openvpn import pki
 
     dns_policy.write_state(["9.9.9.9", "149.112.112.112"])
     conf = pki._fresh_server_conf()
@@ -221,7 +221,7 @@ def test_sync_config_endpoint_rejects_invalid_dns(root):
 
 
 def test_update_endpoint_refuses_in_docker(monkeypatch):
-    from core import updater
+    from backend import updater
 
     launched = []
     monkeypatch.setattr(updater, "is_docker", lambda: True)
@@ -237,7 +237,7 @@ def test_update_endpoint_refuses_in_docker(monkeypatch):
 
 
 def test_update_endpoint_requires_install_script(monkeypatch, tmp_path):
-    from core import updater
+    from backend import updater
 
     monkeypatch.setenv("OVNODE_APP_DIR", str(tmp_path))
     monkeypatch.setattr(updater, "is_docker", lambda: False)
@@ -251,8 +251,8 @@ def test_update_endpoint_requires_install_script(monkeypatch, tmp_path):
 
 
 def test_update_endpoint_launches_detached(monkeypatch, tmp_path):
-    from core import updater
-    from core.version import __version__
+    from backend import updater
+    from backend.version import __version__
 
     app_dir = tmp_path / "app"
     app_dir.mkdir()
@@ -282,6 +282,6 @@ def test_update_endpoint_launches_detached(monkeypatch, tmp_path):
 
 
 def test_update_endpoint_requires_auth():
-    from core.app import api
+    from backend.app import api
 
     assert TestClient(api).post("/sync/update").status_code == 401

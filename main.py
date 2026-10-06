@@ -3,7 +3,7 @@
 
 import signal
 
-from core.logger import logger
+from backend.logger import logger
 
 logger.info("Starting OV-Node...")
 
@@ -22,8 +22,8 @@ def main():
 
     from uvicorn import Config, Server
 
-    from core.app import api
-    from core.config import settings
+    from backend.app import api
+    from backend.config import settings
 
     ssl_kwargs = {}
     if settings.ssl_certfile and settings.ssl_keyfile:
@@ -39,7 +39,7 @@ def main():
         port=settings.service_port,
         reload=False,
         workers=1,
-        # uvicorn's loggers propagate to the root config in core/logger.py.
+        # uvicorn's loggers propagate to the root config in backend/logger.py.
         log_config=None,
         # Access logs stay DEBUG-only: the panel polls this API every few seconds.
         access_log=settings.debug.upper() == "DEBUG",

@@ -14,15 +14,15 @@ from fastapi.testclient import TestClient
 
 
 def _client():
-    from core.app import api
-    from core.config import settings
+    from backend.app import api
+    from backend.config import settings
 
     return TestClient(api), {"key": settings.api_key}
 
 
 def test_health_no_auth():
     """Health check requires no auth."""
-    from core.app import api
+    from backend.app import api
 
     c = TestClient(api)
     r = c.get("/sync/health")
@@ -36,7 +36,7 @@ def test_status_requires_auth():
     The header used to be declared required, so FastAPI's validator answered
     422 before the key check ran; both cases must now be 401.
     """
-    from core.app import api
+    from backend.app import api
 
     c = TestClient(api)
     r = c.get("/sync/status")
@@ -56,7 +56,7 @@ def test_status_with_auth():
     body = r.json()
     assert body["success"] is True
     data = body["data"]
-    from core.version import __version__
+    from backend.version import __version__
 
     assert data["version"] == __version__
     assert "cpu_usage" in data
@@ -83,7 +83,7 @@ def test_config_roundtrip_and_drift_detect():
         # Auth still enforced.
         from fastapi.testclient import TestClient
 
-        from core.app import api
+        from backend.app import api
 
         assert TestClient(api).get("/sync/config").status_code == 401
     finally:
@@ -269,7 +269,7 @@ def test_download_ovpn_missing():
 
 def test_sessions_no_auth():
     """Sessions endpoint requires auth."""
-    from core.app import api
+    from backend.app import api
 
     c = TestClient(api)
     r = c.get("/sync/sessions")
@@ -287,7 +287,7 @@ def test_sessions_with_auth():
 
 def test_usage_no_auth():
     """Usage endpoint requires auth."""
-    from core.app import api
+    from backend.app import api
 
     c = TestClient(api)
     r = c.get("/sync/usage")
@@ -395,8 +395,8 @@ def test_usage_maps_cn_to_username():
     """
     import os
 
-    from core.openvpn import store
-    from core.openvpn import users as um
+    from backend.openvpn import store
+    from backend.openvpn import users as um
 
     status_file = os.environ["OVNODE_STATUS_FILE"]
     os.makedirs(os.path.dirname(status_file), exist_ok=True)
@@ -451,12 +451,12 @@ def test_status_update_without_max_logins_preserves_stored_limit(monkeypatch):
         calls.append((uid, limit))
         return True
 
-    # The split moved user routes to core.api.routes.users; the module that
+    # The split moved user routes to backend.api.routes.users; the module that
     # owns the function is the patch target (package namespace holds only a
     # re-export copy — same patch-target rule as the panel's 1.0.3 lesson).
-    monkeypatch.setattr("core.api.routes.users.set_user_limit", _fake_set_limit)
+    monkeypatch.setattr("backend.api.routes.users.set_user_limit", _fake_set_limit)
     monkeypatch.setattr(
-        "core.api.routes.users.change_user_status_on_server", lambda uid, status: True
+        "backend.api.routes.users.change_user_status_on_server", lambda uid, status: True
     )
     r = c.put("/sync/user", headers=headers, json={"id": "990001", "status": "activate"})
     assert r.status_code == 200
@@ -481,8 +481,8 @@ def test_non_ascii_api_key_is_401_not_500():
     import pytest
     from fastapi import HTTPException
 
-    from core.api.auth import check_api_key
-    from core.config import settings
+    from backend.api.auth import check_api_key
+    from backend.config import settings
 
     with pytest.raises(HTTPException) as excinfo:
         asyncio.run(check_api_key(key="abc\u00e9\u00ff", request=None))

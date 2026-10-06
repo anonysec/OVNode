@@ -14,7 +14,7 @@ import tempfile
 
 CHECK = r"""
 import os
-from core.openvpn.pki import _fresh_server_conf
+from backend.openvpn.pki import _fresh_server_conf
 
 conf = _fresh_server_conf()
 proto = os.environ.get("EXPECT_PROTO", "tcp")
@@ -65,7 +65,7 @@ def test_fresh_conf_rejects_garbage_safely():
 
 def test_fresh_vars_use_fast_curve_and_keep_existing(tmp_path, monkeypatch):
     """Fresh PKI defaults to prime256v1; an existing vars file is sacred."""
-    from core.openvpn import pki as pki_mod
+    from backend.openvpn import pki as pki_mod
 
     easyrsa = tmp_path / "easy-rsa"
     easyrsa.mkdir()

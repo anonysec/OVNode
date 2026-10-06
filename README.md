@@ -6,7 +6,7 @@ The VPN server half of an [OVManager](https://github.com/anonysec/OVManager) dep
   <img src=".github/assets/banner.svg" alt="OVNode — the VPN server agent for OVManager" width="820">
   <br><br>
 
-  [![Version](https://img.shields.io/badge/version-1.0.46-blue)](CHANGELOG.md)
+  [![Version](https://img.shields.io/badge/version-1.0.47-blue)](CHANGELOG.md)
   [![License: MIT](https://img.shields.io/badge/License-MIT-green.svg)](LICENSE)
   [![CI](https://github.com/anonysec/OVNode/actions/workflows/ci.yml/badge.svg)](https://github.com/anonysec/OVNode/actions/workflows/ci.yml)
   [![Python](https://img.shields.io/badge/python-3.12%2B-3776ab?logo=python&logoColor=white)](pyproject.toml)
@@ -255,7 +255,7 @@ The installer generates a per-node compose file with `--docker`, or you can use 
 
 ```bash
 cp .env.example .env   # set API_KEY at minimum
-docker compose up -d
+docker compose -f scripts/compose/docker-compose.yml up -d
 ```
 
 All state lives in the `/etc/openvpn` volume, so the container itself is replaceable. `OVNODE_SKIP_OPENVPN=1` runs the agent alone, for debugging.

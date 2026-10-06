@@ -8,14 +8,14 @@ from fastapi.testclient import TestClient
 
 def test_app_imports():
     """Verify the app can be imported without errors."""
-    from core.app import api
+    from backend.app import api
 
     assert api is not None
 
 
 def test_health_endpoint():
     """Test the health check endpoint."""
-    from core.app import api
+    from backend.app import api
 
     client = TestClient(api)
     response = client.get("/sync/health")
@@ -26,14 +26,14 @@ def test_health_endpoint():
 
 def test_version_endpoint():
     """Test version is available."""
-    from core.version import __version__
+    from backend.version import __version__
 
     assert __version__ is not None
 
 
 def test_validation_client_name():
     """validate_client_name must accept safe CNs and reject dangerous ones."""
-    from core.validation import validate_client_name
+    from backend.validation import validate_client_name
 
     assert validate_client_name("alice") == "alice"
     assert validate_client_name("user_1") == "user_1"
@@ -48,7 +48,7 @@ def test_validation_client_name():
 
 def test_validation_user_id():
     """validate_user_id must accept UUIDs and simple IDs, reject garbage."""
-    from core.validation import validate_user_id
+    from backend.validation import validate_user_id
 
     good = "6ca1dd29-b6a4-41c8-adc9-e154cf3f8557"
     assert validate_user_id(good) == good
@@ -68,8 +68,8 @@ def test_validation_user_id():
 
 def test_create_user_rejects_invalid_id():
     """The user endpoint must refuse an invalid/missing id (security)."""
-    from core.app import api
-    from core.config import settings
+    from backend.app import api
+    from backend.config import settings
 
     client = TestClient(api)
     headers = {"key": settings.api_key}
@@ -87,8 +87,8 @@ def test_create_user_rejects_invalid_id():
 
 def test_create_user_accepts_valid_id():
     """A well-formed UUID id passes validation (not rejected for the id)."""
-    from core.app import api
-    from core.config import settings
+    from backend.app import api
+    from backend.config import settings
 
     client = TestClient(api)
     headers = {"key": settings.api_key}
@@ -112,8 +112,8 @@ def test_create_user_accepts_valid_id():
 
 def test_create_user_rejects_invalid_name():
     """Even with valid id, a dangerous name must be rejected."""
-    from core.app import api
-    from core.config import settings
+    from backend.app import api
+    from backend.config import settings
 
     client = TestClient(api)
     headers = {"key": settings.api_key}
@@ -133,8 +133,8 @@ def test_create_user_rejects_invalid_name():
 
 def test_create_user_accepts_valid_name_shape():
     """A well-formed name passes validation (not rejected for the name)."""
-    from core.app import api
-    from core.config import settings
+    from backend.app import api
+    from backend.config import settings
 
     client = TestClient(api)
     headers = {"key": settings.api_key}
@@ -156,8 +156,8 @@ def test_create_user_accepts_valid_name_shape():
 def test_maintenance_marker_blocks_mutating_requests(monkeypatch, tmp_path):
     """With update-maintenance present, POST/PUT/DELETE get 503 while
     reads and the health probe keep answering."""
-    from core import app as app_module
-    from core.app import api
+    from backend import app as app_module
+    from backend.app import api
 
     monkeypatch.setattr(app_module.settings, "data_dir", str(tmp_path))
     (tmp_path / "update-maintenance").touch()
@@ -173,7 +173,7 @@ def test_maintenance_marker_blocks_mutating_requests(monkeypatch, tmp_path):
 def test_no_maintenance_marker_allows_requests(tmp_path):
     """Without the marker, mutating routes pass through the middleware
     (auth still applies downstream)."""
-    from core.app import api
+    from backend.app import api
 
     client = TestClient(api)
     r = client.post("/sync/user", json={}, headers={"key": "x"})

@@ -25,7 +25,7 @@ data
 tests
 install.sh
 .claude
-docker-compose.yml
+scripts/compose/
 .pre-commit-config.yaml
 .python-version
 *.md

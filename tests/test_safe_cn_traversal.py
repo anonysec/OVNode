@@ -16,7 +16,7 @@ import os
 
 import pytest
 
-from core.openvpn.store import USERS_DIR, _safe_cn, user_dir
+from backend.openvpn.store import USERS_DIR, _safe_cn, user_dir
 
 
 @pytest.mark.parametrize("bad", ["..", ".", "", "  "])
@@ -43,7 +43,7 @@ def test_a_leading_dot_is_allowed():
 
 def test_the_usage_scan_ignores_its_own_lock_files():
     """`.lock.<cn>` matches the key pattern, so the scan must skip it by name."""
-    from core.openvpn import store
+    from backend.openvpn import store
 
     real = store.accumulated_usage
     seen: list[str] = []

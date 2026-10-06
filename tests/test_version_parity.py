@@ -18,7 +18,7 @@ from pathlib import Path
 
 import pytest
 
-from core.version import __version__
+from backend.version import __version__
 
 REPO = Path(__file__).resolve().parent.parent
 
@@ -40,7 +40,7 @@ def test_text_spot_matches_the_package_version(relative, pattern):
     match = re.search(pattern, _read(relative), re.MULTILINE)
     assert match, f"{relative} has no version matching {pattern!r}"
     assert match.group(1) == __version__, (
-        f"{relative} says {match.group(1)}, core/version.py says {__version__}"
+        f"{relative} says {match.group(1)}, backend/version.py says {__version__}"
     )
 
 

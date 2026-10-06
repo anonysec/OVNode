@@ -6,7 +6,7 @@
 import json
 import os
 
-from core.openvpn import store
+from backend.openvpn import store
 
 
 def test_user_folder_holds_all_state():
@@ -109,7 +109,7 @@ def test_legacy_layout_migration():
 def test_set_limit_by_username_reaches_cn():
     """PUT /sync/user/limit may carry the panel USERNAME — the limit must
     land in the CN's folder, where the connect hook actually reads it."""
-    from core.openvpn.users import set_user_limit
+    from backend.openvpn.users import set_user_limit
 
     try:
         store.set_name("9003", "erin")

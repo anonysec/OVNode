@@ -19,7 +19,7 @@ sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
 # The config requires an API key; test-only value (the schema has no secrets).
 os.environ.setdefault("API_KEY", "openapi-export-only-not-a-real-key")
 os.environ["DOC"] = "true"
-from core.app import api  # noqa: E402
+from backend.app import api  # noqa: E402
 
 schema = api.openapi()
 out = os.path.join(os.path.dirname(__file__), "openapi.json")

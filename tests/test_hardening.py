@@ -10,14 +10,14 @@ from fastapi.testclient import TestClient
 
 
 def _client():
-    from core.app import api
-    from core.config import settings
+    from backend.app import api
+    from backend.config import settings
 
     return TestClient(api), {"key": settings.api_key}
 
 
 def test_kill_gate_accepts_uuid_and_rejects_injection():
-    from core.openvpn.sessions import _kill_target_ok
+    from backend.openvpn.sessions import _kill_target_ok
 
     assert _kill_target_ok("6ca1dd29-b6a4-41c8-adc9-e154cf3f8557") is True
     assert _kill_target_ok("42") is True
@@ -30,7 +30,7 @@ def test_kill_gate_accepts_uuid_and_rejects_injection():
 
 
 def test_journal_missing_returns_empty_quietly(monkeypatch, caplog):
-    import core.openvpn.sessions as sessions
+    import backend.openvpn.sessions as sessions
 
     monkeypatch.setattr(sessions.shutil, "which", lambda *_a, **_k: None)
     monkeypatch.setattr(sessions, "_journal_available", None)
@@ -45,7 +45,7 @@ def test_journal_missing_returns_empty_quietly(monkeypatch, caplog):
 
 
 def test_mgmt_port_garbage_falls_back():
-    from core.openvpn.sessions import _parse_mgmt_port
+    from backend.openvpn.sessions import _parse_mgmt_port
 
     assert _parse_mgmt_port("7505") == 7505
     assert _parse_mgmt_port("bogus") == 7505
@@ -58,7 +58,7 @@ def test_mgmt_port_garbage_falls_back():
 def test_mgmt_host_env_alias(monkeypatch):
     monkeypatch.delenv("OVNODE_MANAGEMENT_HOST", raising=False)
     monkeypatch.setenv("OVNODE_MGMT_HOST", "10.0.0.9")
-    import core.openvpn.sessions as sessions
+    import backend.openvpn.sessions as sessions
 
     importlib.reload(sessions)
     try:

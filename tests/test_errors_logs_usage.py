@@ -9,8 +9,8 @@ from fastapi.testclient import TestClient
 
 
 def _client(**kwargs):
-    from core.app import api
-    from core.config import settings
+    from backend.app import api
+    from backend.config import settings
 
     return TestClient(api, **kwargs), {"key": settings.api_key}
 
@@ -21,7 +21,7 @@ def _client(**kwargs):
 def test_unhandled_error_returns_contract_shape_with_ref(monkeypatch):
     """Unhandled exceptions → HTTP 500 in the {success,msg,data} envelope
     with a searchable ref, never a leaked traceback."""
-    import core.api.routes.stats as routes
+    import backend.api.routes.stats as routes
 
     def boom():
         raise RuntimeError("kaboom secret-internal-detail")
@@ -55,7 +55,7 @@ def test_http_errors_use_contract_shape():
 
 
 def test_ring_buffer_and_stats():
-    from core.logger import log_stats, logger, recent_logs
+    from backend.logger import log_stats, logger, recent_logs
 
     logger.warning("unit-test warning %s", "w1")
     logger.error("unit-test error %s", "e1")
@@ -73,7 +73,7 @@ def test_ring_buffer_and_stats():
 
 
 def test_logs_endpoint_requires_auth_and_returns_records():
-    from core.logger import logger
+    from backend.logger import logger
 
     logger.error("endpoint-visible error")
     c, headers = _client()
@@ -107,8 +107,8 @@ def test_status_includes_diagnostics():
 def test_usage_totals_combine_banked_and_live():
     """totals = disconnect-hook accumulated bytes + live session bytes,
     while the panel-contract keys (users/sessions) stay live-only."""
-    from core.openvpn import store
-    from core.openvpn import users as um
+    from backend.openvpn import store
+    from backend.openvpn import users as um
 
     status_file = os.environ["OVNODE_STATUS_FILE"]
     os.makedirs(os.path.dirname(status_file), exist_ok=True)
@@ -136,8 +136,8 @@ def test_usage_totals_combine_banked_and_live():
 
 def test_usage_totals_for_offline_user():
     """A user with banked usage but no live session still appears in totals."""
-    from core.openvpn import store
-    from core.openvpn import users as um
+    from backend.openvpn import store
+    from backend.openvpn import users as um
 
     os.makedirs(store.USAGE_DIR, exist_ok=True)
     try:
@@ -151,7 +151,7 @@ def test_usage_totals_for_offline_user():
 
 
 def test_delete_user_resets_usage():
-    from core.openvpn import store
+    from backend.openvpn import store
 
     os.makedirs(store.USAGE_DIR, exist_ok=True)
     with open(os.path.join(store.USAGE_DIR, "88"), "w") as f:
@@ -165,7 +165,7 @@ def test_delete_user_resets_usage():
 def test_disconnect_hook_banks_usage():
     """The disconnect hook must accumulate bytes_received+bytes_sent."""
     script = os.path.join(
-        os.path.dirname(__file__), "..", "core", "scripts", "ovnode-client-disconnect.sh"
+        os.path.dirname(__file__), "..", "backend", "scripts", "ovnode-client-disconnect.sh"
     )
     with open(script) as f:
         content = f.read()
@@ -180,7 +180,7 @@ def test_disconnect_hook_execution_banks_and_cleans(tmp_path):
     import subprocess
 
     script = os.path.join(
-        os.path.dirname(__file__), "..", "core", "scripts", "ovnode-client-disconnect.sh"
+        os.path.dirname(__file__), "..", "backend", "scripts", "ovnode-client-disconnect.sh"
     )
     sessions = tmp_path / "sessions"
     usage = tmp_path / "usage"

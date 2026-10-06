@@ -16,7 +16,7 @@ from datetime import datetime
 
 import pytest
 
-import core.openvpn.sessions as sessions
+import backend.openvpn.sessions as sessions
 
 
 def _journal(monkeypatch, lines):
@@ -213,7 +213,7 @@ def test_pki_does_not_write_log_timestamp(monkeypatch, tmp_path):
     """Regression: `log-timestamp` is not an OpenVPN directive (2.7) and it
     stopped the node from starting. tests/test_server_conf_options.py holds the
     wider guard; this keeps the intent next to the TLS timing tests."""
-    from core.openvpn import pki
+    from backend.openvpn import pki
 
     monkeypatch.setattr(pki, "_OPENVPN_ROOT", str(tmp_path))
     monkeypatch.setattr(pki, "SERVER_CONF", str(tmp_path / "server" / "server.conf"))

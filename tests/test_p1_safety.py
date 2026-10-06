@@ -22,7 +22,7 @@ TUNE_SCRIPT = r"""
 import os
 import sys
 
-from core.openvpn.pki import SERVER_CONF, _ensure_server_conf
+from backend.openvpn.pki import SERVER_CONF, _ensure_server_conf
 
 legacy = (
     "port 1194\n"
@@ -85,8 +85,8 @@ def test_tuneup_adds_hooks_and_is_idempotent():
 
 
 def _client():
-    from core.app import api
-    from core.config import settings
+    from backend.app import api
+    from backend.config import settings
 
     return TestClient(api), {"key": settings.api_key}
 
@@ -114,7 +114,7 @@ def test_status_carries_pki_expiry_keys():
 def test_easyrsa_runs_serialize_on_lock(tmp_path, monkeypatch):
     import threading
 
-    import core.openvpn.pki as pki
+    import backend.openvpn.pki as pki
 
     log = tmp_path / "calls.log"
     fake = tmp_path / "easyrsa"

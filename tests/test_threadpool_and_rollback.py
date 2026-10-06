@@ -28,8 +28,8 @@ remote vpn.example.com 1194
 
 
 def _client():
-    from core.app import api
-    from core.config import settings
+    from backend.app import api
+    from backend.config import settings
 
     return TestClient(api), {"key": settings.api_key}
 
@@ -41,9 +41,9 @@ def test_cert_endpoints_offload_to_threadpool(monkeypatch):
     """Every blocking PKI worker must be invoked via run_in_threadpool."""
     from fastapi.concurrency import run_in_threadpool as real_run_in_threadpool
 
-    from core.api import auth
-    from core.api.routes import users as routes
-    from core.validation import DeleteResult
+    from backend.api import auth
+    from backend.api.routes import users as routes
+    from backend.validation import DeleteResult
 
     threaded: list[str] = []
 
@@ -110,7 +110,7 @@ def isolated_root(tmp_path, monkeypatch):
     monkeypatch.setenv("OVNODE_OPENVPN_ROOT", str(tmp_path))
     monkeypatch.delenv("OVNODE_EXTRA_PORTS", raising=False)
 
-    from core.openvpn import control, ports, store
+    from backend.openvpn import control, ports, store
 
     users = tmp_path / "users"
     users.mkdir()
@@ -121,14 +121,14 @@ def isolated_root(tmp_path, monkeypatch):
     monkeypatch.setattr(ports, "NAT_SCRIPT", str(tmp_path / "no-ovnode-nat.sh"))
     monkeypatch.setattr(ports, "is_docker", lambda: True)
 
-    import core.openvpn.multilogin as ml
+    import backend.openvpn.multilogin as ml
 
     monkeypatch.setattr(ml, "ensure_multilogin_setup", lambda: None)
     return tmp_path
 
 
 def _settings(**overrides):
-    from core.api.schemas import SetSettingsModel
+    from backend.api.schemas import SetSettingsModel
 
     payload = {
         "tunnel_address": "",
@@ -141,7 +141,7 @@ def _settings(**overrides):
 
 
 def test_failed_restart_rolls_back_and_reports_failure(isolated_root, monkeypatch):
-    from core.openvpn import control
+    from backend.openvpn import control
 
     attempts: list[int] = []
 
@@ -173,7 +173,7 @@ def test_failed_restart_rolls_back_the_policy_state_files(isolated_root, monkeyp
     config while the state files assert the NEW one — so the next tune-up (or
     any effective() read) regenerates from drifted state.
     """
-    from core.openvpn import control, dns
+    from backend.openvpn import control, dns
 
     attempts: list[int] = []
 
