@@ -388,6 +388,49 @@ def test_credentials_prints_the_registration_values(tmp_path):
     assert "tls=1" in r.stderr
 
 
+def test_auth_disconnect_releases_the_pairing(tmp_path):
+    """The manual release for the node's 30-minute single-panel lease.
+
+    The pairing record is one file, so the command deletes it — no parser, no
+    service, and a second run says the node is not paired instead of failing.
+    """
+    env, app = sandbox(tmp_path)
+    ovpn = tmp_path / "etc-openvpn"
+    pairing = ovpn / "ovnode" / "state" / "pairing.json"
+    pairing.parent.mkdir(parents=True)
+    pairing.write_text('{"panel_id": "panel-a", "last_seen": 1}', encoding="utf-8")
+
+    # Redirect the one path the command writes to, like restore_sandbox does.
+    script = app / "manager.sh"
+    text = script.read_text(encoding="utf-8")
+    needle = 'OPENVPN_ROOT="/etc/openvpn"'
+    assert text.count(needle) == 1, "OPENVPN_ROOT moved: the sandbox cannot redirect it"
+    script.write_text(text.replace(needle, f'OPENVPN_ROOT="{ovpn}"'), encoding="utf-8")
+
+    (app / ".env").write_text(
+        "NODE_NAME=eu-1\nSERVICE_PORT=2083\nTLS_METHOD=none\n"
+        "API_KEY=0123456789abcdef0123456789abcdef\n",
+        encoding="utf-8",
+    )
+    # The gate belongs to the lib; neutered so the suite also runs unprivileged.
+    lib = app / "scripts" / "lib" / "common.sh"
+    root_gate = 'check_root() { [[ "$EUID" -eq 0 ]] || die "Must run as root."; }'
+    assert root_gate in lib.read_text(encoding="utf-8"), "check_root moved"
+    lib.write_text(
+        lib.read_text(encoding="utf-8").replace(root_gate, "check_root() { :; }"),
+        encoding="utf-8",
+    )
+
+    r = mgr_sb(env, app, "auth", "disconnect")
+    assert r.returncode == 0, r.stderr
+    assert "pairing released" in r.stderr, r.stderr
+    assert not pairing.exists()
+
+    r = mgr_sb(env, app, "auth", "disconnect")
+    assert r.returncode == 0, r.stderr
+    assert "not paired" in r.stderr, r.stderr
+
+
 def test_the_ready_card_note_reads_the_generation_flag():
     """The card says "(generated — save this)" only when that is true, so a new
     site that mints the key directly would make the card lie."""

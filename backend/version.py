@@ -1,4 +1,4 @@
 # Copyright (c) 2026 anonysec
 # SPDX-License-Identifier: MIT
 
-__version__ = "1.2.0"
+__version__ = "1.3.0"

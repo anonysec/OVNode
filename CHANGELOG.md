@@ -1,6 +1,12 @@
 # Changelog
 
-## 1.2.0 — 2026-10-06
+## 1.3.0 — 2026-10-07
+
+Single-panel pairing: X-Panel-ID lease enforced in check_api_key (all keyed
+routes). First panel pairs; foreign panels get 409 while the 30-minute lease
+holds, silent takeover after expiry; anonymous (headerless) requests pass only
+while unpaired. New CLI: `ovn auth disconnect` clears pairing immediately.
+Unkeyed /sync/health unaffected.
 
 Panel-owned PKI: node accepts pushed credentials. New endpoints PUT /sync/users/{cn}
 (pushes cert + key + state) and PUT /sync/pki (pushes CA + server cert + server key).

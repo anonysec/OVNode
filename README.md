@@ -6,7 +6,7 @@ The VPN server half of an [OVManager](https://github.com/anonysec/OVManager) dep
   <img src=".github/assets/banner.svg" alt="OVNode — the VPN server agent for OVManager" width="820">
   <br><br>
 
-  [![Version](https://img.shields.io/badge/version-1.2.0-blue)](CHANGELOG.md)
+  [![Version](https://img.shields.io/badge/version-1.3.0-blue)](CHANGELOG.md)
   [![License: MIT](https://img.shields.io/badge/License-MIT-green.svg)](LICENSE)
   [![CI](https://github.com/anonysec/OVNode/actions/workflows/ci.yml/badge.svg)](https://github.com/anonysec/OVNode/actions/workflows/ci.yml)
   [![Python](https://img.shields.io/badge/python-3.12%2B-3776ab?logo=python&logoColor=white)](pyproject.toml)
@@ -210,6 +210,7 @@ Every install adds one command, `ovn` (short for `ovnode`). With no argument it 
 | `ovn auth` | Credential state, then the options that apply. |
 | `ovn auth key` | Node name, API key and the panel bundle, any time. |
 | `ovn auth rotate` | Generate a new API key. Prints it and the `.env` line to change. |
+| `ovn auth disconnect` | Release the paired panel now — a paired node refuses a second panel for 30 minutes otherwise. |
 | `ovn tls` | Certificate state, then `selfsigned`, `le IP\|DOMAIN` or `custom CERT KEY`. |
 | `ovn backup [--keep N]` | Save state and PKI backups now. |
 | `ovn backup schedule [on\|off\|status]` | Host timer: a daily backup at `03:30`. |

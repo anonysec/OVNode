@@ -3,6 +3,8 @@
 
 import hashlib
 import hmac
+import json
+import os
 import time
 from collections import OrderedDict
 from threading import Lock
@@ -11,6 +13,7 @@ from fastapi import Header, HTTPException, Request, status
 
 from backend.config import settings
 from backend.logger import logger
+from backend.openvpn.store import OVNODE_DIR
 
 # In-memory per-client rate limiter, so a misconfigured or compromised panel
 # cannot hammer the node and saturate the OpenVPN management socket.
@@ -113,6 +116,94 @@ def apply_heavy_limit(request: Request | None) -> None:
         )
 
 
+# ── panel pairing ────────────────────────────────────────────────────
+#
+# The API key says "you are allowed"; the pairing says "you are the owner".
+# One panel owns a node at a time, so a second panel with a valid key is
+# refused while the first one still holds the lease.
+#
+# The record is one small JSON file beside the rest of the node's own state
+# (the ovnode tree, sandboxed by OVNODE_OPENVPN_ROOT in tests), so the CLI
+# release is a `rm` and no parser, service or dependency is added.
+_LEASE_SECONDS = 30 * 60
+PAIRING_PATH = os.path.join(OVNODE_DIR, "state", "pairing.json")
+_PANEL_HEADER = "x-panel-id"
+
+
+def _load_pairing() -> dict | None:
+    """The stored {panel_id, last_seen}, or None when there is none usable."""
+    try:
+        with open(PAIRING_PATH, encoding="utf-8") as fh:
+            record = json.load(fh)
+        panel_id = str(record.get("panel_id") or "").strip()
+        last_seen = float(record.get("last_seen"))
+    except (OSError, ValueError, TypeError, AttributeError):
+        return None
+    if not panel_id:
+        return None
+    return {"panel_id": panel_id, "last_seen": last_seen}
+
+
+def _save_pairing(panel_id: str, last_seen: float) -> None:
+    from backend.openvpn.atomic import write_text_atomic
+
+    payload = json.dumps({"panel_id": panel_id, "last_seen": last_seen})
+    write_text_atomic(PAIRING_PATH, payload, mode=0o600)
+
+
+def enforce_panel_pairing(request: Request | None) -> None:
+    """Apply the single-panel lease for this keyed request.
+
+    ``X-Panel-ID`` carries the calling panel's identity. Missing or empty is
+    anonymous: allowed only while the node is unpaired (and takes no lease),
+    rejected with 409 once paired — otherwise omitting the header would bypass
+    the single-panel rule. A paired panel refreshes ``last_seen``; a foreign
+    panel is 409 while the lease holds and takes over silently once it expires.
+    """
+    if request is None:
+        return
+    panel_id = (request.headers.get(_PANEL_HEADER) or "").strip()
+    now = time.time()
+    record = _load_pairing()
+    if not panel_id:
+        if record is not None:
+            raise HTTPException(
+                status_code=status.HTTP_409_CONFLICT,
+                detail=(
+                    "Node is paired with another panel. Wait for the 30-minute lease "
+                    "or run `ovn auth disconnect` on this node."
+                ),
+            )
+        return
+    if record is not None and record["panel_id"] != panel_id:
+        age = now - record["last_seen"]
+        if age <= _LEASE_SECONDS:
+            logger.warning(
+                "Panel %s refused: paired with %s, lease holds for %.0fs more",
+                panel_id,
+                record["panel_id"],
+                _LEASE_SECONDS - age,
+            )
+            raise HTTPException(
+                status_code=status.HTTP_409_CONFLICT,
+                detail=(
+                    "Node is paired with another panel. Wait for the 30-minute lease "
+                    "or run `ovn auth disconnect` on this node."
+                ),
+            )
+        logger.warning(
+            "Panel %s takes over from %s — lease expired %.0fs ago",
+            panel_id,
+            record["panel_id"],
+            -age,
+        )
+    # Sync file IO on the event loop, same as every other store read here:
+    # the record is a few dozen bytes, so this never waits a scheduler tick.
+    # Concurrent pairers race on the last write; the lease makes the winner
+    # the panel that keeps calling.
+    _save_pairing(panel_id, now)
+
+
 async def check_api_key(key: str | None = Header(None), request: Request = None) -> str:
     """Check if the provided API key is valid (constant-time compare).
 
@@ -144,6 +235,9 @@ async def check_api_key(key: str | None = Header(None), request: Request = None)
             status_code=status.HTTP_401_UNAUTHORIZED,
             detail="Invalid API key",
         )
+    # Pairing runs only after the key is proven: X-Panel-ID is identity, not
+    # authentication, and only routes that reach this dependency are leased.
+    enforce_panel_pairing(request)
     return key
 
 

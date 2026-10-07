@@ -108,7 +108,7 @@ api.add_middleware(
     allow_origins=_panel_origins,
     allow_credentials=False,
     allow_methods=["GET", "POST", "PUT", "DELETE", "OPTIONS"],
-    allow_headers=["key", "content-type", "authorization", "x-requested-with"],
+    allow_headers=["key", "content-type", "authorization", "x-requested-with", "x-panel-id"],
 )
 api.add_middleware(SecurityHeadersMiddleware)
 api.add_middleware(MaintenanceMiddleware)

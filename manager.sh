@@ -10,10 +10,13 @@
 set -Eeuo pipefail
 
 # ── Constants ──────────────────────────────────────────────────────────
-VERSION="1.2.0"
+VERSION="1.3.0"
 APP_DIR="${OVN_APP_DIR:-/opt/ovnode}"
 DATA_BASE="/var/lib/ovnode"
 OPENVPN_ROOT="/etc/openvpn"
+# Panel pairing record — one panel owns the node; `ovn auth disconnect` is
+# the release, so the path has to be known to the CLI as well as the agent.
+PAIRING_FILE="$OPENVPN_ROOT/ovnode/state/pairing.json"
 DEFAULT_PORT=2083
 SYSTEMD_SERVICE="ovnode.service"
 OPENVPN_SERVICE="ovnode-openvpn.service"
@@ -621,19 +624,26 @@ do_auth() {
             render_line "  paste the bundle into the panel to register this node"
             return 0 ;;
         rotate) auth_rotate; return $? ;;
+        disconnect) auth_disconnect; return $? ;;
     esac
 
     render_kv "Owner"     "$node"
     render_kv "Service"   "${scheme}://${host}:${port}"
     render_kv "API key"   "set — see: ovn auth key"
+    # State first: is a panel attached to this node at all?
+    if [[ -f "$PAIRING_FILE" ]]; then
+        render_kv "Panel"     "paired — release with: ovn auth disconnect"
+    else
+        render_kv "Panel"     "not paired — the first panel to call with its id pairs"
+    fi
     render_blank
     render_kv "Key"    "ovn auth key — print the key and the registration bundle"
     render_kv "Rotate" "ovn auth rotate — generate a new key"
+    render_kv "Disconnect" "ovn auth disconnect — release the paired panel now"
 }
 
 # Generate a replacement key, print it, and tell the operator the one line to
 # change. It does not edit .env.
-#
 # .env is written once by the installer and belongs to the operator afterwards —
 # the same rule that retired env_set. A command that quietly rewrote the file
 # would reopen exactly the split-brain that rule exists to prevent, and the
@@ -653,6 +663,19 @@ auth_rotate() {
     render_line "    API_KEY=$new"
     render_line "  then: ovn restart, and give the panel the same key"
     render_line "  the old key stops working the moment the agent restarts"
+}
+
+# Release the panel pairing now rather than waiting out the node's 30-minute
+# lease — the manual handoff after a panel is rebuilt or retired. The record
+# is one small file and deleting it is the whole operation: the next panel to
+# call with its id pairs fresh.
+auth_disconnect() {
+    if [[ -f "$PAIRING_FILE" ]] && rm -f "$PAIRING_FILE"; then
+        render_ok "pairing released"
+        render_line "  the next panel to call this node pairs with it fresh"
+    else
+        render_ok "this node is not paired"
+    fi
 }
 
 # `ovn config` — every effective setting and where it comes from. Read-only.
@@ -742,6 +765,7 @@ show_help() {
     ovn auth                Owner credential — lists the options
     ovn auth key            API key and the panel registration bundle
     ovn auth rotate         Generate a new API key
+    ovn auth disconnect     Release the paired panel now
     ovn tls                 Certificate — lists the options
 
     ovn backup [--keep N]   Write a state + PKI backup now
@@ -775,6 +799,7 @@ show_help_full() {
     ovn auth                Credential state, and what to do about it
     ovn auth key            API key and the panel registration bundle
     ovn auth rotate         Generate a new API key, printed not stored
+    ovn auth disconnect     Release the paired panel (otherwise a 30-min lease)
     ovn tls                 Certificate: method, key, cert, expiry
     ovn tls selfsigned      New self-signed certificate
     ovn tls le IP|DOMAIN    Let's Encrypt — ip or domain, detected
@@ -892,6 +917,7 @@ parse_args() {
                               case "$1" in
                                   key)    AUTH_ACTION="key"; shift ;;
                                   rotate) AUTH_ACTION="rotate"; shift ;;
+                                  disconnect) AUTH_ACTION="disconnect"; shift ;;
                                   *) die "ovn auth: unknown option '$1'  (see: ovn auth)" "$EX_USAGE" ;;
                               esac
                           fi ;;

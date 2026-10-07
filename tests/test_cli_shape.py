@@ -90,6 +90,7 @@ ALL_VERBS = (
     "auth",
     "auth key",
     "auth rotate",
+    "auth disconnect",
     "tls",
     "tls selfsigned",
     "tls le 10.0.0.1",
