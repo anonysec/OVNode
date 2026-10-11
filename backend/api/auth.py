@@ -61,10 +61,13 @@ def _global_allowed(now: float) -> tuple[bool, float]:
     return True, 0.0
 
 
-def _allowed(api_key: str) -> tuple[bool, float]:
+def _allowed(client_key: str) -> tuple[bool, float]:
+    """Rate-limit key: the connecting address, never the submitted secret.
+
+    Returns (allowed, retry_after_s)."""
     now = time.monotonic()
-    # Do not retain attacker-controlled API-key strings in memory.
-    key = hashlib.sha256(str(api_key).encode()).hexdigest()[:32]
+    # Do not retain attacker-controlled strings in memory.
+    key = hashlib.sha256(str(client_key).encode()).hexdigest()[:32]
     with _ratelimit_lock:
         _prune(_ratelimit_buckets, now, _WINDOW)
         ok, retry_after = _global_allowed(now)
@@ -80,10 +83,12 @@ def _allowed(api_key: str) -> tuple[bool, float]:
     return True, 0.0
 
 
-def _heavy_allowed(api_key: str) -> tuple[bool, float]:
-    """Tight bucket for cert-issuing endpoints. Returns (allowed, retry_after_s)."""
+def _heavy_allowed(client_key: str) -> tuple[bool, float]:
+    """Tight bucket for cert-issuing endpoints. Returns (allowed, retry_after_s).
+
+    Rate-limit key: the connecting address, never the submitted secret."""
     now = time.monotonic()
-    key = hashlib.sha256(str(api_key).encode()).hexdigest()[:32]
+    key = hashlib.sha256(str(client_key).encode()).hexdigest()[:32]
     with _ratelimit_lock:
         _prune(_heavy_buckets, now, _HEAVY_WINDOW)
         bucket = [ts for ts in _heavy_buckets.get(key, []) if now - ts < _HEAVY_WINDOW]
