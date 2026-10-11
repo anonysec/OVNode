@@ -135,3 +135,18 @@ def test_cleared_pairing_pairs_the_next_panel(client):
     _clear()
     assert _keyed(client, PANEL_B).status_code == 200
     assert _record()["panel_id"] == PANEL_B
+
+
+def test_corrupt_pairing_file_is_unpaired_with_warning(client, caplog):
+    """A corrupt pairing.json must not brick the node into a paired state
+    nobody can reach — it reads as unpaired, but silently swallowing the
+    parse failure hid disk corruption, so it must also warn."""
+    from backend.api import auth
+
+    os.makedirs(os.path.dirname(PAIRING), exist_ok=True)
+    with open(PAIRING, "w", encoding="utf-8") as fh:
+        fh.write("{not json")
+
+    with caplog.at_level("WARNING", logger="ovnode"):
+        assert auth._load_pairing() is None
+    assert any("pairing" in rec.message.lower() for rec in caplog.records)

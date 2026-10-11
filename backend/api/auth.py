@@ -136,13 +136,21 @@ _PANEL_HEADER = "x-panel-id"
 
 
 def _load_pairing() -> dict | None:
-    """The stored {panel_id, last_seen}, or None when there is none usable."""
+    """The stored {panel_id, last_seen}, or None when there is none usable.
+
+    A missing file is the normal unpaired state; a corrupt or unreadable one
+    still reads as unpaired (never bricked), but warns so disk trouble is
+    visible instead of silently resetting ownership.
+    """
     try:
         with open(PAIRING_PATH, encoding="utf-8") as fh:
             record = json.load(fh)
         panel_id = str(record.get("panel_id") or "").strip()
         last_seen = float(record.get("last_seen"))
-    except (OSError, ValueError, TypeError, AttributeError):
+    except FileNotFoundError:
+        return None
+    except (OSError, ValueError, TypeError, AttributeError) as e:
+        logger.warning("Pairing record %s unreadable (%s); treating as unpaired", PAIRING_PATH, e)
         return None
     if not panel_id:
         return None
