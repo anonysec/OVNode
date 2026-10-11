@@ -30,7 +30,8 @@ lint:
 	# `make lint` from the workflow would have silently dropped them.
 	ruff check backend/ tests/ --output-format=github
 	ruff format --check backend/ tests/
-	bash -n install.sh manager.sh scripts/lib/*.sh
+	bash -n install.sh && bash -n manager.sh
+	for f in scripts/lib/*.sh; do bash -n "$$f" || exit 1; done
 
 format:
 	ruff format backend/
