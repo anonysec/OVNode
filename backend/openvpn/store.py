@@ -291,13 +291,26 @@ def cn_for_name(name: str) -> str | None:
 
 
 def accumulated_usage(cn: str) -> int:
-    """Total bytes from this user's COMPLETED sessions (0 when none)."""
+    """Total bytes from this user's COMPLETED sessions (0 when none).
+
+    A corrupt bank file (undecodable bytes or non-numeric content) is
+    treated as 0 with a warning — never an exception, so the panel poll
+    stays a 200.
+    """
+    path = os.path.join(USAGE_DIR, _safe_cn(cn))
     try:
-        with open(os.path.join(USAGE_DIR, _safe_cn(cn)), encoding="utf-8") as f:
+        with open(path, encoding="utf-8") as f:
             raw = f.read().strip()
-        return int(raw) if raw.isdigit() else 0
+    except UnicodeDecodeError:
+        logger.warning("store: corrupt usage file for %s; treating as 0", cn)
+        return 0
     except OSError:
         return 0
+    if raw.isdigit():
+        return int(raw)
+    if raw:
+        logger.warning("store: corrupt usage file for %s; treating as 0", cn)
+    return 0
 
 
 def all_accumulated_usage() -> dict[str, int]:
