@@ -227,9 +227,19 @@ async def check_api_key(key: str | None = Header(None), request: Request = None)
             detail="Rate limit exceeded",
             headers={"Retry-After": str(int(retry_after))},
         )
-    # Encode both sides: compare_digest raises TypeError on non-ASCII str,
-    # and header bytes are latin-1-decoded — raw HTTP could carry 0x80-0xFF.
-    if not hmac.compare_digest(key.encode("utf-8", "ignore"), settings.api_key.encode("utf-8")):
+    # compare_digest raises TypeError on non-ASCII str, and header bytes are
+    # latin-1-decoded — raw HTTP could carry 0x80-0xFF. Strict on both sides:
+    # dropping bytes ("ignore") made an unencodable key compare equal.
+    try:
+        given = key.encode("latin-1")
+        expected = settings.api_key.encode("latin-1")
+    except UnicodeEncodeError:
+        logger.warning("Invalid API key rejected from %s", ip)
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Invalid API key",
+        ) from None
+    if not hmac.compare_digest(given, expected):
         logger.warning("Invalid API key rejected from %s", ip)
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
