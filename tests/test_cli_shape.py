@@ -14,8 +14,9 @@ from __future__ import annotations
 
 import os
 import re
-import subprocess
 from pathlib import Path
+
+from conftest import HARNESS
 
 REPO = Path(__file__).resolve().parent.parent
 MANAGER = REPO / "manager.sh"
@@ -42,24 +43,15 @@ SHORT_LIST = (
 
 
 def _short_help() -> str:
-    return _run("help")
+    return HARNESS.manager("help")
 
 
 def _full_help() -> str:
-    return _run("help", "--all")
+    return HARNESS.manager("help", "--all")
 
 
 def _run(*args: str, check: bool = True) -> str:
-    out = subprocess.run(
-        ["bash", str(MANAGER), *args],
-        capture_output=True,
-        text=True,
-        timeout=60,
-        env={**os.environ, "OVN_APP_DIR": "/nonexistent", "CI": "1"},
-    )
-    if check:
-        assert out.returncode == 0, out.stderr
-    return out.stdout + out.stderr
+    return HARNESS.manager(*args, check=check)
 
 
 LIB = REPO / "scripts" / "lib" / "doctor.sh"

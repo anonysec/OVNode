@@ -15,6 +15,9 @@ if "BlockingPortal" not in anyio.abc.__dict__:
     anyio.abc.BlockingPortal = anyio.from_thread.BlockingPortal  # type: ignore[attr-defined]
 
 import os
+import pty
+import subprocess
+import tempfile
 from pathlib import Path
 
 import pytest
@@ -97,3 +100,138 @@ def _real_system_paths_untouched():
         f"the test suite modified real system paths: {changed}. "
         "A test is writing outside its sandbox — see the note above."
     )
+
+
+# ── Shared bash harness, cached by input ────────────────────────────────
+#
+# The transcript suites fork bash per probe, and the same probe repeats
+# across tests — one golden script asserted from several angles. Memoizing
+# by exact input gives one fork per unique probe and byte-identical results
+# on every hit; each probe is a hermetic process with a fixed env, so the
+# first run's bytes are the only bytes there are.
+# ponytail: in-memory per worker — xdist workers never share the cache.
+
+
+class BashHarness:
+    """Probe renderer.sh and run manager.sh, caching by exact input."""
+
+    def __init__(self, lib: Path, manager: Path):
+        self._lib = lib
+        self._manager = manager
+        self._cache: dict[tuple, object] = {}
+
+    def probe(self, script: str, *, promptable: bool) -> str:
+        """A bash file with the libs sourced and one snippet appended."""
+        return (
+            "set -Eeuo pipefail\n"
+            f'. "{self._lib / "common.sh"}"\n'
+            f'. "{self._lib / "render.sh"}"\n'
+            f"can_prompt() {{ return {0 if promptable else 1}; }}\n"
+            f"{script}\n"
+        )
+
+    def run(self, script: str, *, tty: bool, **env: str) -> str:
+        """Run a snippet WITHOUT a terminal and return raw stderr.
+
+        The pipe path: no -t 2, so no colour and no animation. Pass tty=False
+        for it — the flag is kept only so the intent reads at the call site,
+        because a test that thinks it has a terminal but does not is exactly
+        how the fade tests came to assert nothing.
+        """
+        assert not tty, "use run_pty for anything that needs a real terminal"
+        key = ("pipe", script, tuple(sorted(env.items())))
+        if key not in self._cache:
+            full = self.probe(script, promptable=False)
+            with tempfile.TemporaryDirectory() as tmp:
+                path = Path(tmp) / "probe.sh"
+                path.write_text(full, encoding="utf-8")
+                r = subprocess.run(
+                    ["bash", str(path)],
+                    capture_output=True,
+                    text=True,
+                    timeout=60,
+                    env={**os.environ, **env},
+                    stdin=subprocess.DEVNULL,
+                )
+            assert r.returncode == 0, r.stderr
+            self._cache[key] = r.stderr
+        return self._cache[key]  # type: ignore[return-value]
+
+    def run_pty(self, script: str, *, stdin_pipe: bool = False, **env: str) -> str:
+        """Run a snippet WITH a terminal on stderr, and return what it drew.
+
+        A pty is the only way to get -t 2 true, and -t 2 is what gates colour,
+        animation and the whole repaint path. Without this the fade, the spinner
+        and the cursor accounting are untested code that only runs on a
+        developer's terminal.
+
+        stdin_pipe=True models `curl … | bash`: stdin is a pipe, stderr is still
+        the operator's terminal.
+        """
+        key = ("pty", script, stdin_pipe, tuple(sorted(env.items())))
+        if key not in self._cache:
+            full = self.probe(script, promptable=True)
+            with tempfile.TemporaryDirectory() as tmp:
+                path = Path(tmp) / "probe.sh"
+                path.write_text(full, encoding="utf-8")
+                master, slave = pty.openpty()
+                proc = subprocess.Popen(
+                    ["bash", str(path)],
+                    stdin=subprocess.PIPE if stdin_pipe else subprocess.DEVNULL,
+                    stdout=subprocess.DEVNULL,
+                    stderr=slave,
+                    # TERM is set here rather than inherited. render.sh gates motion
+                    # on ${TERM:-dumb}, so a runner with no TERM — which is what
+                    # GitHub's non-interactive steps are — gets every test below
+                    # passing on a developer terminal and failing in CI, with the
+                    # message "no repaint happened at all" for a repaint that was
+                    # never going to be attempted. These tests are about what a
+                    # terminal draws, so they ask for a terminal.
+                    env={"TERM": "xterm-256color", **os.environ, **env},
+                )
+                os.close(slave)
+                chunks = []
+                try:
+                    while True:
+                        try:
+                            data = os.read(master, 65536)
+                        except OSError:
+                            break
+                        if not data:
+                            break
+                        chunks.append(data)
+                finally:
+                    os.close(master)
+                    proc.wait(timeout=60)
+                if proc.stdin and not proc.stdin.closed:
+                    proc.stdin.close()
+            raw = b"".join(chunks).decode("utf-8", "replace")
+            assert proc.returncode == 0, raw
+            self._cache[key] = raw
+        return self._cache[key]  # type: ignore[return-value]
+
+    def manager(self, *args: str, check: bool = True) -> str:
+        """Run manager.sh with the suite's fixed env; return stdout + stderr."""
+        key = ("manager", args)
+        if key not in self._cache:
+            out = subprocess.run(
+                ["bash", str(self._manager), *args],
+                capture_output=True,
+                text=True,
+                timeout=60,
+                env={**os.environ, "OVN_APP_DIR": "/nonexistent", "CI": "1"},
+            )
+            self._cache[key] = (out.returncode, out.stdout + out.stderr)
+        rc, combined = self._cache[key]  # type: ignore[misc]
+        if check:
+            assert rc == 0, combined
+        return combined  # type: ignore[return-value]
+
+
+_REPO = Path(__file__).resolve().parent.parent
+HARNESS = BashHarness(_REPO / "scripts" / "lib", _REPO / "manager.sh")
+
+
+@pytest.fixture(scope="session")
+def harness() -> BashHarness:
+    return HARNESS
