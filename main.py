@@ -17,21 +17,37 @@ signal.signal(signal.SIGTERM, _handle_shutdown)
 signal.signal(signal.SIGINT, _handle_shutdown)
 
 
-def main():
+def _tls_material() -> tuple[str, str]:
+    """Cert + key for the API listener.
+
+    TLS is not optional: the panel pins the node CA, so a plaintext listener
+    is a hole. The operator's SSL_CERTFILE/SSL_KEYFILE win; the node PKI's
+    server pair (pki/issued/server.crt + pki/private/server.key, signed by
+    pki/ca.crt) is the default. A missing or unreadable file kills startup —
+    there is no plaintext fallback.
+    """
     import os
 
+    from backend.config import settings
+    from backend.openvpn.pki import paths
+
+    cert = settings.ssl_certfile or paths.SERVER_CERT
+    key = settings.ssl_keyfile or paths.SERVER_KEY
+    for label, path in (("cert", cert), ("key", key)):
+        if not os.path.isfile(path) or not os.access(path, os.R_OK):
+            raise SystemExit(
+                f"TLS {label} missing or unreadable: {path} — refusing to start without TLS"
+            )
+    return cert, key
+
+
+def main():
     from uvicorn import Config, Server
 
     from backend.app import api
     from backend.config import settings
 
-    ssl_kwargs = {}
-    if settings.ssl_certfile and settings.ssl_keyfile:
-        if not os.path.isfile(settings.ssl_certfile):
-            raise SystemExit(f"SSL cert file not found: {settings.ssl_certfile}")
-        if not os.path.isfile(settings.ssl_keyfile):
-            raise SystemExit(f"SSL key file not found: {settings.ssl_keyfile}")
-        ssl_kwargs = {"ssl_certfile": settings.ssl_certfile, "ssl_keyfile": settings.ssl_keyfile}
+    ssl_certfile, ssl_keyfile = _tls_material()
 
     config = Config(
         app=api,
@@ -44,7 +60,8 @@ def main():
         # Access logs stay DEBUG-only: the panel polls this API every few seconds.
         access_log=settings.debug.upper() == "DEBUG",
         server_header=False,
-        **ssl_kwargs,
+        ssl_certfile=ssl_certfile,
+        ssl_keyfile=ssl_keyfile,
     )
     server = Server(config=config)
     server.run()

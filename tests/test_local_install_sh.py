@@ -89,7 +89,7 @@ def test_health_probe_is_https():
     probe = next(line for line in text.splitlines() if "sync/health" in line)
     assert "https://127.0.0.1" in probe, probe
     # -k: the node's PKI cert is self-signed; the probe checks liveness only.
-    assert "-k" in probe, probe
+    assert re.search(r"curl\s+-\w*k", probe), probe
     assert "http://" not in probe, probe
 
 

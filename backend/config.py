@@ -36,8 +36,8 @@ class Settings(BaseSettings):
     api_key: str
     debug: str = "WARNING"
     doc: bool = False
-    # Built-in TLS — when both are set, uvicorn serves HTTPS directly.
-    # Certs live under /etc/letsencrypt/<domain>/ or /etc/ssl/self-signed/.
+    # TLS — uvicorn always serves HTTPS (see main._tls_material): the panel
+    # pins the node CA. These two override the node PKI's own server pair.
     ssl_certfile: str | None = None
     ssl_keyfile: str | None = None
     # Installer metadata (ignored by the app, used by install.sh for state)
