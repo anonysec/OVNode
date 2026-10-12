@@ -113,7 +113,10 @@ def _read_active_files() -> list[dict[str, Any]]:
             continue
         data: dict[str, str] = {}
         try:
-            with open(path, encoding="utf-8", errors="ignore") as f:
+            # Strict: a marker is matched against live sessions by its fields,
+            # so half of one decoded cleanly is worse than none of it. A
+            # corrupt file raises below, is skipped and named in the warning.
+            with open(path, encoding="utf-8") as f:
                 for line in f:
                     if "=" in line:
                         k, v = line.rstrip("\n").split("=", 1)
@@ -196,6 +199,9 @@ def _journal_lines(hours: int) -> list[str]:
     cutoff = time.time() - bounded * 3600
     lines = []
     try:
+        # errors="ignore" is load-bearing here: the hook appends one line per
+        # event, and a strict read would hand the panel an empty event window
+        # for as long as one undecodable byte is in the file.
         with open(log_path, encoding="utf-8", errors="ignore") as fh:
             for raw in fh:
                 head, _, msg = raw.partition(" ")
@@ -247,6 +253,9 @@ def _openvpn_log_lines() -> list[str]:
     path = os.path.join(_OPENVPN_ROOT, "server", "openvpn.log")
     try:
         size = os.path.getsize(path)
+        # errors="ignore" is load-bearing here too: client-supplied bytes land
+        # in this log, and the TLS failures it reports are the panel's only
+        # danger signal — one bad byte must not cost the whole tail.
         with open(path, encoding="utf-8", errors="ignore") as f:
             # Tail only: the log is append-only and unbounded, and the panel
             # polls this on a timer.
