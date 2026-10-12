@@ -102,6 +102,17 @@ def test_delete_user_not_found():
     assert body["msg"] == "User not found on node (already deleted)"
 
 
+def test_delete_user_rejects_invalid_id():
+    """DELETE /user/{uid} shares the id-format envelope with the other
+    mutating routes — the one route that lost its own copy in the diet cut."""
+    c, headers = _client()
+    r = c.delete("/sync/user/invalid@", headers=headers)
+    assert r.status_code == 200
+    body = r.json()
+    assert body["success"] is False
+    assert body["msg"] == "Invalid user id (must be UUID or simple id)"
+
+
 def test_download_ovpn_missing():
     """Download fails gracefully for non-existent user (envelope, not 404)."""
     c, headers = _client()
