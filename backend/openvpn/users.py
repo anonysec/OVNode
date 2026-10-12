@@ -212,8 +212,10 @@ def create_user_on_server(
     else:
         crt, inline = _cert_paths(cn)
         pushed_cert, _, _ = _pushed_paths(cn)
-        if not os.path.exists(crt) and not os.path.exists(inline) and not os.path.exists(
-            pushed_cert
+        if (
+            not os.path.exists(crt)
+            and not os.path.exists(inline)
+            and not os.path.exists(pushed_cert)
         ):
             if not os.path.exists(os.path.join(PKI_DIR, "ca.crt")):
                 # No pushed cert and no PKI to generate one: keep the dir +

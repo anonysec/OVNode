@@ -39,8 +39,7 @@ def as_nobody(*args, env=None):
     if os.geteuid() != 0:
         return sh(*args, env=env)
     return _run(
-        ["setpriv", "--reuid=65534", "--regid=65534", "--clear-groups",
-         "bash", str(SCRIPT), *args],
+        ["setpriv", "--reuid=65534", "--regid=65534", "--clear-groups", "bash", str(SCRIPT), *args],
         env=env,
     )
 
