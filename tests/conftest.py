@@ -17,6 +17,7 @@ if "BlockingPortal" not in anyio.abc.__dict__:
 import os
 import pty
 import subprocess
+import sys
 import tempfile
 from pathlib import Path
 
@@ -89,17 +90,43 @@ def _snapshot() -> dict:
     return out
 
 
-@pytest.fixture(scope="session", autouse=True)
-def _real_system_paths_untouched():
-    """Fail the session if the suite wrote anything the host depends on."""
-    before = _snapshot()
-    yield
+# The guard belongs to the controller process, not to a session fixture: an
+# xdist worker runs its own "session", so a per-worker window both misses
+# writes made before a late worker starts and multiplies one host event into
+# N worker errors (observed: 2 errors under -n auto). PYTEST_XDIST_WORKER is
+# set by xdist before conftest loads, so the worker check cannot race hook
+# registration. One window around the whole run, one verdict.
+
+
+def pytest_configure(config):
+    """Snapshot the guarded paths before the first test of the run."""
+    if os.environ.get("PYTEST_XDIST_WORKER"):
+        return
+    config._ovnode_paths_before = _snapshot()
+
+
+def pytest_sessionfinish(session, exitstatus):
+    """Fail the run if anything under the guarded paths changed."""
+    if os.environ.get("PYTEST_XDIST_WORKER"):
+        return
+    before = getattr(session.config, "_ovnode_paths_before", None)
+    if before is None:
+        return
     after = _snapshot()
     changed = [p for p in before if before[p] != after[p]]
-    assert not changed, (
+    if not changed:
+        return
+    # Straight to stderr: the run's summary has not printed yet at this
+    # point, and a terminalreporter.section() write made here is swallowed
+    # while the same sys.stderr line is not.
+    print(
         f"the test suite modified real system paths: {changed}. "
-        "A test is writing outside its sandbox — see the note above."
+        "A test is writing outside its sandbox — see the note above.",
+        file=sys.stderr,
     )
+    # pytest-cov's pattern: the value main() returns is read after the
+    # sessionfinish hooks, so this is what turns the verdict into exit 1.
+    session.exitstatus = 1
 
 
 # ── Shared bash harness, cached by input ────────────────────────────────
