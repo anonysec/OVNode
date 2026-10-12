@@ -30,11 +30,8 @@ def _defines(path: Path) -> set[str]:
     return set(re.findall(r"^([A-Za-z_][A-Za-z0-9_]*)\(\)", text, re.M))
 
 
-def test_the_libs_exist():
-    assert LIBS, "scripts/lib/ is empty — install.sh has nothing to source"
-
-
 def test_no_function_is_defined_in_two_files():
+    assert LIBS, "scripts/lib/ is empty — install.sh has nothing to source"
     seen: dict[str, list[str]] = {}
     for path in FILES:
         for name in _defines(path):

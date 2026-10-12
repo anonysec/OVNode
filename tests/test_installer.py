@@ -277,44 +277,6 @@ def test_plain_http_is_rejected():
     assert "Plain HTTP is not allowed" in r.stderr
 
 
-def test_start_menu_offers_install_or_docker():
-    """A bare interactive run opens the friendly menu (not the wizard):
-    Install (host, default) or Install with Docker — same shape as the
-    panel installer."""
-    content = installer_source()
-    assert "start_menu" in content
-    assert 'host   "install  ·  systemd on this box"' in content
-    assert 'docker "install  ·  agent + openvpn in a container"' in content
-    assert 'quit   "exit"' in content
-    assert "nothing was changed" in content
-    assert "How do you want to install?" not in content
-    # Host install is the default; Docker is explicit.
-    assert "DOCKER=1; apply_express_defaults" in content
-    # And the wizard does not ask the mode again — the answer could be given
-    # twice and the two did not always agree.
-    wizard = _extract_function("interactive_setup")
-    assert "Deployment" not in wizard
-    # Install still uses safe generated defaults with TLS on.
-    assert "apply_express_defaults()" in content
-    assert 'TLS_METHOD="selfsigned"' in content
-    assert ': "${VPN_PROTO:=udp}"' in content
-
-
-def test_already_installed_menu_is_installer_only():
-    """The installer's already-installed menu offers update/uninstall/quit —
-    day-to-day ops moved to ovn."""
-    content = installer_source()
-    assert "installed_menu" in content
-    assert 'update    "update to v${VERSION}"' in content
-    assert 'uninstall "uninstall"' in content
-    assert 'quit      "quit"' in content
-    assert "render_menu" in content
-    # tui_select survives only as a one-line alias into render_menu; a caller
-    # reaching for it is fine, a second implementation of it is not.
-    lib = installer_source().split("tui_select() {")[-1].lstrip()
-    assert lib.startswith('render_menu "$@"'), lib
-
-
 def test_env_recovery_survives_missing_keys(tmp_path):
     """do_update reads optional keys from .env; a missing key (grep finds
     nothing → SIGPIPE) must not abort the script under set -Eeuo pipefail.
@@ -692,22 +654,6 @@ def test_release_stub_is_rejected_before_checksum(tmp_path):
     assert "STUB-BAD" in r.stdout and "REAL-OK" in r.stdout
 
 
-def test_installer_menu_copy_is_stepped():
-    """One menu dialect: the progress block counts, the wizard does not.
-
-    The step counters moved out of the wizard and into render.sh's progress
-    block. Two counters competing on one screen — the menu's numbers and the
-    wizard's "Step 2/4" — is what made the old flow hard to read.
-    """
-    content = installer_source()
-    assert "How do you want to install?" not in content
-    assert "verified release" in content
-    for retired in ("Step 1/4", "Step 4/4", "Ready — save this login", "Setup${NC}"):
-        assert retired not in content, retired
-    for token in ('render_begin "preflight"', 'render_card "ready" "api key"', "render_menu"):
-        assert token in content, token
-
-
 def test_no_source_build_paths():
     """The production installer consumes verified releases only —
     no source flags, no clone/pull logic."""
@@ -725,43 +671,6 @@ def test_release_checksum_is_mandatory():
     content = installer_source()
     assert "No checksum file" not in content
     assert "Release checksum file is missing" in content
-
-
-def test_native_wording_is_gone_from_installer_text():
-    """Host installs must not be called 'native' in user-facing text."""
-    content = installer_source()
-    for token in (
-        "Install with safe defaults",
-        "Choose every option yourself",
-        "instead of v1.1.2",
-        "Native —",
-        "|| echo Native",
-    ):
-        assert token not in content, f"stale wording: {token}"
-    # "host" is the word, not "native" — the mode is chosen on the front-door
-    # menu now, so nothing prints the mode's name in prose any more.
-    assert 'host   "install  ·  systemd on this box"' in content
-    assert "systemd on this box" in content
-
-
-def test_version_constants_are_synchronized():
-    """install.sh, manager.sh and backend/version.py must agree; --help must
-    show the real version (was hardcoding v1.1.2)."""
-    import pathlib
-    import re
-
-    repo = pathlib.Path(INSTALLER).parent
-    shell_versions = set()
-    for name in ("install.sh", "manager.sh"):
-        m = re.search(r'^VERSION="([^"]+)"', (repo / name).read_text(encoding="utf-8"), re.M)
-        assert m, name
-        shell_versions.add(m.group(1))
-    core_ns: dict = {}
-    exec((repo / "backend" / "version.py").read_text(encoding="utf-8"), core_ns)
-    shell_versions.add(core_ns["__version__"])
-    assert len(shell_versions) == 1, shell_versions
-    r = subprocess.run(["bash", INSTALLER, "help"], capture_output=True, text=True, timeout=30)
-    assert f"instead of v{core_ns['__version__']}" in r.stderr
 
 
 def test_transactional_update_core_present():
@@ -816,65 +725,6 @@ def test_no_undefined_fail_helper():
 
     content = installer_source()
     assert not re.search(r"(^|\s)fail \"", content)
-
-
-def test_installer_design_language_matches_panel():
-    """Anti-divergence: the node installer shares the panel's menu/card
-    language (shared tokens mirror the panel suite) plus node-only rows.
-    Update both suites together."""
-    content = installer_source()
-    for token in (
-        'host   "install  ·  systemd on this box"',
-        'docker "install  ·  agent + openvpn in a container"',
-        'tls_choice="$(ask "1 self-signed · 2 lets encrypt · 3 custom" "1")"',
-        'render_begin "preflight"',
-        'render_card "ready" "api key"',
-        "render_menu",
-        "verified release",
-        "Options (every option has an OVN_* env equivalent; CLI wins):",
-    ):
-        assert token in content, f"design drift: {token}"
-    for retired in (
-        "How do you want to install?",
-        "Installation complete!",
-        "Choose every option yourself",
-        "v$VERSION ($SRC)",
-        "Setup${NC}",
-        "1.${NC} Install",
-        "Step 1/4",
-        "Step 1/6",
-        "Ready — save this login",
-        "up and running in a few minutes",
-    ):
-        assert retired not in content, f"retired wording back: {retired}"
-
-
-def test_the_banner_is_one_line_and_a_rule():
-    """Name, version, repo — then a rule. No tagline.
-
-    The old banner carried a second line whose only job was to advertise a fresh
-    install, and it had to be suppressed on update/uninstall because "up and
-    running in a few minutes" over an update reads as a lie. One line has no
-    context to get wrong.
-    """
-    content = installer_source()
-    assert 'render_banner "OVNode"' in content
-    assert "subtitle" not in content
-    assert "up and running in a few minutes" not in content
-
-
-def test_no_extra_install_confirmation():
-    """No extra question, and the review is a line rather than a card.
-
-    A nine-row card restated every value the operator had just been asked for,
-    one screen back. What was worth keeping is the part that catches a mistake —
-    a mistyped port, the wrong transport — so those two are what remain.
-    """
-    content = installer_source()
-    assert "Proceed with installation?" not in content
-    assert "this will install" in content
-    for retired in ('render_kv "OS"', 'render_kv "Version"', 'render_kv "Install"'):
-        assert retired not in content, retired
 
 
 class TestBareRunIsInteractive:

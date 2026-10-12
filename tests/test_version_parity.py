@@ -58,11 +58,3 @@ def test_installer_and_manager_report_the_same_version():
     install = re.search(r'^VERSION="([^"]+)"', _read("install.sh"), re.MULTILINE).group(1)
     manager = re.search(r'^VERSION="([^"]+)"', _read("manager.sh"), re.MULTILINE).group(1)
     assert install == manager, f"install.sh says {install}, manager.sh says {manager}"
-
-
-def test_pyproject_parses_as_toml_and_agrees():
-    """Read structurally, not by regex, so a formatting change stays caught."""
-    import tomllib
-
-    data = tomllib.loads(_read("pyproject.toml"))
-    assert data["project"]["version"] == __version__

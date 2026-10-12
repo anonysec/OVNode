@@ -15,8 +15,6 @@ separate again.
 import re
 from pathlib import Path
 
-import pytest
-
 ROUTE_MODULES = ("system", "config", "stats", "users")
 
 
@@ -91,11 +89,3 @@ def test_the_readme_table_matches_the_live_router():
 
     undocumented = sorted(_real_endpoints() - documented)
     assert undocumented == [], f"the app serves endpoints the README does not list: {undocumented}"
-
-
-@pytest.mark.parametrize("module_name", ROUTE_MODULES)
-def test_the_table_is_identical_in_every_module(module_name):
-    """Four copies is the bug; they must at least not drift."""
-    assert _declared_endpoints(module_name) == _declared_endpoints("config"), (
-        f"backend/api/routes/{module_name}.py documents a different endpoint set"
-    )

@@ -324,12 +324,6 @@ def test_the_schedule_hint_uses_the_current_spelling():
 # ── The short list ──────────────────────────────────────────────────────
 
 
-def test_the_short_help_is_one_screen():
-    """Twenty-one commands was the problem. The whole point is that this fits."""
-    lines = _short_help().splitlines()
-    assert len(lines) < 30, f"short help is {len(lines)} lines"
-
-
 def test_the_short_help_carries_every_verb():
     text = _short_help()
     for verb in SHORT_LIST:

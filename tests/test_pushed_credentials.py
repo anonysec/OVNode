@@ -116,4 +116,3 @@ def test_legacy_create_without_cert_keeps_state_only(tmp_path, monkeypatch):
     assert _read(os.path.join(user_dir, "state")) == "limit=4\ndisabled=0\n"
     assert not os.path.exists(os.path.join(user_dir, "cert.pem"))
     assert not os.path.exists(os.path.join(user_dir, "key.pem"))
-
