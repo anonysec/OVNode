@@ -83,6 +83,16 @@ def test_script_fetches_nothing():
     assert not re.search(r"\|\s*(?:ba)?sh\b", text), "pipe-to-shell found"
 
 
+def test_health_probe_is_https():
+    """The agent serves TLS only, so a http:// probe can never succeed."""
+    text = SCRIPT.read_text(encoding="utf-8")
+    probe = next(line for line in text.splitlines() if "sync/health" in line)
+    assert "https://127.0.0.1" in probe, probe
+    # -k: the node's PKI cert is self-signed; the probe checks liveness only.
+    assert "-k" in probe, probe
+    assert "http://" not in probe, probe
+
+
 def test_rsync_scope_and_env_safety():
     """Junk stays out of dest; the dest .env is created, never overwritten."""
     text = SCRIPT.read_text(encoding="utf-8")
