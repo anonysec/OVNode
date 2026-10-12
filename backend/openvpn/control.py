@@ -282,7 +282,7 @@ def _rollback_changed_files(
     return found
 
 
-def change_config(request) -> bool:
+def change_config(request, classification: dict | None = None) -> bool:
     """Apply tunnel address / protocol / port pushed by the panel.
 
     Rewrites server.conf (port/proto, panel-managed DNS push lines and IPv6
@@ -298,6 +298,12 @@ def change_config(request) -> bool:
     - template-only change (tunnel address) → no daemon signal at all;
       the template is only read when generating .ovpn profiles.
     - extra-ports change (template + NAT redirects, no rebind) → SIGHUP.
+
+    Pass a dict as ``classification`` to receive the change kind for the
+    panel cursor: ``restart_required`` (structural — port/proto/tunnel
+    address) and ``hot_reload`` (hot — DNS/IPv6/extra ports). Filled only
+    on success; derived from the same snapshot diff that drives the
+    restart path, so it can never disagree with what was applied.
     """
     openvpn_root = os.getenv("OVNODE_OPENVPN_ROOT", "/etc/openvpn")
     setting_file = os.path.join(openvpn_root, "server", "server.conf")
@@ -366,19 +372,23 @@ def change_config(request) -> bool:
         # Collapse the old DNS push lines into the desired list, and persist
         # the state file only after server.conf was written.
         dns_desired: list[str] | None = None
+        dns_changed = False
         if dns_provided:
             dns_desired = dns_policy.resolve_desired(config, valid_dns1, valid_dns2)
-            new_config, _ = dns_policy.rewrite_push_lines(new_config, dns_desired)
+            new_config, dns_changed = dns_policy.rewrite_push_lines(new_config, dns_desired)
         # Collapse the generated IPv6 directives into the desired block. A
         # partial push keeps the other field's current value, and toggling
         # only rewrites the file — never a rebind, so the SIGHUP path applies.
         ipv6_desired: tuple[bool, str] | None = None
+        ipv6_changed = False
         if ipv6_enabled is not None or valid_ipv6_prefix is not None:
             current_enabled, current_prefix = ipv6_policy.effective(config)
             desired_enabled = current_enabled if ipv6_enabled is None else bool(ipv6_enabled)
             desired_prefix = current_prefix if valid_ipv6_prefix is None else valid_ipv6_prefix
             ipv6_desired = (desired_enabled, desired_prefix)
-            new_config, _ = ipv6_policy.rewrite_block(new_config, desired_enabled, desired_prefix)
+            new_config, ipv6_changed = ipv6_policy.rewrite_block(
+                new_config, desired_enabled, desired_prefix
+            )
         conf_changed = new_config != config
         # Snapshot before any state file is rewritten: a failed rebind rolls
         # server.conf back, and the state must not be left describing a config
@@ -409,6 +419,7 @@ def change_config(request) -> bool:
         with open(template_file) as file:
             template = file.read()
         original_template = template
+        old_tunnel_addr = ports_policy.remote_address(template)
         tunnel_addr = request.tunnel_address.strip() if request.tunnel_address else ""
         # Reject regex metacharacters that could alter the substitution below.
         _TUNNEL_RE = re.compile(r"^[A-Za-z0-9._:-]+$")
@@ -427,6 +438,9 @@ def change_config(request) -> bool:
 
         template = re.sub(r"^proto\s+\S+", f"proto {proto}", template, flags=re.MULTILINE)
         tmpl_changed = template != original_template
+        if classification is not None:
+            classification["restart_required"] = changed or tunnel_addr != old_tunnel_addr
+            classification["hot_reload"] = dns_changed or ipv6_changed or extras_changed
         if tmpl_changed:
             _atomic_write(template_file, template)
 

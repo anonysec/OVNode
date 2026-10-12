@@ -67,13 +67,21 @@ async def update_config(
     request: SetSettingsModel,
     api_key: str = Depends(check_api_key),
 ):
-    """Apply VPN endpoint settings pushed by the panel (update_config())."""
+    """Apply VPN endpoint settings pushed by the panel (update_config()).
+
+    ``data`` carries the applied change kind — ``restart_required``
+    (structural) vs ``hot_reload`` (hot) — so the panel cursor can
+    sequence around restarts without re-deriving the diff itself.
+    """
     if not request.set_new_setting:
         return ResponseModel(success=True, msg="No changes requested")
-    change_settings = change_config(request)
+    classification: dict = {}
+    change_settings = change_config(request, classification)
     if not change_settings:
         return ResponseModel(success=False, msg="Failed to change settings")
-    return ResponseModel(success=True, msg="Configuration updated successfully")
+    return ResponseModel(
+        success=True, msg="Configuration updated successfully", data=classification
+    )
 
 
 @router.post("/update", response_model=ResponseModel)
