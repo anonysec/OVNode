@@ -22,6 +22,7 @@ dev = [
     # httpx present it emits a StarletteDeprecationWarning (same reasoning
     # as OVManager's backend dependencies).
     "httpx2>=0.0.4",
+    "pytest-xdist>=3.6",
     "ruff>=0.16",
 ]
 

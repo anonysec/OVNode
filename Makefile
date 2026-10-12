@@ -6,11 +6,10 @@
 setup:
 	uv sync --frozen
 
-# The full suite: 51s. This venv has no pytest-xdist, so it is serial — adding
-# it would help only on a box with more than one core to spare. Run before a
-# commit, not on every save.
+# The full suite: parallel via pytest-xdist. Run before a commit, not on
+# every save.
 test:
-	uv run pytest tests/ -q
+	uv run pytest tests/ -q -n auto
 
 # The inner loop. 12s against 51s, covering everything manager.sh and
 # scripts/lib/ print or dispatch — which is nearly every change to either.
