@@ -12,9 +12,33 @@ on:
   workflow_dispatch:
 
 jobs:
-  # No test gate here: ci.yml runs the same suite on every push/PR, and a
-  # second copy of the job was a second place for the two to drift.
+  # The release must not ship untested code. This repeats ci.yml's suite
+  # rather than gating on workflow_run: a release can be published without a
+  # CI run on the same commit, and a workflow_run gate that never fires is a
+  # gate that never blocks. One test gate per release, this job.
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: astral-sh/setup-uv@v5
+        with:
+          enable-cache: true
+      - name: System dependencies
+        run: |
+          sudo apt-get update -qq
+          sudo apt-get install -y -qq openvpn easy-rsa iptables iproute2 logrotate
+      - run: uv sync --extra dev
+      - name: Create .env for tests
+        run: |
+          printf 'API_KEY=test_ci_key_for_import_only\n' > .env
+      - name: Shell syntax
+        run: bash -n install.sh manager.sh scripts/lib/*.sh
+      - name: Tests
+        # --no-sync / -rs / -n auto: the same invocation as ci.yml.
+        run: uv run --no-sync pytest tests/ -q -rs -n auto
+
   assets:
+    needs: test
     runs-on: ubuntu-latest
     permissions:
       contents: write
