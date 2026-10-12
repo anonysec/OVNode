@@ -131,7 +131,7 @@ UNIT
     systemctl restart ovnode.service
     local port
     port="$(grep -E '^SERVICE_PORT=' "$DEST/.env" 2>/dev/null | head -1 | cut -d= -f2- || true)"
-    curl -fsS -m 3 "http://127.0.0.1:${port:-2083}/health" >/dev/null 2>&1 \
+    curl -fsS -m 3 "http://127.0.0.1:${port:-2083}/sync/health" >/dev/null 2>&1 \
         || render_warn "health not confirmed yet (agent may still be starting) — fail-open, check: systemctl status ovnode.service"
     render_ok "Installed at $DEST — rerun this script to update"
 }
