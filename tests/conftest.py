@@ -19,6 +19,7 @@ import pty
 import subprocess
 import sys
 import tempfile
+import time
 from pathlib import Path
 
 import pytest
@@ -96,6 +97,7 @@ def _snapshot() -> dict:
 # N worker errors (observed: 2 errors under -n auto). PYTEST_XDIST_WORKER is
 # set by xdist before conftest loads, so the worker check cannot race hook
 # registration. One window around the whole run, one verdict.
+_AMBIENT_WINDOW = 12.0
 
 
 def pytest_configure(config):
@@ -114,6 +116,19 @@ def pytest_sessionfinish(session, exitstatus):
         return
     after = _snapshot()
     changed = [p for p in before if before[p] != after[p]]
+    if not changed:
+        return
+    # A host that runs the product writes to the same paths the suite must not
+    # touch: this box's OpenVPN rewrites /etc/openvpn/server/status.log every
+    # 10s, so a run here was always "dirty" whatever the tests did. One write
+    # from a test is stable when we look again; the daemon's is not — so give
+    # the changed paths a window before convicting the suite. The window only
+    # runs on a run that is about to be failed anyway.
+    # ponytail: fixed window — a host writer slower than it is still blamed on
+    # the suite; raise it if a slower one shows up.
+    time.sleep(_AMBIENT_WINDOW)
+    final = _snapshot()
+    changed = [p for p in changed if final.get(p) == after.get(p)]
     if not changed:
         return
     # Straight to stderr: the run's summary has not printed yet at this
@@ -146,6 +161,34 @@ class BashHarness:
         self._lib = lib
         self._manager = manager
         self._cache: dict[tuple, object] = {}
+        # manager.sh reaches for the host: `ovn backup` calls backup_dir()
+        # (which wrote /var/backups, and pruned the node's real tarballs there)
+        # and every service verb calls systemctl — `ovn restart` really
+        # restarted this machine's OpenVPN. Neither may happen from a test, so
+        # the manager runs get a stub systemctl (its calls land in
+        # systemctl_log) first on PATH, a stub curl for wait_health, and a
+        # backup root of their own under /tmp.
+        self.stub_bin = Path(tempfile.mkdtemp(prefix="ovn-stub-bin-"))
+        self.systemctl_log = self.stub_bin / "systemctl-calls.log"
+        (self.stub_bin / "systemctl").write_text(
+            f'#!/bin/sh\nprintf "%s\\n" "$*" >> "{self.systemctl_log}"\nexit 0\n',
+            encoding="utf-8",
+        )
+        (self.stub_bin / "curl").write_text("#!/bin/sh\nexit 0\n", encoding="utf-8")
+        for name in ("systemctl", "curl"):
+            (self.stub_bin / name).chmod(0o755)
+        self.backup_root = Path(tempfile.mkdtemp(prefix="ovn-backup-root-"))
+
+    @property
+    def manager_env(self) -> dict:
+        """The env manager.sh runs with: fixed settings, stub tools, tmp root."""
+        return {
+            **os.environ,
+            "OVN_APP_DIR": "/nonexistent",
+            "CI": "1",
+            "PATH": f"{self.stub_bin}:{os.environ['PATH']}",
+            "OVN_BACKUP_ROOT": str(self.backup_root),
+        }
 
     def probe(self, script: str, *, promptable: bool) -> str:
         """A bash file with the libs sourced and one snippet appended."""
@@ -237,16 +280,21 @@ class BashHarness:
             self._cache[key] = raw
         return self._cache[key]  # type: ignore[return-value]
 
-    def manager(self, *args: str, check: bool = True) -> str:
-        """Run manager.sh with the suite's fixed env; return stdout + stderr."""
-        key = ("manager", args)
+    def manager(self, *args: str, check: bool = True, env: dict | None = None) -> str:
+        """Run manager.sh with the suite's fixed env; return stdout + stderr.
+
+        ``env`` adds to (never replaces wholesale) that env, so a caller can
+        point OVN_APP_DIR at a sandbox without losing the stub PATH.
+        """
+        extra = env or {}
+        key = ("manager", args, tuple(sorted(extra.items())))
         if key not in self._cache:
             out = subprocess.run(
                 ["bash", str(self._manager), *args],
                 capture_output=True,
                 text=True,
                 timeout=60,
-                env={**os.environ, "OVN_APP_DIR": "/nonexistent", "CI": "1"},
+                env={**self.manager_env, **extra},
             )
             self._cache[key] = (out.returncode, out.stdout + out.stderr)
         rc, combined = self._cache[key]  # type: ignore[misc]

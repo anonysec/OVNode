@@ -58,7 +58,10 @@ def test_a_clean_run_keeps_its_exit_status(monkeypatch):
 
 def test_a_changed_path_fails_the_run(monkeypatch, capsys):
     monkeypatch.delenv("PYTEST_XDIST_WORKER", raising=False)
-    snapshots = iter([{"p": "before"}, {"p": "after"}])
+    monkeypatch.setattr(conftest.time, "sleep", lambda _s: None)
+    # before, after, and the re-check: a write that has stopped moving is the
+    # suite's own.
+    snapshots = iter([{"p": "before"}, {"p": "after"}, {"p": "after"}])
     monkeypatch.setattr(conftest, "_snapshot", lambda: next(snapshots))
     config = _Config()
     conftest.pytest_configure(config)
@@ -67,6 +70,21 @@ def test_a_changed_path_fails_the_run(monkeypatch, capsys):
     assert session.exitstatus == 1
     # The verdict must be visible in the run's output, not only in the code.
     assert "modified real system paths" in capsys.readouterr().err
+
+
+def test_a_path_the_host_keeps_rewriting_is_not_the_suites(monkeypatch, capsys):
+    """OpenVPN rewrites status.log every 10s; a run on such a box must not be
+    failed for the daemon's own writing."""
+    monkeypatch.delenv("PYTEST_XDIST_WORKER", raising=False)
+    monkeypatch.setattr(conftest.time, "sleep", lambda _s: None)
+    snapshots = iter([{"p": "before"}, {"p": "after"}, {"p": "still moving"}])
+    monkeypatch.setattr(conftest, "_snapshot", lambda: next(snapshots))
+    config = _Config()
+    conftest.pytest_configure(config)
+    session = _Session(config)
+    conftest.pytest_sessionfinish(session, 0)
+    assert session.exitstatus == 0
+    assert "modified real system paths" not in capsys.readouterr().err
 
 
 def test_a_worker_session_is_never_failed_by_the_guard(monkeypatch):

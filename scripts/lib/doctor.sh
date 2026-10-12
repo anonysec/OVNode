@@ -128,7 +128,7 @@ chk_cert() {
 
 chk_backup() {
     local newest age
-    newest="$(ls -t /var/backups/node-*.tar.gz 2>/dev/null | head -1 || true)"
+    newest="$(ls -t "${OVN_BACKUP_ROOT:-/var/backups}"/node-*.tar.gz 2>/dev/null | head -1 || true)"
     [[ -n "$newest" ]] || { printf 'none yet'; return 1; }
     age=$(( ($(date +%s) - $(stat -c %Y "$newest" 2>/dev/null || echo 0)) / 86400 ))
     printf '%sd old' "$age"

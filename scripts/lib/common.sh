@@ -141,13 +141,17 @@ confirm_word() {
 
 is_port() { [[ "$1" =~ ^[0-9]+$ ]] && (( $1 >= 1 && $1 <= 65535 )); }
 
+# backup_dir() and the code snapshots below share one root. OVN_BACKUP_ROOT
+# exists for the test suite and for an off-box backup target; unset, every
+# tarball lands where it always has — /var/backups.
 backup_dir() {
     local src="$1" label="$2"
     [[ -d "$src" ]] || return 0
-    mkdir -p /var/backups
+    local root="${OVN_BACKUP_ROOT:-/var/backups}"
+    mkdir -p "$root"
     local stamp; stamp="$(date +%Y%m%d-%H%M%S)"
     local base; base="$(basename "$src")"
-    local file="/var/backups/${label}-${base}-${stamp}.tar.gz"
+    local file="$root/${label}-${base}-${stamp}.tar.gz"
     # Contains the PKI (CA private key) and, in Docker mode, the compose file
     # with the API key: root-only from the start, not the caller's umask.
     local old_umask; old_umask="$(umask)"
@@ -497,11 +501,12 @@ resolve_host() {
 snapshot_code() {  # snapshot_code <dir> <label> [keep=2] → prints the file
     local dir="$1" label="$2" keep="${3:-2}"
     [[ -d "$dir" ]] || die "Not installed ($dir missing)" "$EX_ERROR"
-    mkdir -p /var/backups
+    local root="${OVN_BACKUP_ROOT:-/var/backups}"
+    mkdir -p "$root"
     local stamp base file
     stamp="$(date +%Y%m%d-%H%M%S)"
     base="$(basename "$dir")"
-    file="/var/backups/${label}-code-${base}-${stamp}.tar.gz"
+    file="$root/${label}-code-${base}-${stamp}.tar.gz"
     tar -czf "$file" -C "$(dirname "$dir")" "$base" 2>/dev/null \
         || die "Could not snapshot $dir" "$EX_ERROR"
     render_ok "snapshot  $file"
@@ -510,7 +515,7 @@ snapshot_code() {  # snapshot_code <dir> <label> [keep=2] → prints the file
     local old=() line
     while IFS= read -r line; do
         [[ -n "$line" ]] && old+=("$line")
-    done < <(ls -t /var/backups/"${label}"-code-*.tar.gz 2>/dev/null | tail -n +$((keep + 1)) || true)
+    done < <(ls -t "$root/${label}"-code-*.tar.gz 2>/dev/null | tail -n +$((keep + 1)) || true)
     if (( ${#old[@]} )); then
         rm -f -- "${old[@]}"
     fi
@@ -518,7 +523,7 @@ snapshot_code() {  # snapshot_code <dir> <label> [keep=2] → prints the file
 }
 
 latest_snapshot() {  # latest_snapshot <label> → prints newest code snapshot or empty
-    ls -t /var/backups/"$1"-code-*.tar.gz 2>/dev/null | head -1 || true
+    ls -t "${OVN_BACKUP_ROOT:-/var/backups}/$1"-code-*.tar.gz 2>/dev/null | head -1 || true
 }
 
 # ── Host / install-mode probes ─────────────────────────────────────────
