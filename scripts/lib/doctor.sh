@@ -85,9 +85,17 @@ chk_agent() {
 }
 
 chk_vpn() {
-    local a
+    local a legacy
     if is_docker_node; then printf 'in-container'; return 0; fi
-    if has_systemd; then a="$(systemctl is-active openvpn-server@server 2>/dev/null || echo unknown)"
+    if has_systemd; then
+        # The dedicated unit install.sh writes first; openvpn-server@server is
+        # the legacy distro unit, reported only when it is the one running.
+        a="$(systemctl is-active "${OPENVPN_SERVICE:-ovnode-openvpn.service}" 2>/dev/null || true)"
+        if [[ "$a" != "active" ]]; then
+            legacy="$(systemctl is-active openvpn-server@server 2>/dev/null || true)"
+            [[ "$legacy" == "active" ]] && a="$legacy"
+        fi
+        : "${a:=unknown}"
     else printf 'no systemd'; return 0; fi
     printf '%s' "$a"
     [[ "$a" == "active" ]]

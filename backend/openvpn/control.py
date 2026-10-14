@@ -4,7 +4,8 @@
 """OpenVPN service management for OVNode.
 
 Restart strategy (in order):
-1. systemd   → ``systemctl restart openvpn-server@server``
+1. systemd   → ``systemctl restart ovnode-openvpn.service``, then the legacy
+   distro unit ``openvpn-server@server`` as a fallback
 2. OpenRC    → ``rc-service openvpn restart``
 3. PID file  → SIGHUP to the PID written by ``writepid`` (works in Docker)
 4. pgrep     → SIGHUP to the matching openvpn master process
@@ -32,6 +33,10 @@ logger = logging.getLogger("ovnode.openvpn")
 _OPENVPN_ROOT = os.getenv("OVNODE_OPENVPN_ROOT", "/etc/openvpn")
 SERVER_CONF = os.path.join(_OPENVPN_ROOT, "server", "server.conf")
 PID_FILE = os.path.join(_OPENVPN_ROOT, "server", "ovnode.pid")
+
+# install.sh/manager.sh write ovnode-openvpn.service; openvpn-server@server is
+# the distro unit older installs (and hosts without our unit) still run.
+SYSTEMD_UNITS = ("ovnode-openvpn.service", "openvpn-server@server")
 
 
 def openvpn_is_running() -> bool:
@@ -117,21 +122,22 @@ def restart_openvpn() -> bool:
     store.fix_runtime_permissions()
     logger.info("Restarting OpenVPN service...")
 
-    # 1) systemd (resolve binary instead of hardcoding /usr/bin path)
+    # 1) systemd: dedicated unit first, legacy distro unit as fallback
     systemctl = shutil.which("systemctl")
     if systemctl:
-        try:
-            subprocess.run(
-                [systemctl, "restart", "openvpn-server@server"],
-                check=True,
-                timeout=30,
-            )
-            logger.info("OpenVPN restarted via systemctl.")
-            return True
-        except subprocess.TimeoutExpired:
-            logger.error("Timeout restarting OpenVPN via systemctl")
-        except Exception as e:
-            logger.warning("systemctl restart failed (%s); trying next method.", e)
+        for unit in SYSTEMD_UNITS:
+            try:
+                subprocess.run(
+                    [systemctl, "restart", unit],
+                    check=True,
+                    timeout=30,
+                )
+                logger.info("OpenVPN restarted via systemctl (%s).", unit)
+                return True
+            except subprocess.TimeoutExpired:
+                logger.error("Timeout restarting OpenVPN via systemctl (%s)", unit)
+            except Exception as e:
+                logger.warning("systemctl restart %s failed (%s); trying next method.", unit, e)
     else:
         logger.info("systemctl not found (Docker?); trying next method.")
 

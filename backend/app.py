@@ -85,7 +85,7 @@ async def lifespan(app: FastAPI):
     else:
         logger.warning(
             "OpenVPN server is not running — start it with: "
-            "systemctl restart openvpn-server@server (or check /dev/net/tun)"
+            "systemctl restart ovnode-openvpn.service (or check /dev/net/tun)"
         )
     yield
     logger.info("OV-Node shutting down.")
