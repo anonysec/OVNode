@@ -10,7 +10,6 @@ from backend.logger import logger
 from backend.openvpn import dns as dns_policy
 from backend.openvpn import ipv6 as ipv6_policy
 from backend.openvpn import pki as _pki
-from backend.openvpn import ports as ports_policy
 
 
 def ensure_mgmt_password() -> str:
@@ -75,30 +74,6 @@ def _fresh_proto() -> str:
     return "udp" if choice.startswith("udp") else "tcp"
 
 
-def _panel_bypass_line() -> str:
-    """The net_gateway host-route push keeping the panel reachable under
-    redirect-gateway def1. Endpoint = same address as the client remote lines:
-    live template first, else TUNNEL_ADDRESS, else this node's own address.
-    """
-    addr = ""
-    if os.path.exists(_pki.CLIENT_TEMPLATE):
-        try:
-            with open(_pki.CLIENT_TEMPLATE, encoding="utf-8") as f:
-                addr = ports_policy.remote_address(f.read()) or ""
-        except OSError:
-            addr = ""
-    if addr == "UPDATE_VIA_PANEL":
-        addr = ""
-    addr = addr or os.getenv("TUNNEL_ADDRESS", "").strip() or _pki._node_public_ip()
-    return f'push "route {addr} 255.255.255.255 net_gateway"'
-
-
-def _is_panel_bypass(line: str) -> bool:
-    """Shape-match (not address-match) so a stale endpoint can be refreshed."""
-    s = line.strip()
-    return s.startswith('push "route ') and s.endswith(' 255.255.255.255 net_gateway"')
-
-
 def _fresh_server_conf() -> str:
     """Modern hardened server.conf template for new installs."""
     _pki.ensure_mgmt_password()
@@ -120,8 +95,6 @@ def _fresh_server_conf() -> str:
         # forever (every CN ever seen), slowing pool allocation on restart.
         f"ifconfig-pool-persist {os.path.join(_pki._OPENVPN_ROOT, 'server', 'ipp.txt')} 600",
         'push "redirect-gateway def1 bypass-dhcp"',
-        # Keep the panel reachable while the tunnel owns the default route.
-        _panel_bypass_line(),
         *dns_lines,
         'push "block-outside-dns"',
     ]
@@ -240,16 +213,12 @@ def _ensure_server_conf() -> bool:
         # connect script and traffic parser.
         if not any(ln.strip().startswith("status ") for ln in lines):
             to_add.append(f"status {os.path.join(_pki._OPENVPN_ROOT, 'server', 'status.log')} 5")
-        bypass_line = _panel_bypass_line()
-        if not any(_is_panel_bypass(ln) for ln in lines):
-            to_add.append(bypass_line)
         # A `dh <path>` pointing at a missing file (e.g. after a PKI
         # re-init) becomes `dh none` so the config keeps loading; existing
         # files are left alone. An outdated status-version is upgraded in
         # place, since the hooks parse the tab-separated version 3.
         replaced_dh = False
         replaced_status = False
-        replaced_bypass = False
         removed_mgmt_client = False
         upgraded_mgmt = False
         canonical_mgmt = _pki.mgmt_line()
@@ -275,12 +244,6 @@ def _ensure_server_conf() -> bool:
                 replaced_status = True
                 to_add = [d for d in to_add if d != "status-version 3"]
                 continue
-            # A stale endpoint (panel moved the address) is refreshed in
-            # place — never a second bypass stacked next to the old one.
-            if _is_panel_bypass(stripped) and stripped != bypass_line:
-                out_lines.append(bypass_line)
-                replaced_bypass = True
-                continue
             if (
                 len(parts) >= 2
                 and parts[0] == "dh"
@@ -295,7 +258,6 @@ def _ensure_server_conf() -> bool:
         changed = (
             replaced_dh
             or replaced_status
-            or replaced_bypass
             or removed_mgmt_client
             or upgraded_mgmt
             or repointed_hooks
