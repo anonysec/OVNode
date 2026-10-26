@@ -9,7 +9,7 @@ The VPN server half of an [OVManager](https://github.com/anonysec/OVManager) dep
   [![Version](https://img.shields.io/badge/version-1.3.0-blue)](CHANGELOG.md)
   [![License: MIT](https://img.shields.io/badge/License-MIT-green.svg)](LICENSE)
   [![CI](https://github.com/anonysec/OVNode/actions/workflows/ci.yml/badge.svg)](https://github.com/anonysec/OVNode/actions/workflows/ci.yml)
-  [![Python](https://img.shields.io/badge/python-3.12%2B-3776ab?logo=python&logoColor=white)](pyproject.toml)
+  [![Go](https://img.shields.io/badge/go-1.27-00ADD8?logo=go&logoColor=white)](go.mod)
   [![Runtime](https://img.shields.io/badge/runtime-systemd%20%7C%20docker-555555)](#-install)
 </div>
 
@@ -189,7 +189,7 @@ All traffic is panel → node, authenticated with the node's API key in a `key` 
 | `POST /sync/update` | `trigger_update` | Ask the node to run its own self-update |
 | `GET /sync/logs` | node log viewer | `level` (default `WARNING`) and `limit` (default 200) |
 
-That is 18 routes: `config.py` (5), `users.py` (8), `system.py` (3) and `stats.py` (2). The same list lives in each route module's docstring, and both copies are pinned against the live router by `tests/test_sync_contract_surface.py`.
+The full route list lives in `internal/httpapi/contract.json` and is pinned by `internal/httpapi/contract_test.go`.
 
 Identity: the OpenVPN CN is the panel's numeric user id (`str(user.id)`), and the display name is kept in `users/<cn>/name` so usage can be keyed by username, as the panel's traffic collector expects.
 
@@ -287,8 +287,8 @@ In this repository:
 git clone https://github.com/anonysec/OVNode.git /opt/ovnode
 cd /opt/ovnode
 cp .env.example .env   # REQUIRED: set API_KEY, min 16 chars
-pip install uv && uv sync
-uv run main.py
+go build ./cmd/ovnode
+./ovnode serve
 ```
 
 The production installer consumes verified release archives only, so a source checkout is a development path rather than a deployment one. Manual mode runs the API alone: TLS (through `ssl_certfile`/`ssl_keyfile` in `.env`), IP forwarding and NAT, the firewall, service supervision and the OpenVPN daemon are yours to configure — the installer does all of that.

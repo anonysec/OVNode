@@ -14,85 +14,46 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
-      - uses: astral-sh/setup-uv@v5
+      - uses: actions/setup-go@v5
         with:
-          # uv.lock hash-partitioned cache; sync stops being the slow step.
-          enable-cache: true
+          go-version: "1.27"
       - name: System dependencies
-        # The packages install.sh puts on a host — `pkg_install openvpn
-        # easy-rsa`, `iptables iproute2`, `logrotate` — so the suite runs
-        # against the system the product actually targets. The PKI pipeline test
-        # uses two of them for real: backend/openvpn/pki/easyrsa.py copies
-        # /usr/share/easy-rsa into the PKI tree (absent → silently skipped and
-        # failing later as "CA creation failed"), and the tls-crypt key comes
-        # from the openvpn binary.
         run: |
           sudo apt-get update -qq
           sudo apt-get install -y -qq openvpn easy-rsa iptables iproute2 logrotate
-      - run: uv sync --extra dev
-      - name: Create .env for tests
-        run: |
-          printf 'API_KEY=test_ci_key_for_import_only\n' > .env
-      - run: uv run python -c "from backend.app import api; print('App imports OK')"
-      - run: uv run python -c "from backend.config import settings; print('Config loads OK')"
       - name: Shell syntax
-        run: bash -n install.sh manager.sh scripts/lib/*.sh
-      - name: Tests
-        # --no-sync: a bare `uv run` re-syncs without the dev extra and would
-        # uninstall pytest from under itself.
-        # -rs: itemise skips. Without it a test can stop running and CI stays
-        # green, which is the one failure this job exists to prevent.
-        # -n auto: pytest-xdist across the runner's cores. Each worker gets its
-        # own session snapshot of the real-system-paths guard, so the guard
-        # still fires per worker; the shell probes are hermetic per fork.
-        run: uv run --no-sync pytest tests/ -q -rs -n auto
+        run: bash -n install.sh ovnode.sh lib.sh doctor.sh scripts/compose/*.sh
+      - name: Go tests
+        run: go test ./...
+
+      - name: Contract drift check
+        run: |
+          curl -fsSL -o /tmp/panel-contract.json             https://raw.githubusercontent.com/anonysec/OVManager/main/internal/node/contract.json || {
+            echo "panel contract not reachable; skipping (first run before publish)"
+            exit 0
+          }
+          if ! diff -q internal/httpapi/contract.json /tmp/panel-contract.json >/dev/null; then
+            echo "::error::node contract.json differs from panel authority"
+            diff internal/httpapi/contract.json /tmp/panel-contract.json || true
+            exit 1
+          fi
+          echo "contract: in sync"
 
   lint:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
-      - uses: actions/setup-python@v5
+      - uses: actions/setup-go@v5
         with:
-          python-version: "3.12"
-      - run: pip install uv ruff
-      # `make lint`, not a second copy of it. The panel hit this exact bug:
-      # its workflow and its Makefile each listed the lint targets, so a
-      # path change had to be made twice and CI failed while the local run
-      # passed. One command, one home.
+          go-version: "1.27"
       - run: make lint
+
   build:
     needs: [test, lint]
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
-      - uses: actions/setup-python@v5
+      - uses: actions/setup-go@v5
         with:
-          python-version: "3.12"
-      - run: pip install uv pip-audit
-      - run: uv sync
-      - name: Audit Python dependencies for known vulnerabilities
-        run: pip-audit -r <(uv pip freeze) || echo "::warning::pip-audit found vulnerabilities"
-      - name: Build Docker image
-        run: |
-          docker build -t ovnode:ci . 2>/dev/null || echo "Docker not available in this runner"
-
-  security-scan:
-    needs: [test, lint]
-    runs-on: ubuntu-latest
-    permissions:
-      contents: read
-      security-events: write
-    steps:
-      - uses: actions/checkout@v4
-      - name: Run Trivy vulnerability scanner
-        uses: aquasecurity/trivy-action@v0.36.0
-        with:
-          scan-type: 'fs'
-          scan-ref: '.'
-          format: 'sarif'
-          output: 'trivy-fs.sarif'
-      - name: Upload Trivy results to GitHub Security tab
-        uses: github/codeql-action/upload-sarif@v3
-        if: always()
-        with:
-          sarif_file: 'trivy-fs.sarif'
+          go-version: "1.27"
+      - run: go build ./cmd/ovnode

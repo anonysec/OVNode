@@ -1,48 +1,35 @@
 # Copyright (c) 2026 anonysec
 # SPDX-License-Identifier: MIT
 
-.PHONY: setup test check check-cli check-bash lint format verify openapi clean
+.PHONY: setup test check check-cli check-bash lint format verify clean
 
 setup:
-	uv sync --frozen
+	go mod download
 
-# The full suite: parallel via pytest-xdist. Run before a commit, not on
-# every save.
 test:
-	uv run pytest tests/ -q -n auto
+	go test ./...
 
-# The inner loop. 12s against 51s, covering everything manager.sh and
-# scripts/lib/ print or dispatch — which is nearly every change to either.
-check: check-cli check-bash
+# Every shell file in the tree, found rather than listed: a list drifts and a
+# file that escaped the check is a file nobody checked.
+SHELL_FILES = find . -name '*.sh' -not -path './.git/*' -not -path './.slim/*' -not -path './data/*'
 
-check-cli:
-	uv run pytest -q -p no:cacheprovider \
-	  tests/test_cli_shape.py tests/test_manager_sh.py
-
+check: check-bash
 check-bash:
-	uv run pytest -q -p no:cacheprovider \
-	  tests/test_ui_output.py tests/test_no_duplicate_functions.py
+	@$(SHELL_FILES) -exec bash -n {} \;
+	@echo "bash syntax OK"
 
 lint:
-	# --output-format=github is what puts findings on the PR diff as inline
-	# annotations. It was only on the CI copy of this command, so calling
-	# `make lint` from the workflow would have silently dropped them.
-	ruff check backend/ tests/ --output-format=github
-	ruff format --check backend/ tests/
-	bash -n install.sh && bash -n manager.sh
-	for f in scripts/lib/*.sh; do bash -n "$$f" || exit 1; done
+	@$(SHELL_FILES) -exec bash -n {} \;
+	@out="$$(gofmt -l .)"; if [ -n "$$out" ]; then echo "gofmt: not formatted:"; echo "$$out"; exit 1; fi
+	go vet ./...
 
 format:
-	ruff format backend/
-	ruff check --fix backend/
+	gofmt -w .
 
 verify: lint
-	uv run python -c "from backend.app import api; print('App imports OK')"
-	uv run python -c "from backend.config import settings; print('Config loads OK')"
-
-openapi:
-	uv run python scripts/export_openapi.py
+	go run ./cmd/ovnode version
+	@echo "Version parity: binary reports above"
 
 clean:
-	rm -rf .pytest_cache .ruff_cache
-	find backend tests -name '__pycache__' -type d -prune -exec rm -rf {} +
+	rm -f ovnode
+	rm -rf out

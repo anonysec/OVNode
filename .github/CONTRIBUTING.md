@@ -27,7 +27,7 @@ sudo apt-get install -y openvpn easy-rsa iptables iproute2 logrotate
 .venv/bin/python -m pytest tests/ -q          # 343 passed, 1 skipped
 .venv/bin/ruff check backend tests
 .venv/bin/ruff format --check backend tests
-bash -n install.sh manager.sh scripts/lib/*.sh
+bash -n install.sh ovnode.sh lib.sh doctor.sh scripts/compose/*.sh
 ```
 
 All four must pass; CI runs the same suite.
@@ -41,8 +41,8 @@ root and fails in CI is worse than no test.
 
 - **Comments must earn their place.** Existing ones explain a non-obvious tradeoff
   or a bug that was actually hit. Match that; do not narrate what the code says.
-- **`scripts/lib/*.sh` is the only definition of a shared shell helper.**
-  `install.sh` and `manager.sh` source it. Do not copy a function into either.
+- **`lib.sh` is the only definition of a shared shell helper.**
+  `install.sh` and `ovnode.sh` source it. Do not copy a function into either.
 - **A read-only command that cannot read `.env` must say so.** Never fall back to
   a default that looks like data — plausible values you failed to read are worse
   than an error.

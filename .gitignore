@@ -35,6 +35,9 @@ data/*.db-wal
 # uv
 .python-version
 
+# Go build output (the agent binary is built to ./out/)
+/out/
+
 # Test fixtures
 .test-openvpn/
 
@@ -64,3 +67,10 @@ scripts/openapi.json
 .opencode/
 AGENTS.md
 docs/superpowers/
+
+# BEGIN oh-my-opencode-slim clonedeps
+.slim/clonedeps/repos/
+# END oh-my-opencode-slim clonedeps
+
+# Go binary built in repo root
+/ovnode

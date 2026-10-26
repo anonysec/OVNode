@@ -3,39 +3,27 @@
 
 name: Release assets
 
-# Builds the versioned install tarball and attaches it to the published
-# GitHub Release, so install.sh --from-release (the default) can install
-# without git.
 on:
   release:
     types: [published]
   workflow_dispatch:
 
 jobs:
-  # The release must not ship untested code. This repeats ci.yml's suite
-  # rather than gating on workflow_run: a release can be published without a
-  # CI run on the same commit, and a workflow_run gate that never fires is a
-  # gate that never blocks. One test gate per release, this job.
   test:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
-      - uses: astral-sh/setup-uv@v5
+      - uses: actions/setup-go@v5
         with:
-          enable-cache: true
+          go-version: "1.27"
       - name: System dependencies
         run: |
           sudo apt-get update -qq
           sudo apt-get install -y -qq openvpn easy-rsa iptables iproute2 logrotate
-      - run: uv sync --extra dev
-      - name: Create .env for tests
-        run: |
-          printf 'API_KEY=test_ci_key_for_import_only\n' > .env
-      - name: Shell syntax
-        run: bash -n install.sh manager.sh scripts/lib/*.sh
-      - name: Tests
-        # --no-sync / -rs / -n auto: the same invocation as ci.yml.
-        run: uv run --no-sync pytest tests/ -q -rs -n auto
+      - name: Lint
+        run: make lint
+      - name: Go tests
+        run: go test ./...
 
   assets:
     needs: test
@@ -49,19 +37,30 @@ jobs:
         with:
           fetch-depth: 0
 
-      - name: Pack release tarball
+      - name: Setup Go
+        uses: actions/setup-go@v5
+        with:
+          go-version: "1.27"
+
+      # Bare per-platform binaries, each with a .sha256 sidecar. No tarball:
+      # the installer downloads the product and its checksum, and the product
+      # carries the shell files it needs. A release used to ship the whole
+      # source tree, so every box ended up with a checkout of the repository
+      # in /opt/ovnode.
+      - name: Build platform binaries
         run: |
-          VER="$(grep -m1 '^version' pyproject.toml | cut -d'"' -f2)"
-          STAGE="$(mktemp -d)"
-          git archive HEAD | tar -x -C "$STAGE"
-          # --owner/--group: the runner's uid would otherwise be baked into the
-          # archive and restored by a root extract on the target host.
-          tar --owner=0 --group=0 -czf "ovnode-${VER}.tar.gz" -C "$STAGE" .
-          sha256sum "ovnode-${VER}.tar.gz" > "ovnode-${VER}.sha256"
+          VER="$(go run ./cmd/ovnode version)"
           echo "VER=${VER}" >> "$GITHUB_ENV"
+          for arch in amd64 arm64; do
+            out="ovnode-linux-${arch}"
+            GOOS=linux GOARCH="${arch}" CGO_ENABLED=0 go build -trimpath -ldflags "-s -w" -o "${out}" ./cmd/ovnode
+            sha256sum "${out}" > "${out}.sha256"
+          done
 
       - name: Upload assets
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
-          gh release upload "v${VER}" "ovnode-${VER}.tar.gz" "ovnode-${VER}.sha256" --clobber
+          gh release upload "v${VER}" \
+            ovnode-linux-amd64 ovnode-linux-amd64.sha256 \
+            ovnode-linux-arm64 ovnode-linux-arm64.sha256 --clobber

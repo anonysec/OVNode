@@ -4,7 +4,7 @@
 #
 # OVNode container entrypoint — supervises the two processes a node needs:
 #
-#   1. the sync agent (main.py) — answers the panel, generates PKI and
+#   1. the sync agent (ovnode) — answers the panel, generates PKI and
 #      server.conf on first boot, patches config on /sync/config
 #   2. the OpenVPN daemon — started once the agent has produced server.conf,
 #      restarted with backoff if it ever crashes
@@ -197,7 +197,7 @@ main() {
     setup_forwarding
 
     log "starting OVNode agent"
-    python /app/main.py &
+    ovnode serve &
     AGENT_PID=$!
 
     if [[ "${OVNODE_SKIP_OPENVPN:-0}" != "1" ]]; then

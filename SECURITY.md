@@ -4,11 +4,10 @@
 
 | Version | Supported |
 | ------- | --------- |
-| 1.0.x   | yes       |
+| 1.x     | yes       |
 | < 1.0   | no        |
 
-Upgrade together with the panel: node `1.0.x` pairs with OVManager `1.0.x`.
-(The `2.x` line was retired before 1.0.0 — see CHANGELOG.)
+Upgrade together with the panel: node `1.x` (current line 1.3) pairs with OVManager `2.x`.
 
 ## Reporting a vulnerability
 

@@ -11,7 +11,9 @@
 # Commands: install (default) | update | recover-update | repair-unit |
 #           uninstall | interactive | version-script | help
 # Modes   : host (systemd, default) | --docker (see scripts/compose/entrypoint.sh)
-# Day-to-day ops (status, logs, backup, TLS, completion) live in the manager: ovn.
+#           | --local (build from a checkout, fetch nothing)
+# Day-to-day ops (status, logs, backup, TLS, completion) live in the operator
+# CLI: ovnode.
 #
 # Non-interactive: -y never prompts, OVN_* env vars mirror
 # every setting, CLI wins. Exit codes: 0 ok · 1 error · 2 usage ·
@@ -29,6 +31,9 @@ SRC="release"
 APP_DIR="${OVN_APP_DIR:-/opt/ovnode}"
 DATA_BASE="/var/lib/ovnode"
 OPENVPN_ROOT="/etc/openvpn"
+# The agent and the OpenVPN hook are the same Go binary. It lives where the
+# server.conf writer points the hooks, so there is exactly one copy of it.
+AGENT_BIN="${OPENVPN_ROOT}/ovnode/scripts/ovnode"
 DEFAULT_PORT=2083
 DEFAULT_VPN=1194
 SYSTEMD_SERVICE="ovnode.service"
@@ -42,7 +47,6 @@ SYSCTL_CONF="/etc/sysctl.d/99-ovnode.conf"
 LOGROTATE_CONF="/etc/logrotate.d/ovnode"
 BIN_DIR="${OVN_BIN_DIR:-/usr/local/bin}"
 CLI_NAME="ovnode"
-CLI_ALIAS="ovn"
 
 # Exit codes (documented in --help; stable for automation)
 EX_OK=0 EX_ERROR=1 EX_USAGE=2 EX_ALREADY=3 EX_NOTINSTALLED=4
@@ -64,6 +68,9 @@ NO_NAT="${OVN_NO_NAT:-0}"
 YES="${OVN_YES:-0}"
 PURGE="${OVN_PURGE:-0}"
 QUIET="${OVN_QUIET:-0}"
+LOCAL="${OVN_LOCAL:-0}"
+SRC_DIR="${OVN_SRC_DIR:-$PWD}"
+DEST_DIR="${OVN_DEST_DIR:-}"
 PIN="${OVN_VERSION:-}"
 # 1 when the caller passed a CLI flag (env defaults do not count).
 CLI_FLAGS=0
@@ -90,75 +97,16 @@ WH=$'\033[97m'; GR=$'\033[32m'; RD=$'\033[31m'
 YL=$'\033[33m'; CY=$'\033[36m'; GY=$'\033[90m'
 [[ -t 2 ]] || { NC=''; B=''; WH=''; GR=''; RD=''; YL=''; CY=''; GY=''; }
 
-# ── Shared helpers (scripts/lib) ───────────────────────────────────────
-# Output, prompts and the shared probes are defined only in scripts/lib/*.sh,
-# never copied here. A copy beside this script is used when there is one (an
-# installed node, a checkout); the curl-piped installer has none and fetches
-# from GitHub.
+# ── Bootstrap ──────────────────────────────────────────────────────────
+# The helpers this installer needs live in lib.sh, and lib.sh lives inside the
+# binary the installer is about to fetch. So the fetch comes first and the
+# helpers come out of the binary that was just verified: the scripts on a box
+# are the ones the binary shipped, not the ones a branch happened to carry
+# when the installer was written.
 #
-# The ref is the subtlety: the installer's own tag should pin the libs, but a
-# curl-piped installer comes from a branch and may name a tag whose lib predates
-# helpers this file needs. Tag first, main as fallback, result checked.
-# doctor.sh is the health check. The installer never calls it, but keeping one
-# directory and one rule beats a second source path: a lib here is fetchable by
-# name, and tests/test_no_duplicate_functions.py holds both repos to it.
-LIB_FILES=(common.sh render.sh doctor.sh)   # one entry per file in scripts/lib
-# render_menu, not tui_select: the alias survives for older callers, and a lib set
-# that only defines the old name means the libs predate this renderer.
-LIBS_NEEDED=(die render_banner render_card render_line render_ok render_warn render_menu
-             ask confirm check_root compose_file has_systemd is_docker_node)
-LIB_REFS=("v${VERSION}" main)
-
-_libs_are_usable() {  # _libs_are_usable <dir> → 0 when it defines what we call
-    # Subshell on purpose: an unusable candidate must not leave half its
-    # definitions behind for the next candidate to layer onto.
-    (
-        for _l in "${LIB_FILES[@]}"; do
-            # shellcheck disable=SC1090
-            . "$1/$_l" || exit 1
-        done
-        for _f in "${LIBS_NEEDED[@]}"; do
-            declare -F "$_f" >/dev/null || exit 1
-        done
-    )
-}
-
-# The documented pipe form (`cat install.sh | bash -s --`) leaves BASH_SOURCE
-# empty and `set -u` turns that into "unbound variable" before setup runs, so
-# there is no local lib to look for: skip straight to the fetch.
-LIB_DIR=""
-if [[ -n "${BASH_SOURCE[0]:-}" ]]; then
-    LIB_DIR="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" 2>/dev/null && pwd || true)/scripts/lib"
-    for _lib in "${LIB_FILES[@]}"; do
-        [[ -f "$LIB_DIR/$_lib" ]] || LIB_DIR=""
-    done
-fi
-if [[ -z "$LIB_DIR" ]]; then
-    LIB_DIR=""
-    for _ref in "${LIB_REFS[@]}"; do
-        _url="https://raw.githubusercontent.com/${REPO}/${_ref}/scripts/lib"
-        _try="$(mktemp -d /tmp/ovn-lib.XXXXXX)"
-        _ok=1
-        for _lib in "${LIB_FILES[@]}"; do
-            curl -fsSL -o "$_try/$_lib" "$_url/$_lib" 2>/dev/null || { _ok=0; break; }
-        done
-        if [[ "$_ok" -eq 1 ]] && _libs_are_usable "$_try"; then
-            LIB_DIR="$_try"
-            break
-        fi
-        rm -rf "$_try"
-    done
-    if [[ -z "$LIB_DIR" ]]; then
-        echo -e "\n  ${RD}Error:${NC} no usable scripts/lib for v${VERSION} or main — the installer cannot run without it. Re-bootstrap with the latest installer: bash <(curl -sSL https://raw.githubusercontent.com/${REPO}/main/install.sh)\n" >&2
-        exit "$EX_ERROR"
-    fi
-fi
-for _lib in "${LIB_FILES[@]}"; do
-    # shellcheck disable=SC1090
-    . "$LIB_DIR/$_lib"
-done
-[[ "$LIB_DIR" == /tmp/ovn-lib.* ]] && rm -rf "$LIB_DIR"
-unset _lib _try _ref _url _ok _l _f
+# Until then the installer has exactly one helper of its own. `die` arrives
+# with lib.sh; `fail` is the same error path for the window before it.
+fail() { printf '\n  %bError:%b %s\n\n' "${RD:-}" "${NC:-}" "$1" >&2; exit "${2:-$EX_ERROR}"; }
 
 trap 'echo -e "\n  ${RD}Interrupted.${NC}" >&2; exit 130' INT TERM
 trap 'render_warn "Command failed near line $LINENO (running: ${BASH_COMMAND:0:80})"' ERR
@@ -236,12 +184,17 @@ show_help() {
     help                  This help
 
   Everything else (status, logs, backup, restore, TLS, completion) lives
-  in the manager: ovn  (installed as ovnode/ovn).
+  in the operator CLI: ovnode.
 
   Options (every option has an OVN_* env equivalent; CLI wins):
     -y, --yes             Never prompt, accept defaults       [OVN_YES=1]
     --docker              Deploy in Docker (container runs agent + OpenVPN,
                           host networking)                    [OVN_DOCKER=1]
+    --local [DIR]         Install from a checkout (default: this directory):
+                           rsync + go build + the same install the release
+                           path runs. Fetches nothing.       [OVN_LOCAL=1]
+    --src DIR             with --local: the checkout to install from
+    --dest DIR            with --local: the install destination
 
   -h, --help              This help  (no env equivalent)
 
@@ -269,9 +222,6 @@ show_help() {
                                                            [OVN_QUIET=1]
     -v, --version vX.Y.Z  Install/update this release instead of v${VERSION}
                                                           [OVN_VERSION]
-    --from-release        Download the versioned release file [default]
-                          [no replacement — verified releases are the only
-                          source now, so just drop the flag]
 
   Exit codes:
     0 success · 1 error · 2 usage error · 3 already installed ·
@@ -284,7 +234,7 @@ EOF
 }
 
 parse_args() {
-    local need2='[[ $# -ge 2 ]] || die "$1 needs a value" "$EX_USAGE"'
+    local need2='[[ $# -ge 2 ]] || fail "$1 needs a value" "$EX_USAGE"'
     while [[ $# -gt 0 ]]; do
         case "$1" in
             update)       ACTION="update"; CMD_GIVEN=1; shift ;;
@@ -306,25 +256,28 @@ parse_args() {
                               2|letsencrypt) TLS_METHOD="letsencrypt" ;;
                               3|letsencrypt-ip) TLS_METHOD="letsencrypt-ip" ;;
                               4|custom) TLS_METHOD="custom" ;;
-                              *) die "Invalid --tls '$2' (use 1, 2, 3 or 4)" "$EX_USAGE" ;;
+                              *) fail "Invalid --tls '$2' (use 1, 2, 3 or 4)" "$EX_USAGE" ;;
                           esac
                           shift 2 ;;
             --tls-domain) eval "$need2"; deprecated "--tls-domain" "set OVN_TLS_DOMAIN instead"; TLS_DOMAIN="$2"; CLI_FLAGS=1; shift 2 ;;
             --tls-key)    eval "$need2"; deprecated "--tls-key" "set OVN_TLS_KEY instead"; TLS_KEY="$2"; CLI_FLAGS=1; shift 2 ;;
             --tls-cert)   eval "$need2"; deprecated "--tls-cert" "set OVN_TLS_CERT instead"; TLS_CERT="$2"; CLI_FLAGS=1; shift 2 ;;
             --docker)     DOCKER=1; CLI_FLAGS=1; shift ;;
-            --from-release) deprecated "--from-release" "verified releases are the only source now, so just drop it"; SRC="release"; CLI_FLAGS=1; shift ;;
+            --local)      LOCAL=1; CLI_FLAGS=1; shift
+                           if [[ $# -ge 1 && "$1" != -* ]]; then SRC_DIR="$1"; shift; fi ;;
+            --src)        [[ $# -ge 2 ]] || fail "--src needs a value" "$EX_USAGE"; SRC_DIR="$2"; shift 2 ;;
+            --dest)       [[ $# -ge 2 ]] || fail "--dest needs a directory" "$EX_USAGE"; DEST_DIR="$2"; shift 2 ;;
             --ipv6)       deprecated "--ipv6" "set OVN_IPV6=1 instead"; IPV6=1; CLI_FLAGS=1; shift ;;
             --no-nat)     deprecated "--no-nat" "set OVN_NO_NAT=1 instead"; NO_NAT=1; CLI_FLAGS=1; shift ;;
             --yes|-y)     YES=1; CLI_FLAGS=1; shift ;;
             --purge)      deprecated "--purge" "set OVN_PURGE=1 instead"; PURGE=1; CLI_FLAGS=1; shift ;;
             --quiet|-q)   deprecated "$1" "set OVN_QUIET=1 instead"; QUIET=1; shift ;;
             status|start|stop|restart|restart-vpn|logs|backup|auto-backup|tls)
-                          die "'$1' moved to the manager — use: ovn $1" "$EX_USAGE" ;;
-            menu)         die "The menu lives in the manager — run: ovn" "$EX_USAGE" ;;
-            install)      die "'install' is the default — just drop the word" "$EX_USAGE" ;;
+                          fail "'$1' moved to the manager — use: ovnode $1" "$EX_USAGE" ;;
+            menu)         fail "The menu lives in the manager — run: ovnode" "$EX_USAGE" ;;
+            install)      fail "'install' is the default — just drop the word" "$EX_USAGE" ;;
             interactive)  ACTION="interactive"; CMD_GIVEN=1; shift ;;
-            *)            die "Unknown option: $1 (--help for usage)" "$EX_USAGE" ;;
+            *)            fail "Unknown option: $1 (--help for usage)" "$EX_USAGE" ;;
         esac
     done
 }
@@ -409,29 +362,6 @@ vpn_ports_label() {
     else
         echo "$VPN_PORT"
     fi
-}
-
-# ── Toolchain ──────────────────────────────────────────────────────────
-UV_BIN=""
-ensure_uv() {
-    if command -v uv >/dev/null 2>&1; then
-        UV_BIN="$(command -v uv)"; render_ok "uv found: $UV_BIN"; return
-    fi
-    render_line "Installing uv (Python package manager)..."
-    curl -LsSf https://astral.sh/uv/install.sh | sh >/dev/null 2>&1 || \
-        python3 -m pip install --quiet uv >/dev/null 2>&1 || \
-        die "Could not install uv."
-    UV_BIN="$(command -v uv 2>/dev/null || true)"
-    [[ -n "$UV_BIN" ]] || UV_BIN="$HOME/.local/bin/uv"
-    [[ -x "$UV_BIN" ]] || die "uv not found after install"
-    render_ok "uv installed: $UV_BIN"
-}
-
-# Reproducible dependency install: the lockfile pins exact versions.
-# Fall back to a fresh resolve only when the lock cannot be honored.
-uv_sync() {
-    "$UV_BIN" sync --frozen --no-dev --quiet 2>/dev/null \
-        || "$UV_BIN" sync --no-dev --quiet
 }
 
 # ── Forwarding / NAT / multi-port redirects ────────────────────────────
@@ -616,6 +546,22 @@ ROTATE
     render_ok "Log rotation configured ($LOGROTATE_CONF)"
 }
 
+# ── The agent binary ───────────────────────────────────────────────────
+#
+# OpenVPN calls one connect hook and one disconnect hook, and the agent
+# binary answers both — there is no second implementation to choose from.
+# The server.conf writer points the hooks at that path, so the binary has to
+# be there before OpenVPN starts.
+#
+# Docker sees the same file: the OpenVPN root is bind-mounted into the
+# container, so the container calls the binary the host installed.
+install_agent_binary() {
+    mkdir -p "$(dirname "$AGENT_BIN")"
+    [[ -x "${APP_DIR}/ovnode" ]] || return 1
+    install -m 0755 "${APP_DIR}/ovnode" "$AGENT_BIN" || return 1
+    render_ok "agent binary installed ($AGENT_BIN)"
+}
+
 # ── OpenVPN scaffolding ────────────────────────────────────────────────
 ensure_openvpn_dirs() {
     mkdir -p "$OPENVPN_ROOT/server" "$OPENVPN_ROOT/ccd" \
@@ -676,13 +622,15 @@ start_openvpn_service() {
 }
 
 write_cleanup_units() {
+    # The purge runs the same implementation as the hooks: the agent binary.
+    local purge_cmd="${AGENT_BIN} hook purge-stale"
     cat > "/etc/systemd/system/$CLEANUP_SERVICE" << UNIT
 [Unit]
 Description=OVNode stale session marker purge
 
 [Service]
 Type=oneshot
-ExecStart=${APP_DIR}/.venv/bin/python ${APP_DIR}/backend/scripts/cleanup_stale_sessions.py
+ExecStart=${purge_cmd}
 UNIT
     cat > "/etc/systemd/system/$CLEANUP_TIMER" << UNIT
 [Unit]
@@ -781,7 +729,8 @@ close_firewall_ports() {
 
 # ── Systemd unit ───────────────────────────────────────────────────────
 write_systemd_unit() {
-    # ExecStart runs the venv interpreter directly: no uv resolution at boot.
+    # ExecStart runs the Go binary that also answers the OpenVPN hooks.
+    local exec_start="${AGENT_BIN} serve"
     cat > "/etc/systemd/system/$SYSTEMD_SERVICE" << UNIT
 [Unit]
 Description=OVNode OpenVPN Node Agent (${NODE_NAME})
@@ -792,9 +741,8 @@ Wants=network-online.target
 Type=simple
 User=root
 WorkingDirectory=${APP_DIR}
-Environment="PATH=${APP_DIR}/.venv/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin"
 EnvironmentFile=${APP_DIR}/.env
-ExecStart=${APP_DIR}/.venv/bin/python ${APP_DIR}/main.py
+ExecStart=${exec_start}
 Restart=on-failure
 RestartSec=3
 LimitNOFILE=65536
@@ -807,18 +755,71 @@ UNIT
     render_ok "systemd unit written: /etc/systemd/system/$SYSTEMD_SERVICE"
 }
 
-# ── Source / environment ───────────────────────────────────────────────
-release_base() { printf 'ovnode-%s' "$VERSION"; }
+# ── The local build ───────────────────────────────────────────────────
+# Install from a checkout instead of a release: rsync the tree, build the
+# binary, and run the same install the release path runs. Nothing is
+# fetched, so nothing is verified — this is the dev loop, not what a server
+# should run.
+do_local_build() {
+    local dest="${DEST_DIR:-$APP_DIR}"
+    [[ -d "$SRC_DIR" ]] || fail "no source directory: $SRC_DIR"
+    [[ -f "$SRC_DIR/go.mod" ]] || fail "no go.mod under $SRC_DIR — --local needs an OVNode checkout"
+    command -v rsync >/dev/null 2>&1 || fail "rsync is required for a local install"
+    command -v go >/dev/null 2>&1 || fail "go is required for a local install"
+    [[ -n "$dest" && "$dest" != "/" ]] || fail "refusing to install into '$dest'"
+    APP_DIR="$dest"
+    DATA_BASE="$dest/data"
+    mkdir -p "$dest"
+    # --delete only reaches files not excluded, so a dest .env is never
+    # transferred in and never deleted.
+    rsync -a --delete --exclude '.git' --exclude '.slim' --exclude '.env' \
+        "$SRC_DIR/" "$dest/"
+    ( cd "$SRC_DIR" && go build -o "$dest/ovnode" ./cmd/ovnode ) \
+        || fail "go build failed" "$EX_ERROR"
+    # The renderer is not on disk yet: the binary that carries it is the one
+    # this call is about to build.
+    printf '  ok    built %s/ovnode from %s\n' "$dest" "$SRC_DIR" >&2
+}
+
+# load_helpers: put the shell helpers on disk and source them.
+#
+# For an install the binary is fetched first, because that is where the
+# helpers come from. Every other action uses the installed binary: an update
+# must not replace the binary it is running from, and an uninstall must not
+# download anything in order to remove a node.
+load_helpers() {
+    if [[ ! -x "$APP_DIR/ovnode" ]]; then
+        command -v curl >/dev/null 2>&1 || fail "curl is required to download the release"
+        command -v sha256sum >/dev/null 2>&1 || fail "sha256sum is required to verify the release"
+        fetch_release_binary "$APP_DIR"
+    fi
+    "$APP_DIR/ovnode" assets write --dest "$APP_DIR" >/dev/null \
+        || fail "Could not write the installer helpers into $APP_DIR"
+    # shellcheck disable=SC1091
+    . "$APP_DIR/lib.sh"
+}
+
+# ── Release fetch ──────────────────────────────────────────────────────
+# The release publishes bare per-platform binaries, each with a .sha256
+# sidecar. Nothing else: no tarball, no source tree, no helper scripts to
+# fetch. The installer downloads the product and its checksum, and the product
+# carries everything else it needs.
+detect_arch() {
+    case "$(uname -m)" in
+        x86_64|amd64)  printf 'amd64' ;;
+        aarch64|arm64) printf 'arm64' ;;
+        *) fail "Unsupported architecture: $(uname -m) (need x86_64 or aarch64)" ;;
+    esac
+}
+
+release_asset() { printf 'ovnode-linux-%s' "$(detect_arch)"; }
 
 release_url() {
-    printf 'https://github.com/%s/releases/download/v%s/%s.tar.gz' \
-        "$REPO" "$VERSION" "$(release_base)"
+    printf 'https://github.com/%s/releases/download/v%s/%s' \
+        "$REPO" "$VERSION" "$(release_asset)"
 }
 
-release_checksum_url() {
-    printf 'https://github.com/%s/releases/download/v%s/%s.sha256' \
-        "$REPO" "$VERSION" "$(release_base)"
-}
+release_checksum_url() { printf '%s.sha256' "$(release_url)"; }
 
 IMAGE_REPO="ghcr.io/${REPO,,}"
 
@@ -864,66 +865,33 @@ operation_end() {
 update_state() {
     local phase="$1" from="${2:-unknown}" target="${3:-$VERSION}" backup="${4:-}" identity="${5:-}"
     mkdir -p "$DATA_BASE"
-    python3 - "$UPDATE_STATE" "$phase" "$from" "$target" "$backup" "$identity" <<'PY'
-import json, os, sys, tempfile, time
-path, phase, old, target, backup, identity = sys.argv[1:]
-data = {"phase": phase, "from_version": old, "to_version": target,
-        "safety_backup": backup or None, "identity_sha": identity or None,
-        "updated_at": int(time.time()), "pid": os.getppid()}
-fd, tmp = tempfile.mkstemp(prefix=".update-state-", dir=os.path.dirname(path))
-try:
-    with os.fdopen(fd, "w") as f:
-        json.dump(data, f, indent=2); f.write("\n"); f.flush(); os.fsync(f.fileno())
-    os.chmod(tmp, 0o600); os.replace(tmp, path)
-finally:
-    try: os.unlink(tmp)
-    except FileNotFoundError: pass
-PY
+    "$AGENT_BIN" state write "$UPDATE_STATE" "$phase" "$from" "$target" "$backup" "$identity"
 }
 
 # sha256(node-name + API key): proves identity survived activation without
 # ever persisting a secret in the journal.
 identity_sha() {
-    python3 - "$1" "$2" <<'PY'
-import hashlib, sys
-print(hashlib.sha256(("|".join(sys.argv[1:])).encode()).hexdigest())
-PY
+    "$AGENT_BIN" identity-sha "$1" "$2"
 }
 
-# A redirect stub or proxy block page must fail here, not later as a checksum
-# mismatch.
-is_release_archive() { tar -tzf "$1" >/dev/null 2>&1; }
-
-# Download the versioned release file into $1 (an existing directory).
-# The .sha256 sidecar is mandatory: unverified code is never installed.
-fetch_release() {
-    local dest="$1" work base
-    base="$(release_base)"
+# fetch_release_binary <dir>: download this platform's binary and its checksum,
+# verify it, and install it as <dir>/ovnode. The .sha256 sidecar is mandatory:
+# unverified code is never installed, so a missing sidecar is a failure and
+# never a fallback to "install it anyway".
+fetch_release_binary() {
+    local dest="$1" work asset
+    asset="$(release_asset)"
     work="$(mktemp -d /tmp/ovn.XXXXXX)"
-    run "Downloading release v${VERSION}" \
-        curl -fsSL -o "$work/$base.tar.gz" "$(release_url)" \
-        || { rm -rf "$work"; die "No release file for v${VERSION}" "$EX_ERROR"; }
-    is_release_archive "$work/$base.tar.gz" \
-        || { rm -rf "$work"; die "Download for v${VERSION} is not a release archive (stale installer or blocked download?). Re-bootstrap with the latest installer:  bash <(curl -sSL https://raw.githubusercontent.com/${REPO}/main/install.sh)" "$EX_ERROR"; }
-    curl -fsSL -o "$work/$base.sha256" "$(release_checksum_url)" 2>/dev/null \
-        || { rm -rf "$work"; die "Release checksum file is missing for v${VERSION}" "$EX_ERROR"; }
-    ( cd "$work" && sha256sum -c "$base.sha256" >/dev/null ) \
-        || { rm -rf "$work"; die "Release checksum mismatch for v${VERSION}" "$EX_ERROR"; }
-    render_ok "Checksum ok"
+    curl -fsSL -o "$work/$asset" "$(release_url)" \
+        || { rm -rf "$work"; fail "No release file for v$VERSION — see https://github.com/$REPO/releases"; }
+    curl -fsSL -o "$work/$asset.sha256" "$(release_checksum_url)" \
+        || { rm -rf "$work"; fail "Release checksum file is missing for v$VERSION"; }
+    ( cd "$work" && sha256sum -c "$asset.sha256" >/dev/null ) \
+        || { rm -rf "$work"; fail "Release checksum mismatch for v$VERSION"; }
     mkdir -p "$dest"
-    # --no-same-owner: an archive from an older release still carries whatever
-    # uid built it, and extracting as root would restore that. The install runs
-    # as root, so honouring the archive's numeric ids is exactly backwards.
-    tar --no-same-owner -xzf "$work/$base.tar.gz" -C "$dest" >/dev/null 2>&1 || { rm -rf "$work"; die "Extract failed" "$EX_ERROR"; }
-    # Root-owned explicitly, so the tree does not depend on how it was built.
-    chown -R root:root "$dest"
+    install -m 0755 "$work/$asset" "$dest/ovnode"
     rm -rf "$work"
-    render_ok "Release extracted"
-}
-
-fetch_source() {
-    # Source builds were removed: developers clone the repo and follow CONTRIBUTING.md.
-    die "Source installs were removed — the installer consumes verified releases only" "$EX_USAGE"
+    printf '  ok    release v%s verified and installed\n' "$VERSION" >&2
 }
 
 # Safety snapshot of every persistent state needed for rollback: identity
@@ -933,79 +901,10 @@ state_safety_bundle() {
     local from_version="$1" backup_root="/var/backups"
     local node_data; node_data="$(node_data_dir)"
     mkdir -p "$backup_root" "$node_data"
-    python3 - "$APP_DIR" "$node_data" "$OPENVPN_ROOT" "$backup_root" "$NODE_NAME" "$from_version" <<'PY' || return 1
-import hashlib, json, os, sys, tarfile, tempfile
-from datetime import datetime, timezone
-app_dir, node_data, ovpn_root, backup_root, node, from_version = sys.argv[1:]
-members = {}
-def add_tree(archive, src, arc):
-    for root, _dirs, files in os.walk(src):
-        for name in sorted(files):
-            if name in ("update-maintenance", "update-state.json"):
-                continue  # live transaction artifacts must never restore
-            full = os.path.join(root, name)
-            if not os.path.isfile(full) or os.path.islink(full) and not os.path.exists(full):
-                continue
-            rel = os.path.join(arc, os.path.relpath(full, src))
-            archive.add(full, arcname=rel, recursive=False)
-            digest = hashlib.sha256()
-            with open(full, "rb") as f:
-                for chunk in iter(lambda: f.read(1048576), b""):
-                    digest.update(chunk)
-            members[rel] = digest.hexdigest()
-def add_file(archive, src, arc):
-    if os.path.isfile(src):
-        archive.add(src, arcname=arc, recursive=False)
-        digest = hashlib.sha256()
-        with open(src, "rb") as f:
-            for chunk in iter(lambda: f.read(1048576), b""):
-                digest.update(chunk)
-        members[arc] = digest.hexdigest()
-now = datetime.now(timezone.utc)
-stamp = now.strftime("%Y%m%d_%H%M%S")
-final = os.path.join(backup_root, "ovnode-state-pre-update-%s.tar.gz" % stamp)
-fd, tmp = tempfile.mkstemp(prefix=".ovnode-state-", suffix=".part", dir=backup_root)
-os.close(fd); os.chmod(tmp, 0o600)
-try:
-    with tempfile.TemporaryDirectory(prefix="ovnode-state-") as stage:
-        with tarfile.open(tmp, "w:gz", format=tarfile.PAX_FORMAT) as archive:
-            add_file(archive, os.path.join(app_dir, ".env"), "node.env")
-            add_tree(archive, node_data, "data")
-            for sub in ("server", "ccd", "ovnode"):
-                add_tree(archive, os.path.join(ovpn_root, sub), "openvpn/%s" % sub)
-            try:
-                with open(os.path.join(app_dir, ".env"), encoding="utf-8") as f:
-                    env = dict(line.strip().split("=", 1) for line in f if "=" in line and not line.startswith("#"))
-                for key in ("SSL_KEYFILE", "SSL_CERTFILE"):
-                    target = env.get(key, "")
-                    if target and os.path.isfile(target):
-                        add_file(archive, target, "tls/%s" % os.path.basename(target))
-            except OSError:
-                pass
-            manifest = {"format": "ovnode-state", "format_version": 1, "node": node,
-                        "from_version": from_version, "created_at": now.isoformat(), "members": members}
-            manifest_path = os.path.join(stage, "manifest.json")
-            with open(manifest_path, "w", encoding="utf-8") as f:
-                json.dump(manifest, f, sort_keys=True, indent=2); f.write("\n")
-            archive.add(manifest_path, arcname="manifest.json", recursive=False)
-        with tarfile.open(tmp, "r:gz") as archive:
-            names = {m.name for m in archive.getmembers() if m.isfile()}
-            if "manifest.json" not in names:
-                raise SystemExit("bundle verification failed: no manifest")
-            if any(n.startswith("/") or ".." in n.split("/") for n in names):
-                raise SystemExit("bundle verification failed: unsafe member")
-            seen = json.load(archive.extractfile("manifest.json"))
-            if seen.get("format") != "ovnode-state":
-                raise SystemExit("bundle verification failed: bad manifest")
-    os.replace(tmp, final); os.chmod(final, 0o600)
-finally:
-    try: os.unlink(tmp)
-    except FileNotFoundError: pass
-print(final)
-PY
-    # Retention for safety bundles (backup pruning covers node-*/node-pki-*).
+    "$AGENT_BIN" installer bundle "$APP_DIR" "$node_data" "$OPENVPN_ROOT" "$backup_root" "$NODE_NAME" "$from_version"
+    # Retention for safety bundles.
     ls -t "$backup_root"/ovnode-state-pre-update-*.tar.gz 2>/dev/null | tail -n +6 | xargs -r rm -f
-    return 0
+    return $?
 }
 
 # Restore state after a failed activation. Fails closed on any manifest or
@@ -1013,56 +912,7 @@ PY
 state_restore() {
     local bundle="$1"
     [[ -f "$bundle" ]] || return 1
-    python3 - "$bundle" "$APP_DIR" "$DATA_BASE" "$OPENVPN_ROOT" <<'PY' || return 1
-import hashlib, json, os, sys, tarfile, tempfile
-bundle, app_dir, data_base, ovpn_root = sys.argv[1:]
-roots = {"node.env": app_dir, "data/": data_base, "openvpn/": ovpn_root, "tls/": None, "manifest.json": None}
-with tarfile.open(bundle, "r:gz") as archive:
-    infos = [m for m in archive.getmembers() if m.isfile()]
-    names = {m.name for m in infos}
-    if "manifest.json" not in names:
-        raise SystemExit("unsafe state backup: no manifest")
-    if any(n.startswith("/") or ".." in n.split("/") for n in names):
-        raise SystemExit("unsafe state backup: unsafe member")
-    manifest = json.load(archive.extractfile("manifest.json"))
-    if manifest.get("format") != "ovnode-state":
-        raise SystemExit("unsafe state backup: bad manifest")
-    expected = manifest.get("members", {})
-    staged = tempfile.mkdtemp(prefix="ovnode-restore-")
-    try:
-        archive.extractall(path=staged, members=infos)
-        for rel, digest in expected.items():
-            with open(os.path.join(staged, rel), "rb") as f:
-                actual = hashlib.sha256(f.read()).hexdigest()
-            if actual != digest:
-                raise SystemExit("state backup checksum mismatch: %s" % rel)
-        import shutil
-        for rel in expected:
-            if rel == "node.env":
-                dst = os.path.join(app_dir, ".env")
-            elif rel.startswith("data/"):
-                dst = os.path.join(data_base, os.path.relpath(rel, "data"))
-            elif rel.startswith("openvpn/"):
-                dst = os.path.join(ovpn_root, os.path.relpath(rel, "openvpn"))
-            elif rel.startswith("tls/"):
-                continue  # certs restore via repair flow, never auto-overwritten
-            else:
-                raise SystemExit("unsafe state backup: unknown member %s" % rel)
-            os.makedirs(os.path.dirname(dst), exist_ok=True)
-            fd, tmp = tempfile.mkstemp(prefix=".ovnode-restore-", dir=os.path.dirname(dst))
-            try:
-                with os.fdopen(fd, "wb") as f, open(os.path.join(staged, rel), "rb") as s:
-                    shutil.copyfileobj(s, f, 1048576)
-                if dst.endswith(".env"):
-                    os.chmod(tmp, 0o600)
-                os.replace(tmp, dst)
-            finally:
-                try: os.unlink(tmp)
-                except FileNotFoundError: pass
-    finally:
-        shutil.rmtree(staged, ignore_errors=True)
-print("state restored")
-PY
+    "$AGENT_BIN" installer restore "$bundle" "$APP_DIR" "$DATA_BASE" "$OPENVPN_ROOT"
 }
 
 # Authenticated "version openvpn_running" from the agent. Empty output means
@@ -1072,12 +922,12 @@ node_api_status() {
     [[ "$tls" != "none" ]] && scheme="https"
     curl -fskS --max-time 5 "${scheme}://127.0.0.1:${port}/sync/status" \
         -H "key: ${key}" 2>/dev/null \
-        | python3 -c 'import json,sys; d=(json.load(sys.stdin).get("data") or {}); print(d.get("version",""), str(d.get("openvpn_running","")).lower())' 2>/dev/null || true
+        | grep -o '"version": *"[^"]*"' | head -1 | sed 's/.*"//;s/"$//' 2>/dev/null || true
 }
 
 write_env() {
-    # TUNNEL_ADDRESS is deliberately not written here: the node's pydantic
-    # Settings rejects extra env fields, and the panel pushes it via /sync/config.
+    # TUNNEL_ADDRESS is deliberately not written here: the panel pushes it
+    # via /sync/config.
     #
     # DATA_DIR is resolved through node_data_dir() so the file, the Docker
     # volume and the installer's own bookkeeping cannot disagree about the path.
@@ -1098,6 +948,32 @@ $( if [[ -n "$TLS_CERT" ]]; then echo "SSL_CERTFILE=${TLS_CERT}"; fi )
 EOF
     chmod 600 "$APP_DIR/.env"
     render_ok ".env written"
+}
+
+# write_install_result <path>: the facts of this install, machine-readable.
+#
+# The output on the terminal is for a human; this file is for a program. A
+# provisioning run that cannot see the terminal still needs the port, the
+# service and the key. The values are escaped with %q so the file is safe to
+# source even when one of them contains a space or a quote.
+write_install_result() {
+    local path="$1"
+    mkdir -p "$(dirname "$path")"
+    {
+        printf 'OVNODE_VERSION=%q\n' "$VERSION"
+        printf 'OVNODE_NAME=%q\n' "$NODE_NAME"
+        printf 'OVNODE_API_PORT=%q\n' "$PORT"
+        printf 'OVNODE_VPN_PORT=%q\n' "$VPN_PORT"
+        printf 'OVNODE_VPN_EXTRA_PORTS=%q\n' "$EXTRA_PORTS"
+        printf 'OVNODE_VPN_PROTO=%q\n' "$VPN_PROTO"
+        printf 'OVNODE_TLS_METHOD=%q\n' "$TLS_METHOD"
+        printf 'OVNODE_API_KEY=%q\n' "$API_KEY"
+        printf 'OVNODE_DATA_DIR=%q\n' "$(node_data_dir)"
+        printf 'OVNODE_SERVICE=%q\n' "$SYSTEMD_SERVICE"
+        printf 'OVNODE_DOCKER=%q\n' "$DOCKER"
+    } > "$path"
+    chmod 600 "$path"
+    render_ok "install result written to $path"
 }
 
 # ── Docker ─────────────────────────────────────────────────────────────
@@ -1197,19 +1073,21 @@ COMPOSE
 do_install() {
     check_root
     check_deps
-    [[ "$DOCKER" -eq 1 ]] || ensure_uv
 
-    render_begin "preflight" 6
+    render_begin "preflight"
     render_done "$(preflight_summary)"
 
-    render_begin "release" 6
-    fetch_release "$APP_DIR"
+    if [[ "$LOCAL" -eq 0 ]]; then
+        render_begin "release"
+        fetch_release_binary "$APP_DIR"
+    else
+        render_begin "release"
+        render_done "built from checkout"
+    fi
 
-    render_begin "certificate" 6
+    render_begin "certificate"
     if [[ "$DOCKER" -eq 0 ]]; then
         cd "$APP_DIR"
-        render_note "python dependencies"
-        uv_sync >/dev/null 2>&1 || die "Could not install the node agent's Python packages"
         render_note "$(tls_summary)"
     fi
     setup_tls
@@ -1222,15 +1100,21 @@ do_install() {
 
     mkdir -p "$(node_data_dir)"
     ensure_openvpn_dirs
+    install_agent_binary || die "The ovnode binary could not be installed" "$EX_ERROR"
 
-    render_begin "runtime" 6
+    # The agent serves TLS from the node PKI and refuses to start without it,
+    # so bootstrap the PKI before the unit starts. Idempotent: a re-install
+    # on a box that already has a CA is a no-op.
+    run "Generating node PKI" "$AGENT_BIN" ca init
+
+    render_begin "runtime"
     if [[ "$DOCKER" -eq 1 ]]; then
         setup_docker
         render_done "container"
     else
         if ! has_systemd; then
             render_done "no systemd — start the agent by hand"
-            render_warn "systemd not found — start the agent manually: cd $APP_DIR && .venv/bin/python main.py"
+            render_warn "systemd not found — start the agent manually: $AGENT_BIN serve"
         else
             write_systemd_unit
             render_note "$SYSTEMD_SERVICE"
@@ -1242,16 +1126,16 @@ do_install() {
 
     # First boot generates the PKI + server.conf, so wait for /sync/health
     # before bringing up OpenVPN.
-    render_begin "health" 6
+    render_begin "health"
     if ! wait_health_live "${scheme}://127.0.0.1:${PORT}/sync/health" 60; then
         render_fail "health" "no answer on /sync/health after 60s"
-        render_next "ovn logs 50" "$(installer_uninstall_command)"
+        render_next "ovnode logs 50" "$(installer_uninstall_command)"
         return 1
     fi
     render_done "200"
     [[ "$DOCKER" -eq 1 ]] && check_container_openvpn
 
-    render_begin "vpn" 6
+    render_begin "vpn"
     # Docker runs the daemon inside the container (entrypoint-supervised) and
     # evicts any host daemon holding the VPN/management ports.
     if [[ "$DOCKER" -eq 0 ]]; then
@@ -1265,10 +1149,11 @@ do_install() {
     open_firewall_ports
     render_done "$(vpn_ports_label)/$VPN_PROTO"
 
-    render_begin "command" 6
+    render_begin "command"
     install_cli
-    render_done "$BIN_DIR/$CLI_ALIAS"
+    render_done "$BIN_DIR/$CLI_NAME"
 
+    write_install_result "$DATA_BASE/install-result.env"
     node_success_card "$scheme" "$host"
 }
 
@@ -1307,8 +1192,8 @@ node_success_card() {
         "node|$where" \
         "tls|$(tls_summary)" \
         "data|$(node_data_dir)" \
-        "logs|$CLI_ALIAS logs -f"
-    render_line "  $(printf '%slost it?  %s credentials%s' "$GY" "$CLI_ALIAS" "$NC")"
+        "logs|$CLI_NAME logs -f"
+    render_line "  $(printf '%slost it?  %s credentials%s' "$GY" "$CLI_NAME" "$NC")"
     render_line "  $(printf '%bpanel%s  Nodes → Add Node → paste the bundle below' "$GY" "$NC")"
     render_kv "bundle" "$bundle"
     render_line "  uninstall: $(installer_uninstall_command)"
@@ -1332,6 +1217,9 @@ tls_summary() {
 # (name + API key) comes from .env, never regenerated here.
 do_update() {
     [[ -d "$APP_DIR" ]] || die "Not installed ($APP_DIR missing)" "$EX_NOTINSTALLED"
+    # The journal, the identity hash and the state bundle all run through the
+    # installed binary; without it there is nothing to update.
+    [[ -x "$AGENT_BIN" ]] || die "The node agent binary is missing ($AGENT_BIN) — reinstall instead of updating" "$EX_ERROR"
     check_root
     operation_begin update
     trap operation_end EXIT
@@ -1349,7 +1237,7 @@ do_update() {
         flat_migration_needed=1
     fi
     if (( flat_migration_needed )); then
-        render_begin "migrate data" 6
+        render_begin "migrate data"
         if migrate_flat_data_dir; then
             render_done "data directory flattened"
         else
@@ -1396,20 +1284,20 @@ do_update() {
         render_line "Detected Docker deployment (compose file present)"
     fi
     local from_version safety snapshot scheme activated=0 identity
-    from_version="$(grep -Eo '"[0-9]+\.[0-9]+\.[0-9]+"' "$APP_DIR/backend/version.py" 2>/dev/null | head -1 | tr -d '"' || true)"
+    from_version="$("$AGENT_BIN" version 2>/dev/null || true)"
     : "${from_version:=unknown}"
     identity="$(identity_sha "$NODE_NAME" "$API_KEY")"
     scheme="http"; [[ "$TLS_METHOD" != "none" ]] && scheme="https"
     update_state preflight "$from_version" "$VERSION" "" "$identity"
 
-    render_begin "backup" 6
+    render_begin "backup"
     safety="$(state_safety_bundle "$from_version")" || die "Could not create the mandatory state safety snapshot" "$EX_ERROR"
     [[ -n "$safety" && -f "$safety" ]] || die "The state safety snapshot was not created" "$EX_ERROR"
     snapshot="$(snapshot_code "$APP_DIR" "node" 2)"
     render_done "$(basename "$safety" 2>/dev/null)"
     update_state staging "$from_version" "$VERSION" "$safety" "$identity"
 
-    render_begin "stage" 6
+    render_begin "stage"
     rm -rf "$UPDATE_STAGE"
     mkdir -p "$UPDATE_STAGE"
     if [[ "$DOCKER" -eq 1 ]]; then
@@ -1418,17 +1306,19 @@ do_update() {
             docker pull "ghcr.io/${REPO,,}:${VERSION}" \
             || die "Could not pull ghcr.io/${REPO,,}:${VERSION}" "$EX_ERROR"
     else
-        fetch_release "$UPDATE_STAGE"
+        fetch_release_binary "$UPDATE_STAGE"
+        # The staged release carries the helpers too: the operator CLI on the
+        # box must be the one that matches the binary it sits beside.
+        "$UPDATE_STAGE/ovnode" assets write --dest "$UPDATE_STAGE" >/dev/null \
+            || die "Could not stage the installer helpers; the current version is still running" "$EX_ERROR"
         cp -p "$APP_DIR/.env" "$UPDATE_STAGE/.env" || die "Could not preserve configuration" "$EX_ERROR"
         chmod 600 "$UPDATE_STAGE/.env"
-        ensure_uv
-        ( cd "$UPDATE_STAGE" && run "Staged Python dependencies" uv_sync ) \
-            || die "Could not prepare the staged release; current version is still running" "$EX_ERROR"
-        [[ -f "$UPDATE_STAGE/backend/version.py" ]] || die "Staged release is incomplete" "$EX_ERROR"
+        staged="$("$UPDATE_STAGE/ovnode" version 2>/dev/null || true)"
+        [[ "$staged" == "$VERSION" ]] || die "Staged release reports '$staged', expected $VERSION" "$EX_ERROR"
     fi
     render_done ""
 
-    render_begin "maintenance" 6
+    render_begin "maintenance"
     : > "$(update_marker)"
     chmod 600 "$(update_marker)"
     update_state activating "$from_version" "$VERSION" "$safety" "$identity"
@@ -1440,11 +1330,11 @@ do_update() {
     fi
     render_done "agent paused"
 
-    render_begin "activate" 6
+    render_begin "activate"
     if [[ "$DOCKER" -eq 1 ]]; then
         IMAGE_TAG="$VERSION" write_compose_file
         ( cd "$APP_DIR" && docker compose -f "$(compose_file)" up -d ) >/dev/null 2>&1 \
-            || { update_state recovery_required "$from_version" "$VERSION" "$safety" "$identity"; die "Could not start the candidate container. Writes remain blocked; run: ovn recover-update" "$EX_ERROR"; }
+            || { update_state recovery_required "$from_version" "$VERSION" "$safety" "$identity"; die "Could not start the candidate container. Writes remain blocked; run: ovnode recover-update" "$EX_ERROR"; }
         activated=1
     else
         rm -rf "$UPDATE_PREVIOUS"
@@ -1459,7 +1349,7 @@ do_update() {
             fi
             update_state recovery_required "$from_version" "$VERSION" "$safety" "$identity"
             operation_end
-            die "Could not activate or restore release files. Writes remain blocked; run: ovn recover-update" "$EX_ERROR"
+            die "Could not activate or restore release files. Writes remain blocked; run: ovnode recover-update" "$EX_ERROR"
         fi
     fi
 
@@ -1468,11 +1358,16 @@ do_update() {
         start_ok=1
     else
         has_systemd && write_systemd_unit
+        # The ovnode binary lives outside the app dir, so a release must
+        # refresh it explicitly — otherwise the node keeps running the
+        # previous version's hook. A failure here is not fatal: the old
+        # binary still works.
+        install_agent_binary || render_warn "The node keeps the previous ovnode binary"
         run "Candidate agent started" systemctl_bounded restart "$SYSTEMD_SERVICE" && start_ok=1 || true
     fi
     render_done ""
 
-    render_begin "verify" 6
+    render_begin "verify"
     update_state verifying "$from_version" "$VERSION" "$safety" "$identity"
     if [[ "$start_ok" -eq 1 ]] && wait_health "${scheme}://127.0.0.1:${PORT}/sync/health" 60; then
         local reported vpn_ok ident_ok
@@ -1494,7 +1389,7 @@ do_update() {
         node_failover "$from_version" "$VERSION" "$safety" "$identity" "$snapshot"
     fi
 
-    render_begin "commit" 6
+    render_begin "commit"
     rm -f "$(update_marker)"
     if [[ "$DOCKER" -eq 0 ]]; then
         setup_nat
@@ -1504,13 +1399,13 @@ do_update() {
         : > "$(update_marker)"; chmod 600 "$(update_marker)"
         update_state recovery_required "$from_version" "$VERSION" "$safety" "$identity"
         operation_end
-        die "Candidate passed verification but failed its final check. Writes are blocked; run: ovn recover-update" "$EX_ERROR"
+        die "Candidate passed verification but failed its final check. Writes are blocked; run: ovnode recover-update" "$EX_ERROR"
     fi
     update_state committed "$from_version" "$VERSION" "$safety" "$identity"
     render_done "v${from_version} → v${VERSION}"
     operation_end
     install_cli
-    [[ "$DOCKER" -eq 1 ]] || render_line "  rollback: $CLI_ALIAS rollback"
+    [[ "$DOCKER" -eq 1 ]] || render_line "  rollback: $CLI_NAME rollback"
     render_blank
 }
 
@@ -1524,10 +1419,10 @@ node_failover() {
     if [[ "$DOCKER" -eq 1 ]]; then
         ( cd "$APP_DIR" && docker compose -f "$(compose_file)" down ) >/dev/null 2>&1 || true
         state_restore "$safety" \
-            || { update_state recovery_required "$from_version" "$target" "$safety" "$identity"; operation_end; die "Previous container stopped but state could not be restored. Run: ovn recover-update" "$EX_ERROR"; }
+            || { update_state recovery_required "$from_version" "$target" "$safety" "$identity"; operation_end; die "Previous container stopped but state could not be restored. Run: ovnode recover-update" "$EX_ERROR"; }
         IMAGE_TAG="$from_version" write_compose_file
         ( cd "$APP_DIR" && docker compose -f "$(compose_file)" up -d ) >/dev/null 2>&1 \
-            || { update_state recovery_required "$from_version" "$target" "$safety" "$identity"; operation_end; die "Previous image could not be restarted. Run: ovn recover-update" "$EX_ERROR"; }
+            || { update_state recovery_required "$from_version" "$target" "$safety" "$identity"; operation_end; die "Previous image could not be restarted. Run: ovnode recover-update" "$EX_ERROR"; }
     else
         systemctl_bounded stop "$SYSTEMD_SERVICE" >/dev/null 2>&1 || true
         rm -rf "$UPDATE_STAGE"
@@ -1558,13 +1453,7 @@ do_recover_update() {
         return 0
     fi
     local phase from target safety identity
-    read -r phase from target safety identity < <(python3 - "$UPDATE_STATE" <<'PY'
-import json, sys
-x = json.load(open(sys.argv[1]))
-print(x.get("phase", "unknown"), x.get("from_version", "unknown"),
-      x.get("to_version", "unknown"), x.get("safety_backup") or "", x.get("identity_sha") or "")
-PY
-) || die "Update state journal is unreadable" "$EX_ERROR"
+    read -r phase from target safety identity < <("$AGENT_BIN" state read "$UPDATE_STATE") || die "Update state journal is unreadable" "$EX_ERROR"
     case "$phase" in
         committed|failed_over)
             if [[ ! -f "$(update_marker)" ]]; then
@@ -1642,7 +1531,7 @@ PY
         fi
         update_state recovery_required "$from" "$target" "$safety" "$identity"
         operation_end
-        die "Interrupted update never activated and v${from} does not answer health. Run: ovn logs 100" "$EX_ERROR"
+        die "Interrupted update never activated and v${from} does not answer health. Run: ovnode logs 100" "$EX_ERROR"
     fi
     render_line "Interrupted candidate is unhealthy — failing over to v${from}"
     if [[ "$DOCKER" -eq 1 ]]; then
@@ -1671,7 +1560,7 @@ PY
     fi
     update_state recovery_required "$from" "$target" "$safety" "$identity"
     operation_end
-    die "Previous release was restored but is not healthy. Run: ovn logs 100" "$EX_ERROR"
+    die "Previous release was restored but is not healthy. Run: ovnode logs 100" "$EX_ERROR"
 }
 
 # Regenerate host integration files from the installed release + .env: unit,
@@ -1703,11 +1592,12 @@ do_repair_unit() {
         write_systemd_unit
         write_openvpn_unit
         write_cleanup_units
+        run "Generating node PKI" "$AGENT_BIN" ca init
         setup_nat
         setup_logrotate
     fi
     operation_end
-    render_ok "Host integration repaired — restart the agent if it is stopped: ovn restart"
+    render_ok "Host integration repaired — restart the agent if it is stopped: ovnode restart"
 }
 
 # ── Uninstall ──────────────────────────────────────────────────────────
@@ -1737,7 +1627,7 @@ do_uninstall() {
     confirm_word "delete the data and the PKI as well? type purge" "purge" && PURGE=1
     confirm "remove the app and stop all services?" n || die "Cancelled."
 
-    render_begin "uninstall" 1
+    render_begin "uninstall"
     # Stopping the NAT unit runs its ExecStop cleanup (rules removed).
     systemctl_bounded stop "$SYSTEMD_SERVICE"
     systemctl_bounded stop "$NAT_SERVICE"
@@ -1905,22 +1795,21 @@ installed_menu() {
 }
 
 install_cli() {
-    # Refreshed on every update, so a box whose ovn is an old copy gets swapped.
-    local src="${APP_DIR}/manager.sh"
+    # Refreshed on every update, so a box whose ovnode is an old copy gets swapped.
+    local src="${APP_DIR}/ovnode.sh"
     [[ -f "$src" ]] || return 0
     mkdir -p "$BIN_DIR" 2>/dev/null || { render_warn "Could not create $BIN_DIR"; return 0; }
     if cp -f "$src" "$BIN_DIR/$CLI_NAME" 2>/dev/null && chmod 0755 "$BIN_DIR/$CLI_NAME"; then
-        ln -sf "$CLI_NAME" "$BIN_DIR/$CLI_ALIAS" 2>/dev/null || true
-        render_ok "Command  ${BIN_DIR}/${CLI_NAME}  (alias: ${CLI_ALIAS})"
+        render_ok "Command  ${BIN_DIR}/${CLI_NAME}"
     else
         render_warn "Could not install the $CLI_NAME command into $BIN_DIR"
     fi
 }
 
 remove_cli() {
-    rm -f "$BIN_DIR/$CLI_NAME" "$BIN_DIR/$CLI_ALIAS" 2>/dev/null || true
-    # `ovn completion` writes this; a leftover completes a command that is gone.
-    rm -f "${OVN_COMPLETION_DIR:-/etc/bash_completion.d}/ovn" 2>/dev/null || true
+    rm -f "$BIN_DIR/$CLI_NAME" 2>/dev/null || true
+    # `ovnode completion` writes this; a leftover completes a command that is gone.
+    rm -f "${OVN_COMPLETION_DIR:-/etc/bash_completion.d}/ovnode" 2>/dev/null || true
 }
 
 # ── Preconditions ──────────────────────────────────────────────────────
@@ -1929,10 +1818,6 @@ check_deps() {
     for cmd in curl tar openssl git; do
         command -v "$cmd" >/dev/null 2>&1 || missing+=("$cmd")
     done
-    # Docker bundles agent + OpenVPN in the image; a host install needs python3.
-    if [[ "$DOCKER" -eq 0 ]]; then
-        command -v python3 >/dev/null 2>&1 || missing+=("python3")
-    fi
     [[ ${#missing[@]} -eq 0 ]] || pkg_install "${missing[@]}"
     if [[ "$DOCKER" -eq 0 ]] && ! command -v openvpn >/dev/null 2>&1; then
         render_line "Installing OpenVPN + easy-rsa (for client PKI)..."
@@ -1944,17 +1829,34 @@ check_deps() {
 # ── Main ───────────────────────────────────────────────────────────────
 main() {
     parse_args "$@"
+    if [[ -n "$PIN" ]]; then
+        valid_release_version "$PIN" \
+            || fail "Bad --version '$PIN' (use 1.2.3, v1.2.3, 1.2.3-rc1)" "$EX_USAGE"
+        VERSION="${PIN#v}"
+    fi
+    # A local build replaces the download: the checkout is the release.
+    [[ "$LOCAL" -eq 1 ]] && do_local_build
+    load_helpers
+    # Defaults and validation must run before the install, local or not.
+    if [[ "$CLI_FLAGS" -eq 1 || "$ENV_INPUTS" -eq 1 || "$LOCAL" -eq 1 ]]; then
+        [[ -n "$PORT" ]]      || PORT="$DEFAULT_PORT"
+        [[ -n "$TLS_METHOD" ]]|| TLS_METHOD="selfsigned"
+        [[ -n "$VPN_PORTS" ]] || VPN_PORTS="$DEFAULT_VPN"
+        [[ -n "$NODE_NAME" ]] || NODE_NAME="ovnode"
+        validate_input
+    fi
+    # A local build always proceeds to install: the dev loop rsyncs and
+    # rebuilds, so "already installed" is not an error there.
+    if [[ "$LOCAL" -eq 1 ]]; then
+        do_install
+        exit "$EX_OK"
+    fi
     [[ -n "${OVN_SRC:-}" && "${OVN_SRC}" != "release" ]] && die "Source installs were removed — the installer consumes verified releases only (developers: clone the repo)" "$EX_USAGE"
     [[ -n "${OVN_BRANCH:-}" ]] && die "OVN_BRANCH was removed with source installs — developers: git checkout the branch in a clone" "$EX_USAGE"
     case "$SRC" in
         release) ;;
         *) die "Invalid source '$SRC' (releases only)" "$EX_USAGE" ;;
     esac
-    if [[ -n "$PIN" ]]; then
-        valid_release_version "$PIN" \
-            || die "Bad --version '$PIN' (use 1.2.3, v1.2.3, 1.2.3-rc1)" "$EX_USAGE"
-        VERSION="${PIN#v}"
-    fi
     # render_screen, not a bare `clear`: no escape-sequence fallback here, so a
     # host without terminfo silently skipped the wipe and the installer drew
     # itself over whatever was already on the terminal.
@@ -1968,16 +1870,6 @@ main() {
         repair-unit) do_repair_unit; exit "$EX_OK" ;;
         interactive) INTERACTIVE=1 ;;
     esac
-
-    # Must precede the already-installed guard: `install --port abc` should be
-    # exit 2 with the usage message, not exit 3 (Already installed).
-    if [[ "$CLI_FLAGS" -eq 1 || "$ENV_INPUTS" -eq 1 ]]; then
-        [[ -n "$PORT" ]]      || PORT="$DEFAULT_PORT"
-        [[ -n "$TLS_METHOD" ]]|| TLS_METHOD="selfsigned"
-        [[ -n "$VPN_PORTS" ]] || VPN_PORTS="$DEFAULT_VPN"
-        [[ -n "$NODE_NAME" ]] || NODE_NAME="ovnode"
-        validate_input
-    fi
 
     # install
     if [[ -d "$APP_DIR" ]]; then
@@ -2017,8 +1909,15 @@ main() {
     # value: `OVN_TLS=none` with no terminal is a plain-HTTP error, not a
     # complaint about the terminal. Checked in parse_args it masked every
     # validation message behind this one.
+    # A run with no terminal never prompts: every setting comes from its
+    # OVN_* variable or its default, and the choice is printed before
+    # anything on the box changes. The installer is a program a human can
+    # watch, not a script that needs a keyboard.
+    #
+    # The destructive path is not affected. confirm and confirm_word refuse
+    # to answer without a terminal, so a cron run can never delete a PKI.
     if [[ "$YES" -eq 0 ]] && ! is_tty; then
-        die "No interactive terminal. The default install asks questions; pass -y to accept the defaults without them." "$EX_USAGE"
+        YES=1
     fi
 
     # One line, not a nine-row card. A mistyped port or the wrong transport is
