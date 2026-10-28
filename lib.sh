@@ -650,6 +650,14 @@ render_begin() {
     return 0
 }
 
+# render_stage <title> — the numbered stage header the installer uses. A bar,
+# not a step: it separates the phases of a long install the way the panel's
+# installer does, and the number tells an operator how much is left.
+render_stage() {
+    printf '\n  ============================== %s ==============================\n' "$1" >&2
+    return 0
+}
+
 # render_done <detail> — close the step. An empty detail still says the step
 # finished, so the log never has a line that promises something and forgets it.
 render_done() {

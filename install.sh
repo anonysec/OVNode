@@ -1,4 +1,4 @@
-#!/bin/bash
+#!/usr/bin/env bash
 # Copyright (c) 2026 anonysec
 # SPDX-License-Identifier: MIT
 #
@@ -21,7 +21,7 @@
 
 set -Eeuo pipefail
 
-# ── Constants ──────────────────────────────────────────────────────────
+# ── Configuration ──────────────────────────────────────────────────────────
 VERSION="1.3.0"
 # Forks: point source downloads (and update pulls) at your own repo.
 REPO="${OVN_REPO:-anonysec/OVNode}"
@@ -51,7 +51,7 @@ CLI_NAME="ovnode"
 # Exit codes (documented in --help; stable for automation)
 EX_OK=0 EX_ERROR=1 EX_USAGE=2 EX_ALREADY=3 EX_NOTINSTALLED=4
 
-# ── Settings (env defaults OVN_*, overridden by CLI flags) ─────────────
+# ── Defaults ───────────────────────────────────────────────────────────
 ACTION="install"
 PORT="${OVN_PORT:-}"
 API_KEY="${OVN_KEY:-}"
@@ -90,7 +90,7 @@ unset _ovn_var
 # Derived by validate_input:
 VPN_PORT="" EXTRA_PORTS=""
 
-# ── Output ─────────────────────────────────────────────────────────────
+# ── Output helpers ─────────────────────────────────────────────────────
 # All human-readable output goes to stderr, so stdout stays clean for callers.
 NC=$'\033[0m'; B=$'\033[1m'
 WH=$'\033[97m'; GR=$'\033[32m'; RD=$'\033[31m'
@@ -111,7 +111,7 @@ fail() { printf '\n  %bError:%b %s\n\n' "${RD:-}" "${NC:-}" "$1" >&2; exit "${2:
 trap 'echo -e "\n  ${RD}Interrupted.${NC}" >&2; exit 130' INT TERM
 trap 'render_warn "Command failed near line $LINENO (running: ${BASH_COMMAND:0:80})"' ERR
 
-# ── OS / package manager ───────────────────────────────────────────────
+# ── Dependency checks ──────────────────────────────────────────────────
 OS_ID="" OS_NAME="" PKG_INSTALL="" PKG_UPDATE=""
 
 detect_os() {
@@ -142,144 +142,18 @@ pkg_install() {
     $PKG_INSTALL "$@" >/dev/null 2>&1 || die "Failed to install: $*"
 }
 
-# ── Help / args ────────────────────────────────────────────────────────
-# Goes to stderr, not line()/warn(): those are silenced by --quiet and by a
-# non-TTY, and a deprecation nobody sees is not a deprecation.
-deprecated() {  # deprecated <flag> <what to do instead>
-    printf '  %s⚠%s %s is deprecated; %s\n' "$YL" "$NC" "$1" "$2" >&2
-}
-
-# printf, not field(): field() is silenced by --quiet, and this command exists
-# to be read back by somebody else. A stale copy is normal (the raw CDN caches
-# for minutes); the commit prints only when something stamped it.
-print_script_version() {
-    printf '  %-18s %s\n' "Installer" "install.sh v${VERSION}" >&2
-    printf '  %-18s %s\n' "Commit" \
-        "${OVN_SCRIPT_COMMIT:-not recorded (this installer carries no commit stamp)}" >&2
-    exit "$EX_OK"
-}
-
-show_help() {
-    cat << EOF >&2
-  OVNode installer — host (systemd) or Docker. Interactive unless you pass -y.
-
-  Usage:
-    bash <(curl -Ls URL) [command] [flags]
-
-  No command? Zero-question install with safe generated values.
-  The start menu offers Install (host service) or Install with Docker.
-  The \`interactive\` command opens the numbered wizard instead.
-  Installs use safe defaults (ovnode, UDP, self-signed TLS,
-  generated API key). Plain HTTP is not offered.
-
-  Commands: (default: install)
-    update                Fetch the verified release and restart (state
-                          safety snapshot + code snapshot first,
-                          auto-rollback on failure)
-    recover-update        Recover an interrupted update transaction
-    repair-unit           Regenerate systemd unit / NAT / logrotate
-    uninstall             Remove OVNode (data kept unless OVN_PURGE=1)
-    interactive, -i       Numbered install wizard (Enter = default)
-    version-script        Print this installer's own version and commit
-    help                  This help
-
-  Everything else (status, logs, backup, restore, TLS, completion) lives
-  in the operator CLI: ovnode.
-
-  Options (every option has an OVN_* env equivalent; CLI wins):
-    -y, --yes             Never prompt, accept defaults       [OVN_YES=1]
-    --docker              Deploy in Docker (container runs agent + OpenVPN,
-                          host networking)                    [OVN_DOCKER=1]
-    --local [DIR]         Install from a checkout (default: this directory):
-                           rsync + go build + the same install the release
-                           path runs. Fetches nothing.       [OVN_LOCAL=1]
-    --src DIR             with --local: the checkout to install from
-    --dest DIR            with --local: the install destination
-
-  -h, --help              This help  (no env equivalent)
-
-  Deprecated (still works) — each flag is removed next release. Set the
-  OVN_* variable instead:
-    -p, --key KEY         API key, min 16 chars (generated if omitted)
-                                                              [OVN_KEY]
-    --name NAME           Node name                  [OVN_NAME, ovnode]
-    --port PORT           Sync API port                     [OVN_PORT, 2083]
-    --vpn-ports LIST      OpenVPN ports, comma separated [OVN_VPN_PORTS, 1194]
-                          First = listener; the rest are redirected to it and
-                          included in every .ovpn (client failover).
-    --proto PROTO         VPN transport: udp (default, faster) or tcp
-                          (fallback where UDP is blocked)          [OVN_PROTO]
-    --tls 1|2|3|4         1 selfsigned (default), 2 letsencrypt,
-                          3 letsencrypt-ip, 4 custom               [OVN_TLS]
-                          Plain HTTP ("none") is rejected.
-    --tls-domain DOM      Domain/IP for Let's Encrypt      [OVN_TLS_DOMAIN]
-    --tls-key  FILE       Private key (--tls 4)             [OVN_TLS_KEY]
-    --tls-cert FILE       Certificate (--tls 4)            [OVN_TLS_CERT]
-    --ipv6                Enable IPv6 on the VPN            [OVN_IPV6=1]
-    --no-nat              Skip forwarding/NAT/redirects     [OVN_NO_NAT=1]
-    --purge               With uninstall: remove data too   [OVN_PURGE=1]
-    --quiet | -q          Suppress progress logs (errors still shown)
-                                                           [OVN_QUIET=1]
-    -v, --version vX.Y.Z  Install/update this release instead of v${VERSION}
-                                                          [OVN_VERSION]
-
-  Exit codes:
-    0 success · 1 error · 2 usage error · 3 already installed ·
-    4 not installed
-
-  Without a terminal (never prompts; branch on the exit code):
-    OVN_KEY="\$API_KEY" bash install.sh -y
-EOF
-    exit "$EX_OK"
-}
-
-parse_args() {
-    local need2='[[ $# -ge 2 ]] || fail "$1 needs a value" "$EX_USAGE"'
-    while [[ $# -gt 0 ]]; do
-        case "$1" in
-            update)       ACTION="update"; CMD_GIVEN=1; shift ;;
-            uninstall) ACTION="uninstall"; CMD_GIVEN=1; shift ;;
-            recover-update) ACTION="recover-update"; CMD_GIVEN=1; shift ;;
-            repair-unit) ACTION="repair-unit"; CMD_GIVEN=1; shift ;;
-            version-script|script-version) print_script_version ;;
-            help|--help|-h) show_help ;;
-            --port)       eval "$need2"; deprecated "--port" "set OVN_PORT instead"; PORT="$2"; CLI_FLAGS=1; shift 2 ;;
-            -p|--key)       eval "$need2"; deprecated "$1" "set OVN_KEY instead"; API_KEY="$2"; CLI_FLAGS=1; shift 2 ;;
-            -v|--version)   eval "$need2"; deprecated "$1" "set OVN_VERSION instead"; PIN="$2"; CLI_FLAGS=1; shift 2 ;;
-            -i)             ACTION="interactive"; CMD_GIVEN=1; shift ;;
-            --vpn-ports|--vpn-port) eval "$need2"; deprecated "$1" "set OVN_VPN_PORTS instead"; VPN_PORTS="$2"; CLI_FLAGS=1; shift 2 ;;
-            --proto) eval "$need2"; deprecated "--proto" "set OVN_PROTO instead"; VPN_PROTO="$2"; CLI_FLAGS=1; shift 2 ;;
-            --name)       eval "$need2"; deprecated "--name" "set OVN_NAME instead"; NODE_NAME="$2"; CLI_FLAGS=1; shift 2 ;;
-            --tls)        eval "$need2"; deprecated "--tls" "set OVN_TLS instead"; CLI_FLAGS=1
-                          case "$2" in
-                              1|selfsigned) TLS_METHOD="selfsigned" ;;
-                              2|letsencrypt) TLS_METHOD="letsencrypt" ;;
-                              3|letsencrypt-ip) TLS_METHOD="letsencrypt-ip" ;;
-                              4|custom) TLS_METHOD="custom" ;;
-                              *) fail "Invalid --tls '$2' (use 1, 2, 3 or 4)" "$EX_USAGE" ;;
-                          esac
-                          shift 2 ;;
-            --tls-domain) eval "$need2"; deprecated "--tls-domain" "set OVN_TLS_DOMAIN instead"; TLS_DOMAIN="$2"; CLI_FLAGS=1; shift 2 ;;
-            --tls-key)    eval "$need2"; deprecated "--tls-key" "set OVN_TLS_KEY instead"; TLS_KEY="$2"; CLI_FLAGS=1; shift 2 ;;
-            --tls-cert)   eval "$need2"; deprecated "--tls-cert" "set OVN_TLS_CERT instead"; TLS_CERT="$2"; CLI_FLAGS=1; shift 2 ;;
-            --docker)     DOCKER=1; CLI_FLAGS=1; shift ;;
-            --local)      LOCAL=1; CLI_FLAGS=1; shift
-                           if [[ $# -ge 1 && "$1" != -* ]]; then SRC_DIR="$1"; shift; fi ;;
-            --src)        [[ $# -ge 2 ]] || fail "--src needs a value" "$EX_USAGE"; SRC_DIR="$2"; shift 2 ;;
-            --dest)       [[ $# -ge 2 ]] || fail "--dest needs a directory" "$EX_USAGE"; DEST_DIR="$2"; shift 2 ;;
-            --ipv6)       deprecated "--ipv6" "set OVN_IPV6=1 instead"; IPV6=1; CLI_FLAGS=1; shift ;;
-            --no-nat)     deprecated "--no-nat" "set OVN_NO_NAT=1 instead"; NO_NAT=1; CLI_FLAGS=1; shift ;;
-            --yes|-y)     YES=1; CLI_FLAGS=1; shift ;;
-            --purge)      deprecated "--purge" "set OVN_PURGE=1 instead"; PURGE=1; CLI_FLAGS=1; shift ;;
-            --quiet|-q)   deprecated "$1" "set OVN_QUIET=1 instead"; QUIET=1; shift ;;
-            status|start|stop|restart|restart-vpn|logs|backup|auto-backup|tls)
-                          fail "'$1' moved to the manager — use: ovnode $1" "$EX_USAGE" ;;
-            menu)         fail "The menu lives in the manager — run: ovnode" "$EX_USAGE" ;;
-            install)      fail "'install' is the default — just drop the word" "$EX_USAGE" ;;
-            interactive)  ACTION="interactive"; CMD_GIVEN=1; shift ;;
-            *)            fail "Unknown option: $1 (--help for usage)" "$EX_USAGE" ;;
-        esac
+# ── Preconditions ──────────────────────────────────────────────────────
+check_deps() {
+    local missing=() cmd
+    for cmd in curl tar openssl git; do
+        command -v "$cmd" >/dev/null 2>&1 || missing+=("$cmd")
     done
+    [[ ${#missing[@]} -eq 0 ]] || pkg_install "${missing[@]}"
+    if [[ "$DOCKER" -eq 0 ]] && ! command -v openvpn >/dev/null 2>&1; then
+        render_line "Installing OpenVPN + easy-rsa (for client PKI)..."
+        pkg_install openvpn easy-rsa
+    fi
+    render_ok "System dependencies present"
 }
 
 # ── Validation ─────────────────────────────────────────────────────────
@@ -364,186 +238,199 @@ vpn_ports_label() {
     fi
 }
 
-# ── Forwarding / NAT / multi-port redirects ────────────────────────────
-# IP forwarding is a host sysctl in both modes (a container usually cannot
-# write /proc/sys). The iptables rules live in one idempotent script owned by a
-# oneshot unit, host mode only; Docker's entrypoint applies them itself.
-write_sysctl() {
-    cat > "$SYSCTL_CONF" << 'SYSCTL'
-# OVNode: allow OpenVPN clients to route through this host
-net.ipv4.ip_forward = 1
-SYSCTL
-    if [[ "$IPV6" -eq 1 ]]; then
-        echo "net.ipv6.conf.all.forwarding = 1" >> "$SYSCTL_CONF"
-    fi
-    sysctl -p "$SYSCTL_CONF" >/dev/null 2>&1 || true
-    render_ok "IP forwarding enabled ($SYSCTL_CONF)"
+# ── Release fetch with retry ───────────────────────────────────────────
+# The release publishes bare per-platform binaries, each with a .sha256
+# sidecar. Nothing else: no tarball, no source tree, no helper scripts to
+# fetch. The installer downloads the product and its checksum, and the product
+# carries everything else it needs.
+detect_arch() {
+    case "$(uname -m)" in
+        x86_64|amd64)  printf 'amd64' ;;
+        aarch64|arm64) printf 'arm64' ;;
+        *) fail "Unsupported architecture: $(uname -m) (need x86_64 or aarch64)" ;;
+    esac
 }
 
-write_nat_files() {
-    cat > "$NAT_CONF" << CONF
-# OVNode NAT configuration (managed by install.sh)
-VPN_PRIMARY_PORT=${VPN_PORT}
-VPN_EXTRA_PORTS=${EXTRA_PORTS}
-CONF
+release_asset() { printf 'ovnode-linux-%s' "$(detect_arch)"; }
 
-    cat > "$NAT_SCRIPT" << 'NAT'
-#!/bin/bash
-# OVNode NAT: masquerade VPN client traffic through the default uplink and
-# redirect the extra VPN ports to the OpenVPN listener. Idempotent.
-# Usage: ovnode-nat.sh [apply|cleanup]
-set -u
-CONF="/etc/default/ovnode-nat"
-VPN_PRIMARY_PORT="" VPN_EXTRA_PORTS="" VPN_SUBNET="10.8.0.0/24" VPN_TUN_DEV="tun0"
-# shellcheck disable=SC1090
-[[ -f "$CONF" ]] && . "$CONF"
-
-rule() {  # rule <add|del> <table> <chain> <args...>
-    local op="$1" table="$2" chain="$3"; shift 3
-    if [[ "$op" == "add" ]]; then
-        iptables -t "$table" -C "$chain" "$@" 2>/dev/null || iptables -t "$table" -A "$chain" "$@"
-    else
-        iptables -t "$table" -D "$chain" "$@" 2>/dev/null || true
-    fi
+release_url() {
+    printf 'https://github.com/%s/releases/download/v%s/%s' \
+        "$REPO" "$VERSION" "$(release_asset)"
 }
 
-each_redirect() {  # each_redirect <add|del>
-    local op="$1" port proto
-    [[ -n "$VPN_PRIMARY_PORT" && -n "$VPN_EXTRA_PORTS" ]] || return 0
-    for port in ${VPN_EXTRA_PORTS//,/ }; do
-        for proto in tcp udp; do
-            rule "$op" nat PREROUTING -p "$proto" --dport "$port" \
-                -j REDIRECT --to-ports "$VPN_PRIMARY_PORT"
-        done
+release_checksum_url() { printf '%s.sha256' "$(release_url)"; }
+
+IMAGE_REPO="ghcr.io/${REPO,,}"
+
+# ── Transactional update state ────────────────────────────────────────
+# Journal and lock live beside node state (host paths in both modes: Docker
+# bind-mounts DATA_BASE). The maintenance marker lives inside the node's data
+# dir so the agent sees the same file the installer writes. Staging and
+# previous live beside the app.
+UPDATE_STATE="${DATA_BASE}/update-state.json"
+update_marker() { printf '%s/update-maintenance' "$(node_data_dir)"; }
+UPDATE_STAGE="$(dirname "$APP_DIR")/.ovnode.staging"
+UPDATE_PREVIOUS="$(dirname "$APP_DIR")/.ovnode.previous"
+OP_LOCK="${DATA_BASE}/.operation.lock"
+OP_LOCK_HELD=0
+
+operation_begin() {
+    local name="$1" owner=""
+    mkdir -p "$DATA_BASE"
+    if ! mkdir "$OP_LOCK" 2>/dev/null; then
+        owner="$(cat "$OP_LOCK/pid" 2>/dev/null || true)"
+        if [[ "$owner" =~ ^[0-9]+$ ]] && ! kill -0 "$owner" 2>/dev/null; then
+            render_warn "Removing stale operation lock from process $owner"
+            rm -rf "$OP_LOCK"
+            mkdir "$OP_LOCK" || die "Another maintenance operation is running" "$EX_ERROR"
+        else
+            die "Another maintenance operation is running${owner:+ (process $owner)}. Try again later." "$EX_ERROR"
+        fi
+    fi
+    printf '%s\n' "$$" > "$OP_LOCK/pid"
+    printf '%s\n' "$name" > "$OP_LOCK/action"
+    chmod 700 "$OP_LOCK"
+    OP_LOCK_HELD=1
+}
+
+operation_end() {
+    [[ "$OP_LOCK_HELD" -eq 1 ]] || return 0
+    rm -rf "$OP_LOCK"
+    OP_LOCK_HELD=0
+}
+
+# Persist one transaction phase atomically at 0600, so a crash cannot leave a
+# half-written journal.
+update_state() {
+    local phase="$1" from="${2:-unknown}" target="${3:-$VERSION}" backup="${4:-}" identity="${5:-}"
+    mkdir -p "$DATA_BASE"
+    "$AGENT_BIN" state write "$UPDATE_STATE" "$phase" "$from" "$target" "$backup" "$identity"
+}
+
+# sha256(node-name + API key): proves identity survived activation without
+# ever persisting a secret in the journal.
+identity_sha() {
+    "$AGENT_BIN" identity-sha "$1" "$2"
+}
+
+# fetch_release_binary <dir>: download this platform's binary and its checksum,
+# verify it, and install it as <dir>/ovnode. The .sha256 sidecar is mandatory:
+# unverified code is never installed, so a missing sidecar is a failure and
+# never a fallback to "install it anyway".
+fetch_release_binary() {
+    local dest="$1" work asset retries=0
+    asset="$(release_asset)"
+    work="$(mktemp -d /tmp/ovn.XXXXXX)"
+    trap 'rm -rf "$work"' EXIT
+
+    # Retry up to 3 times with exponential backoff. A release asset can be
+    # visible on the web page before the CDN has it everywhere, and a single
+    # 404 at that moment is not a reason to fail an install.
+    while true; do
+        if curl -fsSL --max-time 60 --retry 3 --retry-delay 2 --retry-max-time 120 \
+            -o "$work/$asset" "$(release_url)" 2>/dev/null; then
+            break
+        fi
+        retries=$((retries + 1))
+        if [[ $retries -ge 3 ]]; then
+            rm -rf "$work"
+            trap - EXIT
+            fail "No release file for v$VERSION — see https://github.com/$REPO/releases"
+        fi
+        sleep $((2 ** retries))
     done
+
+    curl -fsSL --max-time 30 --retry 2 -o "$work/$asset.sha256" "$(release_checksum_url)" \
+        || { rm -rf "$work"; trap - EXIT; fail "Release checksum file is missing for v$VERSION"; }
+    ( cd "$work" && sha256sum -c "$asset.sha256" >/dev/null ) \
+        || { rm -rf "$work"; trap - EXIT; fail "Release checksum mismatch for v$VERSION — possible tampering or incomplete download"; }
+    mkdir -p "$dest"
+    install -m 0755 "$work/$asset" "$dest/ovnode"
+    rm -rf "$work"
+    trap - EXIT
+    printf '  ok    release v%s verified and installed\n' "$VERSION" >&2
 }
 
-IFACE="$(ip route show default 2>/dev/null | awk '{print $5; exit}')"
-
-# Docker and other hardening set FORWARD policy DROP, which kills masqueraded
-# client traffic after POSTROUTING. Accept the VPN subnet through the
-# DOCKER-USER admin hook (evaluated before Docker's own jumps; recreated
-# empty by Docker, so re-added here on every apply).
-forward_rules() {  # forward_rules <add|del>
-    local op="$1"
-    iptables -L DOCKER-USER -n >/dev/null 2>&1 || return 0
-    rule "$op" filter DOCKER-USER -s "$VPN_SUBNET" -i "$VPN_TUN_DEV" -o "$IFACE" -j ACCEPT
-    rule "$op" filter DOCKER-USER -i "$IFACE" -o "$VPN_TUN_DEV" \
-        -m conntrack --ctstate RELATED,ESTABLISHED -j ACCEPT
+# Safety snapshot of every persistent state needed for rollback: identity
+# (.env), node data dir, OpenVPN state, API TLS files. One manifest-linked
+# tarball; state_restore consumes it after verification.
+state_safety_bundle() {
+    local from_version="$1" backup_root="/var/backups"
+    local node_data; node_data="$(node_data_dir)"
+    mkdir -p "$backup_root" "$node_data"
+    "$AGENT_BIN" installer bundle "$APP_DIR" "$node_data" "$OPENVPN_ROOT" "$backup_root" "$NODE_NAME" "$from_version"
+    # Retention for safety bundles.
+    ls -t "$backup_root"/ovnode-state-pre-update-*.tar.gz 2>/dev/null | tail -n +6 | xargs -r rm -f
+    return $?
 }
 
-case "${1:-apply}" in
-    apply)
-        if [[ -z "$IFACE" ]]; then echo "ovnode-nat: no default interface found" >&2; exit 1; fi
-        rule add nat POSTROUTING -o "$IFACE" -j MASQUERADE
-        each_redirect add
-        forward_rules add
-        ;;
-    cleanup)
-        [[ -n "$IFACE" ]] && rule del nat POSTROUTING -o "$IFACE" -j MASQUERADE
-        each_redirect del
-        [[ -n "$IFACE" ]] && forward_rules del
-        ;;
-    *) echo "usage: $0 [apply|cleanup]" >&2; exit 2 ;;
-esac
-NAT
-    chmod +x "$NAT_SCRIPT"
-
-    cat > "/etc/systemd/system/$NAT_SERVICE" << UNIT
-[Unit]
-Description=OVNode NAT (masquerade + VPN port redirects)
-After=network-online.target
-Wants=network-online.target
-
-[Service]
-Type=oneshot
-RemainAfterExit=yes
-ExecStart=$NAT_SCRIPT apply
-ExecStop=$NAT_SCRIPT cleanup
-
-[Install]
-WantedBy=multi-user.target
-UNIT
-    systemctl daemon-reload >/dev/null 2>&1
-    systemctl enable "$NAT_SERVICE" >/dev/null 2>&1
-    if systemctl restart "$NAT_SERVICE" >/dev/null 2>&1; then
-        if [[ -n "$EXTRA_PORTS" ]]; then
-            render_ok "NAT enabled, ports ${EXTRA_PORTS} → ${VPN_PORT}"
-        else
-            render_ok "NAT enabled"
-        fi
-    else
-        render_warn "Could not start NAT service — VPN clients may not route traffic"
-    fi
+# Restore state after a failed activation. Fails closed on any manifest or
+# checksum problem; never extracts unsafe member names.
+state_restore() {
+    local bundle="$1"
+    [[ -f "$bundle" ]] || return 1
+    "$AGENT_BIN" installer restore "$bundle" "$APP_DIR" "$DATA_BASE" "$OPENVPN_ROOT"
 }
 
-setup_nat() {
-    if [[ "$NO_NAT" -eq 1 ]]; then render_line "Skipping NAT setup (--no-nat)"; return 0; fi
-    write_sysctl
-    if [[ "$DOCKER" -eq 1 ]]; then
-        render_line "Docker mode: NAT/redirect rules are applied inside the container (CAP_NET_ADMIN)"
-        return 0
-    fi
-    if ! command -v iptables >/dev/null 2>&1; then
-        pkg_install iptables iproute2
-    fi
-    write_nat_files
+# Authenticated "version openvpn_running" from the agent. Empty output means
+# unreachable or rejected (identity broken).
+node_api_status() {
+    local key="$1" port="$2" tls="$3" scheme="http"
+    [[ "$tls" != "none" ]] && scheme="https"
+    curl -fskS --max-time 5 "${scheme}://127.0.0.1:${port}/sync/status" \
+        -H "key: ${key}" 2>/dev/null \
+        | grep -o '"version": *"[^"]*"' | head -1 | sed 's/.*"//;s/"$//' 2>/dev/null || true
 }
 
-# ── Log rotation ───────────────────────────────────────────────────────
-# `log-append openvpn.log` grows without bound and eventually fills a small
-# VPS disk. Host installs SIGHUP the daemon (clean reopen, no teardown); Docker
-# needs copytruncate because the daemon's PID namespace is unreachable from a
-# host postrotate.
-setup_logrotate() {
-    if ! command -v logrotate >/dev/null 2>&1; then
-        if [[ -n "$PKG_INSTALL" ]]; then
-            pkg_install logrotate
-        else
-            render_warn "logrotate not found — install it so openvpn.log gets rotated"
-            return 0
-        fi
-    fi
-    if [[ "${DOCKER:-0}" -eq 1 ]]; then
-        cat > "$LOGROTATE_CONF" << ROTATE
-${OPENVPN_ROOT}/server/openvpn.log {
-    size 10M
-    rotate 3
-    compress
-    missingok
-    notifempty
-    copytruncate
+write_env() {
+    # TUNNEL_ADDRESS is deliberately not written here: the panel pushes it
+    # via /sync/config.
+    #
+    # DATA_DIR is resolved through node_data_dir() so the file, the Docker
+    # volume and the installer's own bookkeeping cannot disagree about the path.
+    # On a fresh install there is no .env yet, so the helper falls back to the
+    # base — which is the flat layout this now uses.
+    cat > "$APP_DIR/.env" << EOF
+NODE_NAME=${NODE_NAME}
+DATA_DIR=$(node_data_dir)
+SERVICE_PORT=${PORT}
+API_KEY=${API_KEY}
+OPENVPN_PORT=${VPN_PORT}
+OVNODE_PROTO=${VPN_PROTO:-tcp}
+TLS_METHOD=${TLS_METHOD}
+$( if [[ -n "$EXTRA_PORTS" ]]; then echo "OVNODE_EXTRA_PORTS=${EXTRA_PORTS}"; fi )
+$( if [[ "$IPV6" -eq 1 ]]; then echo "OVNODE_ENABLE_IPV6=1"; fi )
+$( if [[ -n "$TLS_KEY" ]]; then echo "SSL_KEYFILE=${TLS_KEY}"; fi )
+$( if [[ -n "$TLS_CERT" ]]; then echo "SSL_CERTFILE=${TLS_CERT}"; fi )
+EOF
+    chmod 600 "$APP_DIR/.env"
+    render_ok ".env written"
 }
-ROTATE
-    else
-        cat > "$LOGROTATE_CONF" << ROTATE
-${OPENVPN_ROOT}/server/openvpn.log {
-    size 10M
-    rotate 3
-    compress
-    missingok
-    notifempty
-    postrotate
-        systemctl kill -s HUP $OPENVPN_SERVICE >/dev/null 2>&1 || true
-    endscript
-}
-ROTATE
-    fi
-    cat >> "$LOGROTATE_CONF" << 'ROTATE'
 
-/var/log/ovnode/hook-events.log {
-    daily
-    rotate 7
-    compress
-    missingok
-    notifempty
-    create 0640 root root
-    postrotate
-        # OpenVPN hooks continue to append to the new file; no signal needed
-    endscript
-}
-ROTATE
-    render_ok "Log rotation configured ($LOGROTATE_CONF)"
+# write_install_result <path>: the facts of this install, machine-readable.
+#
+# The output on the terminal is for a human; this file is for a program. A
+# provisioning run that cannot see the terminal still needs the port, the
+# service and the key. The values are escaped with %q so the file is safe to
+# source even when one of them contains a space or a quote.
+write_install_result() {
+    local path="$1"
+    mkdir -p "$(dirname "$path")"
+    {
+        printf 'OVNODE_VERSION=%q\n' "$VERSION"
+        printf 'OVNODE_NAME=%q\n' "$NODE_NAME"
+        printf 'OVNODE_API_PORT=%q\n' "$PORT"
+        printf 'OVNODE_VPN_PORT=%q\n' "$VPN_PORT"
+        printf 'OVNODE_VPN_EXTRA_PORTS=%q\n' "$EXTRA_PORTS"
+        printf 'OVNODE_VPN_PROTO=%q\n' "$VPN_PROTO"
+        printf 'OVNODE_TLS_METHOD=%q\n' "$TLS_METHOD"
+        printf 'OVNODE_API_KEY=%q\n' "$API_KEY"
+        printf 'OVNODE_DATA_DIR=%q\n' "$(node_data_dir)"
+        printf 'OVNODE_SERVICE=%q\n' "$SYSTEMD_SERVICE"
+        printf 'OVNODE_DOCKER=%q\n' "$DOCKER"
+    } > "$path"
+    chmod 600 "$path"
+    render_ok "install result written to $path"
 }
 
 # ── The agent binary ───────────────────────────────────────────────────
@@ -677,6 +564,160 @@ stop_native_openvpn() {
     fi
 }
 
+# ── Systemd units ──────────────────────────────────────────────────────
+write_systemd_unit() {
+    # ExecStart runs the Go binary that also answers the OpenVPN hooks.
+    local exec_start="${AGENT_BIN} serve"
+    cat > "/etc/systemd/system/$SYSTEMD_SERVICE" << UNIT
+[Unit]
+Description=OVNode OpenVPN Node Agent (${NODE_NAME})
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=root
+WorkingDirectory=${APP_DIR}
+EnvironmentFile=${APP_DIR}/.env
+ExecStart=${exec_start}
+Restart=on-failure
+RestartSec=3
+LimitNOFILE=65536
+
+[Install]
+WantedBy=multi-user.target
+UNIT
+    systemctl daemon-reload >/dev/null 2>&1
+    systemctl enable "$SYSTEMD_SERVICE" >/dev/null 2>&1
+    render_ok "systemd unit written: /etc/systemd/system/$SYSTEMD_SERVICE"
+}
+
+# ── Forwarding / NAT / multi-port redirects ────────────────────────────
+# IP forwarding is a host sysctl in both modes (a container usually cannot
+# write /proc/sys). The iptables rules live in one idempotent script owned by a
+# oneshot unit, host mode only; Docker's entrypoint applies them itself.
+write_sysctl() {
+    cat > "$SYSCTL_CONF" << 'SYSCTL'
+# OVNode: allow OpenVPN clients to route through this host
+net.ipv4.ip_forward = 1
+SYSCTL
+    if [[ "$IPV6" -eq 1 ]]; then
+        echo "net.ipv6.conf.all.forwarding = 1" >> "$SYSCTL_CONF"
+    fi
+    sysctl -p "$SYSCTL_CONF" >/dev/null 2>&1 || true
+    render_ok "IP forwarding enabled ($SYSCTL_CONF)"
+}
+
+write_nat_files() {
+    cat > "$NAT_CONF" << CONF
+# OVNode NAT configuration (managed by install.sh)
+VPN_PRIMARY_PORT=${VPN_PORT}
+VPN_EXTRA_PORTS=${EXTRA_PORTS}
+CONF
+
+    cat > "$NAT_SCRIPT" << 'NAT'
+#!/bin/bash
+# OVNode NAT: masquerade VPN client traffic through the default uplink and
+# redirect the extra VPN ports to the OpenVPN listener. Idempotent.
+# Usage: ovnode-nat.sh [apply|cleanup]
+set -u
+CONF="/etc/default/ovnode-nat"
+VPN_PRIMARY_PORT="" VPN_EXTRA_PORTS="" VPN_SUBNET="10.8.0.0/24" VPN_TUN_DEV="tun0"
+# shellcheck disable=SC1090
+[[ -f "$CONF" ]] && . "$CONF"
+
+rule() {  # rule <add|del> <table> <chain> <args...>
+    local op="$1" table="$2" chain="$3"; shift 3
+    if [[ "$op" == "add" ]]; then
+        iptables -t "$table" -C "$chain" "$@" 2>/dev/null || iptables -t "$table" -A "$chain" "$@"
+    else
+        iptables -t "$table" -D "$chain" "$@" 2>/dev/null || true
+    fi
+}
+
+each_redirect() {  # each_redirect <add|del>
+    local op="$1" port proto
+    [[ -n "$VPN_PRIMARY_PORT" && -n "$VPN_EXTRA_PORTS" ]] || return 0
+    for port in ${VPN_EXTRA_PORTS//,/ }; do
+        for proto in tcp udp; do
+            rule "$op" nat PREROUTING -p "$proto" --dport "$port" \
+                -j REDIRECT --to-ports "$VPN_PRIMARY_PORT"
+        done
+    done
+}
+
+IFACE="$(ip route show default 2>/dev/null | awk '{print $5; exit}')"
+
+# Docker and other hardening set FORWARD policy DROP, which kills masqueraded
+# client traffic after POSTROUTING. Accept the VPN subnet through the
+# DOCKER-USER admin hook (evaluated before Docker's own jumps; recreated
+# empty by Docker, so re-added here on every apply).
+forward_rules() {  # forward_rules <add|del>
+    local op="$1"
+    iptables -L DOCKER-USER -n >/dev/null 2>&1 || return 0
+    rule "$op" filter DOCKER-USER -s "$VPN_SUBNET" -i "$VPN_TUN_DEV" -o "$IFACE" -j ACCEPT
+    rule "$op" filter DOCKER-USER -i "$IFACE" -o "$VPN_TUN_DEV" \
+        -m conntrack --ctstate RELATED,ESTABLISHED -j ACCEPT
+}
+
+case "${1:-apply}" in
+    apply)
+        if [[ -z "$IFACE" ]]; then echo "ovnode-nat: no default interface found" >&2; exit 1; fi
+        rule add nat POSTROUTING -o "$IFACE" -j MASQUERADE
+        each_redirect add
+        forward_rules add
+        ;;
+    cleanup)
+        [[ -n "$IFACE" ]] && rule del nat POSTROUTING -o "$IFACE" -j MASQUERADE
+        each_redirect del
+        [[ -n "$IFACE" ]] && forward_rules del
+        ;;
+    *) echo "usage: $0 [apply|cleanup]" >&2; exit 2 ;;
+esac
+NAT
+    chmod +x "$NAT_SCRIPT"
+
+    cat > "/etc/systemd/system/$NAT_SERVICE" << UNIT
+[Unit]
+Description=OVNode NAT (masquerade + VPN port redirects)
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=oneshot
+RemainAfterExit=yes
+ExecStart=$NAT_SCRIPT apply
+ExecStop=$NAT_SCRIPT cleanup
+
+[Install]
+WantedBy=multi-user.target
+UNIT
+    systemctl daemon-reload >/dev/null 2>&1
+    systemctl enable "$NAT_SERVICE" >/dev/null 2>&1
+    if systemctl restart "$NAT_SERVICE" >/dev/null 2>&1; then
+        if [[ -n "$EXTRA_PORTS" ]]; then
+            render_ok "NAT enabled, ports ${EXTRA_PORTS} → ${VPN_PORT}"
+        else
+            render_ok "NAT enabled"
+        fi
+    else
+        render_warn "Could not start NAT service — VPN clients may not route traffic"
+    fi
+}
+
+setup_nat() {
+    if [[ "$NO_NAT" -eq 1 ]]; then render_line "Skipping NAT setup (--no-nat)"; return 0; fi
+    write_sysctl
+    if [[ "$DOCKER" -eq 1 ]]; then
+        render_line "Docker mode: NAT/redirect rules are applied inside the container (CAP_NET_ADMIN)"
+        return 0
+    fi
+    if ! command -v iptables >/dev/null 2>&1; then
+        pkg_install iptables iproute2
+    fi
+    write_nat_files
+}
+
 # ── Firewall ───────────────────────────────────────────────────────────
 # Every VPN port opens both protocols: the panel can switch udp/tcp at runtime,
 # and the extra-port redirects cover both.
@@ -727,35 +768,63 @@ close_firewall_ports() {
     fi
 }
 
-# ── Systemd unit ───────────────────────────────────────────────────────
-write_systemd_unit() {
-    # ExecStart runs the Go binary that also answers the OpenVPN hooks.
-    local exec_start="${AGENT_BIN} serve"
-    cat > "/etc/systemd/system/$SYSTEMD_SERVICE" << UNIT
-[Unit]
-Description=OVNode OpenVPN Node Agent (${NODE_NAME})
-After=network-online.target
-Wants=network-online.target
+# ── Log rotation ───────────────────────────────────────────────────────
+# `log-append openvpn.log` grows without bound and eventually fills a small
+# VPS disk. Host installs SIGHUP the daemon (clean reopen, no teardown); Docker
+# needs copytruncate because the daemon's PID namespace is unreachable from a
+# host postrotate.
+setup_logrotate() {
+    if ! command -v logrotate >/dev/null 2>&1; then
+        if [[ -n "$PKG_INSTALL" ]]; then
+            pkg_install logrotate
+        else
+            render_warn "logrotate not found — install it so openvpn.log gets rotated"
+            return 0
+        fi
+    fi
+    if [[ "${DOCKER:-0}" -eq 1 ]]; then
+        cat > "$LOGROTATE_CONF" << ROTATE
+${OPENVPN_ROOT}/server/openvpn.log {
+    size 10M
+    rotate 3
+    compress
+    missingok
+    notifempty
+    copytruncate
+}
+ROTATE
+    else
+        cat > "$LOGROTATE_CONF" << ROTATE
+${OPENVPN_ROOT}/server/openvpn.log {
+    size 10M
+    rotate 3
+    compress
+    missingok
+    notifempty
+    postrotate
+        systemctl kill -s HUP $OPENVPN_SERVICE >/dev/null 2>&1 || true
+    endscript
+}
+ROTATE
+    fi
+    cat >> "$LOGROTATE_CONF" << 'ROTATE'
 
-[Service]
-Type=simple
-User=root
-WorkingDirectory=${APP_DIR}
-EnvironmentFile=${APP_DIR}/.env
-ExecStart=${exec_start}
-Restart=on-failure
-RestartSec=3
-LimitNOFILE=65536
-
-[Install]
-WantedBy=multi-user.target
-UNIT
-    systemctl daemon-reload >/dev/null 2>&1
-    systemctl enable "$SYSTEMD_SERVICE" >/dev/null 2>&1
-    render_ok "systemd unit written: /etc/systemd/system/$SYSTEMD_SERVICE"
+/var/log/ovnode/hook-events.log {
+    daily
+    rotate 7
+    compress
+    missingok
+    notifempty
+    create 0640 root root
+    postrotate
+        # OpenVPN hooks continue to append to the new file; no signal needed
+    endscript
+}
+ROTATE
+    render_ok "Log rotation configured ($LOGROTATE_CONF)"
 }
 
-# ── The local build ───────────────────────────────────────────────────
+# ── Dev install from source ────────────────────────────────────────────
 # Install from a checkout instead of a release: rsync the tree, build the
 # binary, and run the same install the release path runs. Nothing is
 # fetched, so nothing is verified — this is the dev loop, not what a server
@@ -797,183 +866,6 @@ load_helpers() {
         || fail "Could not write the installer helpers into $APP_DIR"
     # shellcheck disable=SC1091
     . "$APP_DIR/lib.sh"
-}
-
-# ── Release fetch ──────────────────────────────────────────────────────
-# The release publishes bare per-platform binaries, each with a .sha256
-# sidecar. Nothing else: no tarball, no source tree, no helper scripts to
-# fetch. The installer downloads the product and its checksum, and the product
-# carries everything else it needs.
-detect_arch() {
-    case "$(uname -m)" in
-        x86_64|amd64)  printf 'amd64' ;;
-        aarch64|arm64) printf 'arm64' ;;
-        *) fail "Unsupported architecture: $(uname -m) (need x86_64 or aarch64)" ;;
-    esac
-}
-
-release_asset() { printf 'ovnode-linux-%s' "$(detect_arch)"; }
-
-release_url() {
-    printf 'https://github.com/%s/releases/download/v%s/%s' \
-        "$REPO" "$VERSION" "$(release_asset)"
-}
-
-release_checksum_url() { printf '%s.sha256' "$(release_url)"; }
-
-IMAGE_REPO="ghcr.io/${REPO,,}"
-
-# ── Transactional update state ────────────────────────────────────────
-# Journal and lock live beside node state (host paths in both modes: Docker
-# bind-mounts DATA_BASE). The maintenance marker lives inside the node's data
-# dir so the agent sees the same file the installer writes. Staging and
-# previous live beside the app.
-UPDATE_STATE="${DATA_BASE}/update-state.json"
-update_marker() { printf '%s/update-maintenance' "$(node_data_dir)"; }
-UPDATE_STAGE="$(dirname "$APP_DIR")/.ovnode.staging"
-UPDATE_PREVIOUS="$(dirname "$APP_DIR")/.ovnode.previous"
-OP_LOCK="${DATA_BASE}/.operation.lock"
-OP_LOCK_HELD=0
-
-operation_begin() {
-    local name="$1" owner=""
-    mkdir -p "$DATA_BASE"
-    if ! mkdir "$OP_LOCK" 2>/dev/null; then
-        owner="$(cat "$OP_LOCK/pid" 2>/dev/null || true)"
-        if [[ "$owner" =~ ^[0-9]+$ ]] && ! kill -0 "$owner" 2>/dev/null; then
-            render_warn "Removing stale operation lock from process $owner"
-            rm -rf "$OP_LOCK"
-            mkdir "$OP_LOCK" || die "Another maintenance operation is running" "$EX_ERROR"
-        else
-            die "Another maintenance operation is running${owner:+ (process $owner)}. Try again later." "$EX_ERROR"
-        fi
-    fi
-    printf '%s\n' "$$" > "$OP_LOCK/pid"
-    printf '%s\n' "$name" > "$OP_LOCK/action"
-    chmod 700 "$OP_LOCK"
-    OP_LOCK_HELD=1
-}
-
-operation_end() {
-    [[ "$OP_LOCK_HELD" -eq 1 ]] || return 0
-    rm -rf "$OP_LOCK"
-    OP_LOCK_HELD=0
-}
-
-# Persist one transaction phase atomically at 0600, so a crash cannot leave a
-# half-written journal.
-update_state() {
-    local phase="$1" from="${2:-unknown}" target="${3:-$VERSION}" backup="${4:-}" identity="${5:-}"
-    mkdir -p "$DATA_BASE"
-    "$AGENT_BIN" state write "$UPDATE_STATE" "$phase" "$from" "$target" "$backup" "$identity"
-}
-
-# sha256(node-name + API key): proves identity survived activation without
-# ever persisting a secret in the journal.
-identity_sha() {
-    "$AGENT_BIN" identity-sha "$1" "$2"
-}
-
-# fetch_release_binary <dir>: download this platform's binary and its checksum,
-# verify it, and install it as <dir>/ovnode. The .sha256 sidecar is mandatory:
-# unverified code is never installed, so a missing sidecar is a failure and
-# never a fallback to "install it anyway".
-fetch_release_binary() {
-    local dest="$1" work asset
-    asset="$(release_asset)"
-    work="$(mktemp -d /tmp/ovn.XXXXXX)"
-    curl -fsSL -o "$work/$asset" "$(release_url)" \
-        || { rm -rf "$work"; fail "No release file for v$VERSION — see https://github.com/$REPO/releases"; }
-    curl -fsSL -o "$work/$asset.sha256" "$(release_checksum_url)" \
-        || { rm -rf "$work"; fail "Release checksum file is missing for v$VERSION"; }
-    ( cd "$work" && sha256sum -c "$asset.sha256" >/dev/null ) \
-        || { rm -rf "$work"; fail "Release checksum mismatch for v$VERSION"; }
-    mkdir -p "$dest"
-    install -m 0755 "$work/$asset" "$dest/ovnode"
-    rm -rf "$work"
-    printf '  ok    release v%s verified and installed\n' "$VERSION" >&2
-}
-
-# Safety snapshot of every persistent state needed for rollback: identity
-# (.env), node data dir, OpenVPN state, API TLS files. One manifest-linked
-# tarball; state_restore consumes it after verification.
-state_safety_bundle() {
-    local from_version="$1" backup_root="/var/backups"
-    local node_data; node_data="$(node_data_dir)"
-    mkdir -p "$backup_root" "$node_data"
-    "$AGENT_BIN" installer bundle "$APP_DIR" "$node_data" "$OPENVPN_ROOT" "$backup_root" "$NODE_NAME" "$from_version"
-    # Retention for safety bundles.
-    ls -t "$backup_root"/ovnode-state-pre-update-*.tar.gz 2>/dev/null | tail -n +6 | xargs -r rm -f
-    return $?
-}
-
-# Restore state after a failed activation. Fails closed on any manifest or
-# checksum problem; never extracts unsafe member names.
-state_restore() {
-    local bundle="$1"
-    [[ -f "$bundle" ]] || return 1
-    "$AGENT_BIN" installer restore "$bundle" "$APP_DIR" "$DATA_BASE" "$OPENVPN_ROOT"
-}
-
-# Authenticated "version openvpn_running" from the agent. Empty output means
-# unreachable or rejected (identity broken).
-node_api_status() {
-    local key="$1" port="$2" tls="$3" scheme="http"
-    [[ "$tls" != "none" ]] && scheme="https"
-    curl -fskS --max-time 5 "${scheme}://127.0.0.1:${port}/sync/status" \
-        -H "key: ${key}" 2>/dev/null \
-        | grep -o '"version": *"[^"]*"' | head -1 | sed 's/.*"//;s/"$//' 2>/dev/null || true
-}
-
-write_env() {
-    # TUNNEL_ADDRESS is deliberately not written here: the panel pushes it
-    # via /sync/config.
-    #
-    # DATA_DIR is resolved through node_data_dir() so the file, the Docker
-    # volume and the installer's own bookkeeping cannot disagree about the path.
-    # On a fresh install there is no .env yet, so the helper falls back to the
-    # base — which is the flat layout this now uses.
-    cat > "$APP_DIR/.env" << EOF
-NODE_NAME=${NODE_NAME}
-DATA_DIR=$(node_data_dir)
-SERVICE_PORT=${PORT}
-API_KEY=${API_KEY}
-OPENVPN_PORT=${VPN_PORT}
-OVNODE_PROTO=${VPN_PROTO:-tcp}
-TLS_METHOD=${TLS_METHOD}
-$( if [[ -n "$EXTRA_PORTS" ]]; then echo "OVNODE_EXTRA_PORTS=${EXTRA_PORTS}"; fi )
-$( if [[ "$IPV6" -eq 1 ]]; then echo "OVNODE_ENABLE_IPV6=1"; fi )
-$( if [[ -n "$TLS_KEY" ]]; then echo "SSL_KEYFILE=${TLS_KEY}"; fi )
-$( if [[ -n "$TLS_CERT" ]]; then echo "SSL_CERTFILE=${TLS_CERT}"; fi )
-EOF
-    chmod 600 "$APP_DIR/.env"
-    render_ok ".env written"
-}
-
-# write_install_result <path>: the facts of this install, machine-readable.
-#
-# The output on the terminal is for a human; this file is for a program. A
-# provisioning run that cannot see the terminal still needs the port, the
-# service and the key. The values are escaped with %q so the file is safe to
-# source even when one of them contains a space or a quote.
-write_install_result() {
-    local path="$1"
-    mkdir -p "$(dirname "$path")"
-    {
-        printf 'OVNODE_VERSION=%q\n' "$VERSION"
-        printf 'OVNODE_NAME=%q\n' "$NODE_NAME"
-        printf 'OVNODE_API_PORT=%q\n' "$PORT"
-        printf 'OVNODE_VPN_PORT=%q\n' "$VPN_PORT"
-        printf 'OVNODE_VPN_EXTRA_PORTS=%q\n' "$EXTRA_PORTS"
-        printf 'OVNODE_VPN_PROTO=%q\n' "$VPN_PROTO"
-        printf 'OVNODE_TLS_METHOD=%q\n' "$TLS_METHOD"
-        printf 'OVNODE_API_KEY=%q\n' "$API_KEY"
-        printf 'OVNODE_DATA_DIR=%q\n' "$(node_data_dir)"
-        printf 'OVNODE_SERVICE=%q\n' "$SYSTEMD_SERVICE"
-        printf 'OVNODE_DOCKER=%q\n' "$DOCKER"
-    } > "$path"
-    chmod 600 "$path"
-    render_ok "install result written to $path"
 }
 
 # ── Docker ─────────────────────────────────────────────────────────────
@@ -1069,30 +961,28 @@ COMPOSE
     render_ok "Compose file written: $compose (image ${IMAGE_REPO}:${tag})"
 }
 
-# ── Install ────────────────────────────────────────────────────────────
+# ── Main install ───────────────────────────────────────────────────────
 do_install() {
+    render_stage "[1/7] Preflight"
     check_root
     check_deps
+    render_ok "$(preflight_summary)"
 
-    render_begin "preflight"
-    render_done "$(preflight_summary)"
-
+    render_stage "[2/7] Download"
     if [[ "$LOCAL" -eq 0 ]]; then
-        render_begin "release"
         fetch_release_binary "$APP_DIR"
     else
-        render_begin "release"
-        render_done "built from checkout"
+        render_ok "built from checkout"
     fi
 
-    render_begin "certificate"
+    render_stage "[3/7] Certificate"
     if [[ "$DOCKER" -eq 0 ]]; then
         cd "$APP_DIR"
         render_note "$(tls_summary)"
     fi
     setup_tls
     write_env
-    render_done "$(tls_summary)"
+    render_ok "$(tls_summary)"
 
     local scheme="http"
     [[ "$TLS_METHOD" != "none" ]] && scheme="https"
@@ -1107,35 +997,35 @@ do_install() {
     # on a box that already has a CA is a no-op.
     run "Generating node PKI" "$AGENT_BIN" ca init
 
-    render_begin "runtime"
+    render_stage "[4/7] Runtime"
     if [[ "$DOCKER" -eq 1 ]]; then
         setup_docker
-        render_done "container"
+        render_ok "container"
     else
         if ! has_systemd; then
-            render_done "no systemd — start the agent by hand"
+            render_ok "no systemd — start the agent by hand"
             render_warn "systemd not found — start the agent manually: $AGENT_BIN serve"
         else
             write_systemd_unit
             render_note "$SYSTEMD_SERVICE"
             systemctl_bounded restart "$SYSTEMD_SERVICE" >/dev/null 2>&1 \
                 || die "Could not start $SYSTEMD_SERVICE"
-            render_done "active"
+            render_ok "active"
         fi
     fi
 
     # First boot generates the PKI + server.conf, so wait for /sync/health
     # before bringing up OpenVPN.
-    render_begin "health"
+    render_stage "[5/7] Health"
     if ! wait_health_live "${scheme}://127.0.0.1:${PORT}/sync/health" 60; then
         render_fail "health" "no answer on /sync/health after 60s"
         render_next "ovnode logs 50" "$(installer_uninstall_command)"
         return 1
     fi
-    render_done "200"
+    render_ok "200"
     [[ "$DOCKER" -eq 1 ]] && check_container_openvpn
 
-    render_begin "vpn"
+    render_stage "[6/7] VPN"
     # Docker runs the daemon inside the container (entrypoint-supervised) and
     # evicts any host daemon holding the VPN/management ports.
     if [[ "$DOCKER" -eq 0 ]]; then
@@ -1147,11 +1037,11 @@ do_install() {
     setup_nat
     setup_logrotate
     open_firewall_ports
-    render_done "$(vpn_ports_label)/$VPN_PROTO"
+    render_ok "$(vpn_ports_label)/$VPN_PROTO"
 
-    render_begin "command"
+    render_stage "[7/7] Command"
     install_cli
-    render_done "$BIN_DIR/$CLI_NAME"
+    render_ok "$BIN_DIR/$CLI_NAME"
 
     write_install_result "$DATA_BASE/install-result.env"
     node_success_card "$scheme" "$host"
@@ -1237,9 +1127,9 @@ do_update() {
         flat_migration_needed=1
     fi
     if (( flat_migration_needed )); then
-        render_begin "migrate data"
+        render_stage "Migrate data"
         if migrate_flat_data_dir; then
-            render_done "data directory flattened"
+            render_ok "data directory flattened"
         else
             render_end
             die "Could not move the node data to $DATA_BASE — nothing was changed"
@@ -1290,14 +1180,14 @@ do_update() {
     scheme="http"; [[ "$TLS_METHOD" != "none" ]] && scheme="https"
     update_state preflight "$from_version" "$VERSION" "" "$identity"
 
-    render_begin "backup"
+    render_stage "[1/6] Backup"
     safety="$(state_safety_bundle "$from_version")" || die "Could not create the mandatory state safety snapshot" "$EX_ERROR"
     [[ -n "$safety" && -f "$safety" ]] || die "The state safety snapshot was not created" "$EX_ERROR"
     snapshot="$(snapshot_code "$APP_DIR" "node" 2)"
-    render_done "$(basename "$safety" 2>/dev/null)"
+    render_ok "$(basename "$safety" 2>/dev/null)"
     update_state staging "$from_version" "$VERSION" "$safety" "$identity"
 
-    render_begin "stage"
+    render_stage "[2/6] Stage"
     rm -rf "$UPDATE_STAGE"
     mkdir -p "$UPDATE_STAGE"
     if [[ "$DOCKER" -eq 1 ]]; then
@@ -1316,9 +1206,9 @@ do_update() {
         staged="$("$UPDATE_STAGE/ovnode" version 2>/dev/null || true)"
         [[ "$staged" == "$VERSION" ]] || die "Staged release reports '$staged', expected $VERSION" "$EX_ERROR"
     fi
-    render_done ""
+    render_ok ""
 
-    render_begin "maintenance"
+    render_stage "[3/6] Maintenance"
     : > "$(update_marker)"
     chmod 600 "$(update_marker)"
     update_state activating "$from_version" "$VERSION" "$safety" "$identity"
@@ -1328,9 +1218,9 @@ do_update() {
         # The OpenVPN daemon keeps serving clients; only the agent stops.
         systemctl_bounded stop "$SYSTEMD_SERVICE" >/dev/null 2>&1 || true
     fi
-    render_done "agent paused"
+    render_ok "agent paused"
 
-    render_begin "activate"
+    render_stage "[4/6] Activate"
     if [[ "$DOCKER" -eq 1 ]]; then
         IMAGE_TAG="$VERSION" write_compose_file
         ( cd "$APP_DIR" && docker compose -f "$(compose_file)" up -d ) >/dev/null 2>&1 \
@@ -1365,9 +1255,9 @@ do_update() {
         install_agent_binary || render_warn "The node keeps the previous ovnode binary"
         run "Candidate agent started" systemctl_bounded restart "$SYSTEMD_SERVICE" && start_ok=1 || true
     fi
-    render_done ""
+    render_ok ""
 
-    render_begin "verify"
+    render_stage "[5/6] Verify"
     update_state verifying "$from_version" "$VERSION" "$safety" "$identity"
     if [[ "$start_ok" -eq 1 ]] && wait_health "${scheme}://127.0.0.1:${PORT}/sync/health" 60; then
         local reported vpn_ok ident_ok
@@ -1389,7 +1279,7 @@ do_update() {
         node_failover "$from_version" "$VERSION" "$safety" "$identity" "$snapshot"
     fi
 
-    render_begin "commit"
+    render_stage "[6/6] Commit"
     rm -f "$(update_marker)"
     if [[ "$DOCKER" -eq 0 ]]; then
         setup_nat
@@ -1402,7 +1292,7 @@ do_update() {
         die "Candidate passed verification but failed its final check. Writes are blocked; run: ovnode recover-update" "$EX_ERROR"
     fi
     update_state committed "$from_version" "$VERSION" "$safety" "$identity"
-    render_done "v${from_version} → v${VERSION}"
+    render_ok "v${from_version} → v${VERSION}"
     operation_end
     install_cli
     [[ "$DOCKER" -eq 1 ]] || render_line "  rollback: $CLI_NAME rollback"
@@ -1627,7 +1517,7 @@ do_uninstall() {
     confirm_word "delete the data and the PKI as well? type purge" "purge" && PURGE=1
     confirm "remove the app and stop all services?" n || die "Cancelled."
 
-    render_begin "uninstall"
+    render_stage "[1/1] Uninstall"
     # Stopping the NAT unit runs its ExecStop cleanup (rules removed).
     systemctl_bounded stop "$SYSTEMD_SERVICE"
     systemctl_bounded stop "$NAT_SERVICE"
@@ -1653,9 +1543,9 @@ do_uninstall() {
         rm -rf "$DATA_BASE"
         backup_dir "$OPENVPN_ROOT" "openvpn-pre-purge"
         rm -rf "$OPENVPN_ROOT"
-        render_done "data and PKI removed · backups in /var/backups"
+        render_ok "data and PKI removed · backups in /var/backups"
     else
-        render_done "app removed · data kept at $DATA_BASE"
+        render_ok "app removed · data kept at $DATA_BASE"
     fi
     render_blank
 }
@@ -1812,18 +1702,144 @@ remove_cli() {
     rm -f "${OVN_COMPLETION_DIR:-/etc/bash_completion.d}/ovnode" 2>/dev/null || true
 }
 
-# ── Preconditions ──────────────────────────────────────────────────────
-check_deps() {
-    local missing=() cmd
-    for cmd in curl tar openssl git; do
-        command -v "$cmd" >/dev/null 2>&1 || missing+=("$cmd")
+# ── Help / args ────────────────────────────────────────────────────────
+# Goes to stderr, not line()/warn(): those are silenced by --quiet and by a
+# non-TTY, and a deprecation nobody sees is not a deprecation.
+deprecated() {  # deprecated <flag> <what to do instead>
+    printf '  %s⚠%s %s is deprecated; %s\n' "$YL" "$NC" "$1" "$2" >&2
+}
+
+# printf, not field(): field() is silenced by --quiet, and this command exists
+# to be read back by somebody else. A stale copy is normal (the raw CDN caches
+# for minutes); the commit prints only when something stamped it.
+print_script_version() {
+    printf '  %-18s %s\n' "Installer" "install.sh v${VERSION}" >&2
+    printf '  %-18s %s\n' "Commit" \
+        "${OVN_SCRIPT_COMMIT:-not recorded (this installer carries no commit stamp)}" >&2
+    exit "$EX_OK"
+}
+
+show_help() {
+    cat << EOF >&2
+  OVNode installer — host (systemd) or Docker. Interactive unless you pass -y.
+
+  Usage:
+    bash <(curl -Ls URL) [command] [flags]
+
+  No command? Zero-question install with safe generated values.
+  The start menu offers Install (host service) or Install with Docker.
+  The \`interactive\` command opens the numbered wizard instead.
+  Installs use safe defaults (ovnode, UDP, self-signed TLS,
+  generated API key). Plain HTTP is not offered.
+
+  Commands: (default: install)
+    update                Fetch the verified release and restart (state
+                          safety snapshot + code snapshot first,
+                          auto-rollback on failure)
+    recover-update        Recover an interrupted update transaction
+    repair-unit           Regenerate systemd unit / NAT / logrotate
+    uninstall             Remove OVNode (data kept unless OVN_PURGE=1)
+    interactive, -i       Numbered install wizard (Enter = default)
+    version-script        Print this installer's own version and commit
+    help                  This help
+
+  Everything else (status, logs, backup, restore, TLS, completion) lives
+  in the operator CLI: ovnode.
+
+  Options (every option has an OVN_* env equivalent; CLI wins):
+    -y, --yes             Never prompt, accept defaults       [OVN_YES=1]
+    --docker              Deploy in Docker (container runs agent + OpenVPN,
+                          host networking)                    [OVN_DOCKER=1]
+    --local [DIR]         Install from a checkout (default: this directory):
+                           rsync + go build + the same install the release
+                           path runs. Fetches nothing.       [OVN_LOCAL=1]
+    --src DIR             with --local: the checkout to install from
+    --dest DIR            with --local: the install destination
+
+  -h, --help              This help  (no env equivalent)
+
+  Deprecated (still works) — each flag is removed next release. Set the
+  OVN_* variable instead:
+    -p, --key KEY         API key, min 16 chars (generated if omitted)
+                                                              [OVN_KEY]
+    --name NAME           Node name                  [OVN_NAME, ovnode]
+    --port PORT           Sync API port                     [OVN_PORT, 2083]
+    --vpn-ports LIST      OpenVPN ports, comma separated [OVN_VPN_PORTS, 1194]
+                          First = listener; the rest are redirected to it and
+                          included in every .ovpn (client failover).
+    --proto PROTO         VPN transport: udp (default, faster) or tcp
+                          (fallback where UDP is blocked)          [OVN_PROTO]
+    --tls 1|2|3|4         1 selfsigned (default), 2 letsencrypt,
+                          3 letsencrypt-ip, 4 custom               [OVN_TLS]
+                          Plain HTTP ("none") is rejected.
+    --tls-domain DOM      Domain/IP for Let's Encrypt      [OVN_TLS_DOMAIN]
+    --tls-key  FILE       Private key (--tls 4)             [OVN_TLS_KEY]
+    --tls-cert FILE       Certificate (--tls 4)            [OVN_TLS_CERT]
+    --ipv6                Enable IPv6 on the VPN            [OVN_IPV6=1]
+    --no-nat              Skip forwarding/NAT/redirects     [OVN_NO_NAT=1]
+    --purge               With uninstall: remove data too   [OVN_PURGE=1]
+    --quiet | -q          Suppress progress logs (errors still shown)
+                                                           [OVN_QUIET=1]
+    -v, --version vX.Y.Z  Install/update this release instead of v${VERSION}
+                                                          [OVN_VERSION]
+
+  Exit codes:
+    0 success · 1 error · 2 usage error · 3 already installed ·
+    4 not installed
+
+  Without a terminal (never prompts; branch on the exit code):
+    OVN_KEY="\$API_KEY" bash install.sh -y
+EOF
+    exit "$EX_OK"
+}
+
+parse_args() {
+    local need2='[[ $# -ge 2 ]] || fail "$1 needs a value" "$EX_USAGE"'
+    while [[ $# -gt 0 ]]; do
+        case "$1" in
+            update)       ACTION="update"; CMD_GIVEN=1; shift ;;
+            uninstall) ACTION="uninstall"; CMD_GIVEN=1; shift ;;
+            recover-update) ACTION="recover-update"; CMD_GIVEN=1; shift ;;
+            repair-unit) ACTION="repair-unit"; CMD_GIVEN=1; shift ;;
+            version-script|script-version) print_script_version ;;
+            help|--help|-h) show_help ;;
+            --port)       eval "$need2"; deprecated "--port" "set OVN_PORT instead"; PORT="$2"; CLI_FLAGS=1; shift 2 ;;
+            -p|--key)       eval "$need2"; deprecated "$1" "set OVN_KEY instead"; API_KEY="$2"; CLI_FLAGS=1; shift 2 ;;
+            -v|--version)   eval "$need2"; deprecated "$1" "set OVN_VERSION instead"; PIN="$2"; CLI_FLAGS=1; shift 2 ;;
+            -i)             ACTION="interactive"; CMD_GIVEN=1; shift ;;
+            --vpn-ports|--vpn-port) eval "$need2"; deprecated "$1" "set OVN_VPN_PORTS instead"; VPN_PORTS="$2"; CLI_FLAGS=1; shift 2 ;;
+            --proto) eval "$need2"; deprecated "--proto" "set OVN_PROTO instead"; VPN_PROTO="$2"; CLI_FLAGS=1; shift 2 ;;
+            --name)       eval "$need2"; deprecated "--name" "set OVN_NAME instead"; NODE_NAME="$2"; CLI_FLAGS=1; shift 2 ;;
+            --tls)        eval "$need2"; deprecated "--tls" "set OVN_TLS instead"; CLI_FLAGS=1
+                          case "$2" in
+                              1|selfsigned) TLS_METHOD="selfsigned" ;;
+                              2|letsencrypt) TLS_METHOD="letsencrypt" ;;
+                              3|letsencrypt-ip) TLS_METHOD="letsencrypt-ip" ;;
+                              4|custom) TLS_METHOD="custom" ;;
+                              *) fail "Invalid --tls '$2' (use 1, 2, 3 or 4)" "$EX_USAGE" ;;
+                          esac
+                          shift 2 ;;
+            --tls-domain) eval "$need2"; deprecated "--tls-domain" "set OVN_TLS_DOMAIN instead"; TLS_DOMAIN="$2"; CLI_FLAGS=1; shift 2 ;;
+            --tls-key)    eval "$need2"; deprecated "--tls-key" "set OVN_TLS_KEY instead"; TLS_KEY="$2"; CLI_FLAGS=1; shift 2 ;;
+            --tls-cert)   eval "$need2"; deprecated "--tls-cert" "set OVN_TLS_CERT instead"; TLS_CERT="$2"; CLI_FLAGS=1; shift 2 ;;
+            --docker)     DOCKER=1; CLI_FLAGS=1; shift ;;
+            --local)      LOCAL=1; CLI_FLAGS=1; shift
+                           if [[ $# -ge 1 && "$1" != -* ]]; then SRC_DIR="$1"; shift; fi ;;
+            --src)        [[ $# -ge 2 ]] || fail "--src needs a value" "$EX_USAGE"; SRC_DIR="$2"; shift 2 ;;
+            --dest)       [[ $# -ge 2 ]] || fail "--dest needs a directory" "$EX_USAGE"; DEST_DIR="$2"; shift 2 ;;
+            --ipv6)       deprecated "--ipv6" "set OVN_IPV6=1 instead"; IPV6=1; CLI_FLAGS=1; shift ;;
+            --no-nat)     deprecated "--no-nat" "set OVN_NO_NAT=1 instead"; NO_NAT=1; CLI_FLAGS=1; shift ;;
+            --yes|-y)     YES=1; CLI_FLAGS=1; shift ;;
+            --purge)      deprecated "--purge" "set OVN_PURGE=1 instead"; PURGE=1; CLI_FLAGS=1; shift ;;
+            --quiet|-q)   deprecated "$1" "set OVN_QUIET=1 instead"; QUIET=1; shift ;;
+            status|start|stop|restart|restart-vpn|logs|backup|auto-backup|tls)
+                          fail "'$1' moved to the manager — use: ovnode $1" "$EX_USAGE" ;;
+            menu)         fail "The menu lives in the manager — run: ovnode" "$EX_USAGE" ;;
+            install)      fail "'install' is the default — just drop the word" "$EX_USAGE" ;;
+            interactive)  ACTION="interactive"; CMD_GIVEN=1; shift ;;
+            *)            fail "Unknown option: $1 (--help for usage)" "$EX_USAGE" ;;
+        esac
     done
-    [[ ${#missing[@]} -eq 0 ]] || pkg_install "${missing[@]}"
-    if [[ "$DOCKER" -eq 0 ]] && ! command -v openvpn >/dev/null 2>&1; then
-        render_line "Installing OpenVPN + easy-rsa (for client PKI)..."
-        pkg_install openvpn easy-rsa
-    fi
-    render_ok "System dependencies present"
 }
 
 # ── Main ───────────────────────────────────────────────────────────────
