@@ -74,32 +74,56 @@ func Write(dir string) ([]string, error) {
 	if err := os.MkdirAll(dir, 0o755); err != nil {
 		return nil, err
 	}
-	written := make([]string, 0, len(Assets()))
+	// Stage every file first; only rename once all writes succeed, so a
+	// failure never leaves a half-updated set (PasarGuard-style bootstrap).
+	type staged struct {
+		path string
+		tmp  string
+	}
+	stageds := make([]staged, 0, len(Assets()))
 	for _, a := range Assets() {
 		p := filepath.Join(dir, a.Name)
 		tmp, err := os.CreateTemp(dir, "."+a.Name+".*")
 		if err != nil {
-			return written, err
+			for _, st := range stageds {
+				os.Remove(st.tmp)
+			}
+			return nil, err
 		}
 		name := tmp.Name()
 		if _, err := tmp.Write(a.Body); err != nil {
 			tmp.Close()
 			os.Remove(name)
-			return written, err
+			for _, st := range stageds {
+				os.Remove(st.tmp)
+			}
+			return nil, err
 		}
 		if err := tmp.Close(); err != nil {
 			os.Remove(name)
-			return written, err
+			for _, st := range stageds {
+				os.Remove(st.tmp)
+			}
+			return nil, err
 		}
 		if err := os.Chmod(name, a.Mode); err != nil {
 			os.Remove(name)
+			for _, st := range stageds {
+				os.Remove(st.tmp)
+			}
+			return nil, err
+		}
+		stageds = append(stageds, staged{path: p, tmp: name})
+	}
+	written := make([]string, 0, len(stageds))
+	for _, st := range stageds {
+		if err := os.Rename(st.tmp, st.path); err != nil {
+			for _, s2 := range stageds {
+				os.Remove(s2.tmp)
+			}
 			return written, err
 		}
-		if err := os.Rename(name, p); err != nil {
-			os.Remove(name)
-			return written, err
-		}
-		written = append(written, p)
+		written = append(written, st.path)
 	}
 	return written, nil
 }
