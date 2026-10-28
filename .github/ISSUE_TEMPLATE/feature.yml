@@ -1,0 +1,24 @@
+name: Feature request
+description: Small, scoped proposals only (see CONTRIBUTING)
+labels: [enhancement]
+body:
+  - type: textarea
+    id: problem
+    attributes:
+      label: Problem (not solution)
+    validations:
+      required: true
+  - type: textarea
+    id: proposal
+    attributes:
+      label: Smallest change that fixes it
+    validations:
+      required: true
+  - type: checkboxes
+    id: scope
+    attributes:
+      label: Scope check
+      options:
+        - label: No new dependency
+        - label: No new background job or external service
+        - label: Works for beginners (wizard/defaults) and experts (API/flags)
