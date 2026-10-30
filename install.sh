@@ -1878,6 +1878,10 @@ main() {
     # itself over whatever was already on the terminal.
     render_screen
     render_banner "OVNode" "v${VERSION}"
+    render_kv "repository" "anonysec/OVNode"
+    render_kv "arch" "$(uname -m)"
+    render_kv "os" "$(. /etc/os-release 2>/dev/null && echo "$ID $VERSION_ID" || uname -s)"
+    render_blank
 
     case "$ACTION" in
         uninstall) do_uninstall; exit "$EX_OK" ;;
