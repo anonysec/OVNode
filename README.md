@@ -6,7 +6,7 @@ The VPN server half of an [OVManager](https://github.com/anonysec/OVManager) dep
   <img src=".github/assets/banner.svg" alt="OVNode — the VPN server agent for OVManager" width="820">
   <br><br>
 
-  [![Version](https://img.shields.io/badge/version-1.4.0-blue)](CHANGELOG.md)
+  [![Version](https://img.shields.io/badge/version-1.4.2-blue)](CHANGELOG.md)
   [![License: MIT](https://img.shields.io/badge/License-MIT-green.svg)](LICENSE)
   [![CI](https://github.com/anonysec/OVNode/actions/workflows/ci.yml/badge.svg)](https://github.com/anonysec/OVNode/actions/workflows/ci.yml)
   [![Go](https://img.shields.io/badge/go-1.27-00ADD8?logo=go&logoColor=white)](go.mod)

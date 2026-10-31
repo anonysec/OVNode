@@ -5,12 +5,12 @@ package pairing
 
 import (
 	"encoding/json"
+	"fmt"
 	"os"
 	"path/filepath"
 	"time"
 
 	"ovnode/internal/fsx"
-	"ovnode/internal/logging"
 )
 
 const leaseSeconds = 30 * 60
@@ -29,8 +29,10 @@ func Enforce(panelID string) error {
 		LastSeen float64 `json:"last_seen"`
 	}
 	if err != nil {
-		if !os.IsNotExist(err) {
-			logging.Warn("pairing file unreadable, treating as unpaired: %v", err)
+		if os.IsNotExist(err) {
+			// no pairing file yet: unpaired
+		} else {
+			return fmt.Errorf("pairing file unreadable: %w", err)
 		}
 	} else {
 		var r struct {
@@ -38,11 +40,11 @@ func Enforce(panelID string) error {
 			LastSeen float64 `json:"last_seen"`
 		}
 		if uerr := json.Unmarshal(data, &r); uerr != nil {
-			logging.Warn("pairing file corrupt, treating as unpaired: %v", uerr)
+			return fmt.Errorf("pairing file corrupt: %w", uerr)
 		} else if r.PanelID != "" {
 			rec = &r
 		} else {
-			// empty/unpaired file; no warning
+			// empty/unpaired file
 		}
 	}
 	if panelID == "" {

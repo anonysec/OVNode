@@ -38,7 +38,11 @@ func BankUsage(usageDir, safeCN string, delta uint64) (uint64, bool) {
 			}
 		}
 		total = old + delta
-		return fsx.WriteFileAtomic(usageFile, []byte(strconv.FormatUint(total, 10)+"\n"), 0o644)
+		if err := fsx.WriteFileAtomic(usageFile, []byte(strconv.FormatUint(total, 10)+"\n"), 0o644); err != nil {
+			return err
+		}
+		InvalidateUsageCache()
+		return nil
 	})
 	if err != nil {
 		return 0, false

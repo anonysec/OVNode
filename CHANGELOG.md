@@ -1,5 +1,15 @@
 # Changelog
 
+## 1.4.2 — 2026-10-31
+
+- Fix(pairing): fail closed on unreadable or corrupt pairing state instead of resetting ownership.
+- Fix(ovpn): serialize `ChangeConfig` to prevent concurrent server.conf/client-common.txt races.
+- Fix(store): invalidate usage cache after `BankUsage` writes.
+- Fix(version): complete version bump to 1.4.2 across all version spots.
+- Fix(docker): stop excluding `install.sh` and `scripts/compose/` from Docker build context.
+- Security(telemetry): retry CSPRNG reads in `newEventKey` until success.
+- Chore(pki): remove unused unsafe `fillRand` helper.
+
 ## 1.4.0 — 2026-10-31
 
 - Fix(installer): a fresh server no longer reports "already installed" (exit 3)

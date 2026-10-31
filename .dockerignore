@@ -23,9 +23,7 @@ data
 
 # Not needed inside the image
 tests
-install.sh
 .claude
-scripts/compose/
 .pre-commit-config.yaml
 .python-version
 *.md

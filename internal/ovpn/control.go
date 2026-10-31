@@ -9,11 +9,14 @@ import (
 	"regexp"
 	"strconv"
 	"strings"
+	"sync"
 
 	"ovnode/internal/fsx"
 	"ovnode/internal/logging"
 	"ovnode/internal/policy"
 )
+
+var changeConfigMu sync.Mutex
 
 // ChangeConfigRequest mirrors the panel's pushed settings.
 //
@@ -78,6 +81,8 @@ func ReadConfig() map[string]any {
 }
 
 func ChangeConfig(req ChangeConfigRequest, classification *ChangeConfigResult) bool {
+	changeConfigMu.Lock()
+	defer changeConfigMu.Unlock()
 	defer func() {
 		if r := recover(); r != nil {
 			logging.Syslog("ChangeConfig panic: %v", r)
