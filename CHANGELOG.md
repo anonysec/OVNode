@@ -1,5 +1,9 @@
 # Changelog
 
+## 1.4.11 — 2026-10-31
+
+- Complete PasarGuard-style handoff suggestions 1-8.
+
 ## 1.4.10 — 2026-10-31
 
 - Feat: print connection details on first successful serve.
