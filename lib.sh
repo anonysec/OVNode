@@ -368,11 +368,16 @@ generate_selfsigned() {
         render_ok "self-signed certificate already present — reusing it"
         return 0
     fi
-    local cn; cn="$(primary_ip)"
+    local cn san; cn="$(primary_ip)"
+    san="DNS:localhost"
+    if [[ "$cn" =~ ^[0-9]+\.[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
+        san="IP:${cn},DNS:localhost"
+    fi
     openssl req -x509 -nodes -days 3650 -newkey rsa:2048 \
         -keyout "$key" \
         -out "$cert" \
-        -subj "/C=US/ST=Local/L=Local/O=OVNode/CN=${cn:-ovnode}" >/dev/null 2>&1
+        -subj "/C=US/ST=Local/L=Local/O=OVNode/CN=${cn:-ovnode}" \
+        -addext "subjectAltName=${san}" >/dev/null 2>&1
     # The sync API TLS key is a secret, so it is owner-only — but only ever at a
     # path this node owns. The 600 used to be applied to whatever sat in the
     # shared directory, which is what took the panel down.

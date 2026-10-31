@@ -12,6 +12,7 @@ import (
 	"encoding/pem"
 	"fmt"
 	"math/big"
+	"net"
 	"os"
 	"path/filepath"
 	"strings"
@@ -209,6 +210,21 @@ func GenerateCRL() error {
 	return nil
 }
 
+// primaryIP returns the host's outbound IPv4 address for certificate SANs.
+func primaryIP() string {
+	conn, err := net.DialTimeout("udp", "8.8.8.8:80", 2*time.Second)
+	if err == nil {
+		defer conn.Close()
+		if addr, ok := conn.LocalAddr().(*net.UDPAddr); ok && addr.IP != nil {
+			return addr.IP.String()
+		}
+	}
+	if h, err := os.Hostname(); err == nil && h != "" {
+		return h
+	}
+	return "127.0.0.1"
+}
+
 // RenewServerCertificateNative renews server cert.
 func RenewServerCertificateNative() error {
 	unlock, err := lockPKI()
@@ -238,6 +254,13 @@ func RenewServerCertificateNative() error {
 		return err
 	}
 	now := time.Now()
+	// Carry the node address as a SAN so clients and panels that validate
+	// the certificate against the address (rather than only the CN) accept
+	// the renewed server certificate.
+	sanIPs := []net.IP{}
+	if ip := net.ParseIP(primaryIP()); ip != nil {
+		sanIPs = append(sanIPs, ip)
+	}
 	tmpl := &x509.Certificate{
 		SerialNumber: serial,
 		Subject:      pkix.Name{CommonName: "server"},
@@ -245,7 +268,8 @@ func RenewServerCertificateNative() error {
 		NotAfter:     now.Add(1825 * 24 * time.Hour),
 		KeyUsage:     x509.KeyUsageDigitalSignature | x509.KeyUsageKeyEncipherment,
 		ExtKeyUsage:  []x509.ExtKeyUsage{x509.ExtKeyUsageServerAuth},
-		DNSNames:     []string{"server"},
+		DNSNames:     []string{"server", "localhost"},
+		IPAddresses:  sanIPs,
 	}
 	certDER, err := x509.CreateCertificate(rand.Reader, tmpl, caCert, &key.PublicKey, caKey)
 	if err != nil {
