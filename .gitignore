@@ -50,7 +50,10 @@ data/*.db-wal
 # Local planning / handoff (never publish)
 PROJECT_PLAN.md
 *_PLAN.md
+*plan*
+*PLAN*
 .plan/
+plan/
 .local/
 docs/
 
