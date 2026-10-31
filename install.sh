@@ -36,6 +36,9 @@ OPENVPN_ROOT="/etc/openvpn"
 AGENT_BIN="${OPENVPN_ROOT}/ovnode/scripts/ovnode"
 DEFAULT_PORT=2083
 DEFAULT_VPN=1194
+# Unit directory: overridable so a test can install into a tree instead of the
+# real /etc/systemd/system. Unset it and the path is exactly what it was.
+SYSTEMD_DIR="${OVN_SYSTEMD_DIR:-/etc/systemd/system}"
 SYSTEMD_SERVICE="ovnode.service"
 NAT_SERVICE="ovnode-nat.service"
 OPENVPN_SERVICE="ovnode-openvpn.service"
@@ -107,6 +110,186 @@ YL=$'\033[33m'; CY=$'\033[36m'; GY=$'\033[90m'
 # Until then the installer has exactly one helper of its own. `die` arrives
 # with lib.sh; `fail` is the same error path for the window before it.
 fail() { printf '\n  %bError:%b %s\n\n' "${RD:-}" "${NC:-}" "$1" >&2; exit "${2:-$EX_ERROR}"; }
+
+# ── Installation state, captured before anything is fetched ────────────
+# load_helpers has to download the binary *into* $APP_DIR, so by the time it
+# returns, $APP_DIR exists on a box that has never hosted a node. "The
+# directory is there" therefore stops meaning "a node is installed" the moment
+# the bootstrap runs — and that is exactly the check `if [[ -d $APP_DIR ]]`
+# used to make. It answered yes on every fresh server, because the fetch it
+# had just done had created the directory it was asking about.
+#
+# So the state is read here, once, before load_helpers, and every later
+# decision about "is there a node on this box" reads the answer instead of
+# asking the filesystem a second time, after the filesystem has changed.
+#
+# The states, and what each one allows:
+#
+#   installed        a node is here: .env (the identity and the API key, written
+#                    last by do_install) or the verified binary. Never
+#                    re-installed over, never deleted by an install. Exit 3,
+#                    plus the update/uninstall menu on a terminal.
+#   unit-only        an OVNode systemd unit exists and APP_DIR holds no node.
+#                    Something was installed here once. Refused like `installed`
+#                    — but `uninstall` is allowed, because cleaning it up is
+#                    what it needs.
+#   node-data        a data directory with the PKI in it and no node around it.
+#                    Installing would mint a second identity beside a CA that
+#                    may still be serving, so install refuses; `uninstall`
+#                    (with --purge for the data) is the way to clear it.
+#   bootstrap        $APP_DIR exists and holds nothing a node owns: the debris of
+#                    a download interrupted between mkdir and .env. Installed
+#                    over, never deleted — nothing here can tell debris from
+#                    data it does not recognise.
+#   absent           nothing at $APP_DIR. A plain fresh server.
+#   not-a-directory  a file sits where the directory goes. Reported, never
+#                    overwritten.
+#   local            --local: the checkout is the release, and the dev loop
+#                    rsyncs into $APP_DIR on purpose.
+INSTALL_STATE="unknown"
+INSTALL_STATE_DIR=""
+
+# Where the helpers are unpacked when there is no node at $APP_DIR to take
+# them from (an uninstall of the remains of a node). Created only on that path,
+# and removed before the command does anything else: a command that removes a
+# node must not leave a second copy of the release in /tmp. Not cleaned by a
+# single global EXIT trap, because fetch_release_binary and the update journal
+# both install and clear one of their own — the scratch is removed explicitly,
+# and by a trap only for the window in which it exists.
+HELPER_SCRATCH=""
+cleanup_scratch() {
+    [[ -n "$HELPER_SCRATCH" && -d "$HELPER_SCRATCH" ]] && rm -rf "$HELPER_SCRATCH"
+    HELPER_SCRATCH=""
+}
+# Sets HELPER_SCRATCH. Deliberately not a command substitution: the assignment
+# has to survive into this shell for the cleanup to find the directory.
+helper_scratch() {
+    HELPER_SCRATCH="$(mktemp -d "${TMPDIR:-/tmp}/ovnode.helpers.XXXXXX")" \
+        || fail "Could not create a scratch directory for the installer helpers"
+}
+
+# What an installed node owns. .env is the marker that matters: write_env is
+# the only thing that writes it, it arrives last in do_install, and it holds
+# the identity and the API key. The binary counts only if it is executable —
+# fetch_release_binary installs 0755 after verifying the checksum, so a
+# non-executable "ovnode" is a truncated download, which is the one thing a
+# failed bootstrap really leaves behind.
+NODE_ENV_FILE=".env"
+NODE_BIN_FILE="ovnode"
+
+# Node unit files: a host install writes these, so one is evidence of a node
+# even when the app directory is gone.
+NODE_UNITS=(SYSTEMD_SERVICE NAT_SERVICE OPENVPN_SERVICE CLEANUP_TIMER)
+
+_any_node_unit() {
+    local name
+    for name in "${NODE_UNITS[@]}"; do
+        [[ -e "$SYSTEMD_DIR/${!name}" ]] && return 0
+    done
+    return 1
+}
+
+# _dir_has_node <dir> — does this directory hold a node?
+_dir_has_node() {
+    [[ -f "$1/$NODE_ENV_FILE" ]] && return 0
+    [[ -x "$1/$NODE_BIN_FILE" ]] && return 0
+    return 1
+}
+
+install_state_of() {  # install_state_of <dir> — prints the state, ASCII only
+    local dir="$1"
+    if [[ -e "$dir" && ! -d "$dir" ]]; then
+        printf 'not-a-directory'
+        return 0
+    fi
+    if [[ ! -d "$dir" ]]; then
+        _any_node_unit && { printf 'unit-only'; return 0; }
+        printf 'absent'
+        return 0
+    fi
+    _dir_has_node "$dir" && { printf 'installed'; return 0; }
+    _any_node_unit && { printf 'unit-only'; return 0; }
+    if [[ -d "$dir/data" && -n "$(ls -A "$dir/data" 2>/dev/null)" ]]; then
+        printf 'node-data'
+        return 0
+    fi
+    printf 'bootstrap'
+}
+
+# Reads the state into INSTALL_STATE (and remembers which directory it was
+# read from, so a later --dest cannot silently reuse another dir's answer).
+capture_install_state() {
+    INSTALL_STATE="$(install_state_of "$APP_DIR")"
+    INSTALL_STATE_DIR="$APP_DIR"
+}
+
+# ensure_install_state — capture on first use, for paths that never ran main
+# (a test that sources this file and calls one function).
+ensure_install_state() {
+    if [[ "$INSTALL_STATE" == "unknown" || "$INSTALL_STATE_DIR" != "$APP_DIR" ]]; then
+        capture_install_state
+    fi
+}
+
+# A node is here: a complete one, or the remains of one (unit files, or a data
+# directory around a missing app). The question the install path asks before
+# it writes anything.
+node_exists() {
+    ensure_install_state
+    case "$INSTALL_STATE" in
+        installed|unit-only|node-data) return 0 ;;
+        *)                             return 1 ;;
+    esac
+}
+
+# A complete node: .env or the binary. This is what the update/uninstall menu
+# is for, and what an install may never write over.
+node_is_installed() {
+    ensure_install_state
+    [[ "$INSTALL_STATE" == "installed" ]]
+}
+
+# What the bootstrap left behind, reported rather than removed. There is no
+# way to tell a half-downloaded binary from a node whose .env was deleted by
+# hand, so the debris is named and then written over — never rm -rf'd.
+report_bootstrap_dir() {
+    local listing entries=() f
+    for f in "$APP_DIR"/* "$APP_DIR"/.[!.]* "$APP_DIR"/..?*; do
+        [[ -e "$f" || -L "$f" ]] && entries+=("$(basename "$f")")
+    done
+    if [[ ${#entries[@]} -eq 0 ]]; then
+        listing="empty"
+    else
+        listing="${entries[*]}"
+        # A list long enough to hide the rest is noise; the operator can look.
+        (( ${#listing} > 160 )) && listing="${listing:0:157}..."
+    fi
+    render_warn "$APP_DIR holds no node (${listing}) — treating it as an interrupted bootstrap"
+    render_warn "Installing over it; nothing is deleted, and the previous contents stay listed above"
+}
+
+# The refusal for a box that has the remains of a node but not a whole one.
+# Installing would write a new .env — a new identity and a new API key — beside
+# state that already has both. Exit 3, because "something is already here" is
+# the answer a caller branches on; nothing is written and nothing is deleted.
+#
+# printf, not the render helpers: this is reached from load_helpers, which runs
+# before lib.sh exists. The same constraint `fail` is written to.
+refuse_partial_node() {
+    local what where hint
+    if [[ "$INSTALL_STATE" == "unit-only" ]]; then
+        what="OVNode unit files"; where="$SYSTEMD_DIR"; hint="uninstall"
+    else
+        what="node data"; where="$DATA_BASE"; hint="uninstall --purge"
+        # A --local or --dest install keeps its data beside the app.
+        [[ -d "$APP_DIR/data" && -n "$(ls -A "$APP_DIR/data" 2>/dev/null)" ]] && where="$APP_DIR/data"
+    fi
+    printf '\n  %bError:%b %s holds no node, but %s remains at %s\n' \
+        "${RD:-}" "${NC:-}" "$APP_DIR" "$what" "$where" >&2
+    printf '  Installing here would mint a second identity beside it. This run deletes neither.\n' >&2
+    printf '  Finish that install instead: %s %s — or move it aside and re-run.\n\n' "$0" "$hint" >&2
+    exit "$EX_ALREADY"
+}
 
 trap 'echo -e "\n  ${RD}Interrupted.${NC}" >&2; exit 130' INT TERM
 trap 'render_warn "Command failed near line $LINENO (running: ${BASH_COMMAND:0:80})"' ERR
@@ -470,7 +653,7 @@ ensure_openvpn_dirs() {
 }
 
 write_openvpn_unit() {
-    cat > "/etc/systemd/system/$OPENVPN_SERVICE" << UNIT
+    cat > "$SYSTEMD_DIR/$OPENVPN_SERVICE" << UNIT
 [Unit]
 Description=OVNode OpenVPN daemon
 After=network-online.target
@@ -511,7 +694,7 @@ start_openvpn_service() {
 write_cleanup_units() {
     # The purge runs the same implementation as the hooks: the agent binary.
     local purge_cmd="${AGENT_BIN} hook purge-stale"
-    cat > "/etc/systemd/system/$CLEANUP_SERVICE" << UNIT
+    cat > "$SYSTEMD_DIR/$CLEANUP_SERVICE" << UNIT
 [Unit]
 Description=OVNode stale session marker purge
 
@@ -519,7 +702,7 @@ Description=OVNode stale session marker purge
 Type=oneshot
 ExecStart=${purge_cmd}
 UNIT
-    cat > "/etc/systemd/system/$CLEANUP_TIMER" << UNIT
+    cat > "$SYSTEMD_DIR/$CLEANUP_TIMER" << UNIT
 [Unit]
 Description=Daily OVNode stale session purge
 
@@ -568,7 +751,7 @@ stop_native_openvpn() {
 write_systemd_unit() {
     # ExecStart runs the Go binary that also answers the OpenVPN hooks.
     local exec_start="${AGENT_BIN} serve"
-    cat > "/etc/systemd/system/$SYSTEMD_SERVICE" << UNIT
+    cat > "$SYSTEMD_DIR/$SYSTEMD_SERVICE" << UNIT
 [Unit]
 Description=OVNode OpenVPN Node Agent (${NODE_NAME})
 After=network-online.target
@@ -589,7 +772,7 @@ WantedBy=multi-user.target
 UNIT
     systemctl daemon-reload >/dev/null 2>&1
     systemctl enable "$SYSTEMD_SERVICE" >/dev/null 2>&1
-    render_ok "systemd unit written: /etc/systemd/system/$SYSTEMD_SERVICE"
+    render_ok "systemd unit written: $SYSTEMD_DIR/$SYSTEMD_SERVICE"
 }
 
 # ── Forwarding / NAT / multi-port redirects ────────────────────────────
@@ -677,7 +860,7 @@ esac
 NAT
     chmod +x "$NAT_SCRIPT"
 
-    cat > "/etc/systemd/system/$NAT_SERVICE" << UNIT
+    cat > "$SYSTEMD_DIR/$NAT_SERVICE" << UNIT
 [Unit]
 Description=OVNode NAT (masquerade + VPN port redirects)
 After=network-online.target
@@ -838,6 +1021,10 @@ do_local_build() {
     [[ -n "$dest" && "$dest" != "/" ]] || fail "refusing to install into '$dest'"
     APP_DIR="$dest"
     DATA_BASE="$dest/data"
+    # --dest may have moved APP_DIR after the state was captured; this run
+    # owns the directory it is about to build into, whatever was there.
+    INSTALL_STATE="local"
+    INSTALL_STATE_DIR="$APP_DIR"
     mkdir -p "$dest"
     # --delete only reaches files not excluded, so a dest .env is never
     # transferred in and never deleted.
@@ -856,16 +1043,49 @@ do_local_build() {
 # helpers come from. Every other action uses the installed binary: an update
 # must not replace the binary it is running from, and an uninstall must not
 # download anything in order to remove a node.
+#
+# The one exception is an uninstall of what a node left behind with no binary
+# among it (unit files, or a data directory). There is nothing on the box to
+# take the helpers from, so they are unpacked in a scratch directory instead —
+# /tmp, never $APP_DIR — and removed before the uninstall does anything else.
 load_helpers() {
+    local helper_dir="$APP_DIR"
     if [[ ! -x "$APP_DIR/ovnode" ]]; then
+        # The fetch writes into $APP_DIR, which on a fresh box does not exist
+        # yet. The state was captured before this ran (capture_install_state),
+        # so what is already there is known without looking again.
+        if node_is_installed; then
+            fail "Already installed ($APP_DIR exists). Run 'update' to refresh or 'uninstall' first." "$EX_ALREADY"
+        fi
+        if node_exists; then
+            # Remains of a node with no binary to take helpers from. Uninstall
+            # is the one command that has to work here — cleaning that up is
+            # its job — and it must not leave a new binary behind in APP_DIR
+            # while doing it. Its helpers come from a scratch directory.
+            [[ "$ACTION" == "uninstall" ]] || refuse_partial_node
+            helper_scratch
+            helper_dir="$HELPER_SCRATCH"
+        fi
+        if [[ "$INSTALL_STATE" == "not-a-directory" ]]; then
+            fail "$APP_DIR exists and is not a directory — move it aside or set OVN_APP_DIR"
+        fi
         command -v curl >/dev/null 2>&1 || fail "curl is required to download the release"
         command -v sha256sum >/dev/null 2>&1 || fail "sha256sum is required to verify the release"
-        fetch_release_binary "$APP_DIR"
+        fetch_release_binary "$helper_dir"
+        # fetch_release_binary clears the EXIT trap it used for its own
+        # workspace, so the scratch gets one again here, for the window
+        # between the download and the helpers being sourced.
+        [[ "$helper_dir" == "$HELPER_SCRATCH" ]] && trap cleanup_scratch EXIT
     fi
-    "$APP_DIR/ovnode" assets write --dest "$APP_DIR" >/dev/null \
-        || fail "Could not write the installer helpers into $APP_DIR"
+    "$helper_dir/ovnode" assets write --dest "$helper_dir" >/dev/null \
+        || fail "Could not write the installer helpers into $helper_dir"
     # shellcheck disable=SC1091
-    . "$APP_DIR/lib.sh"
+    . "$helper_dir/lib.sh"
+    # The helpers are in memory now; the scratch copy goes, so an uninstall of
+    # a node's remains cannot leave a second release lying in /tmp. (The EXIT
+    # trap cleans up the failure paths, which never get this far.)
+    [[ -n "$HELPER_SCRATCH" && "$helper_dir" == "$HELPER_SCRATCH" ]] && cleanup_scratch
+    return 0
 }
 
 # ── Docker ─────────────────────────────────────────────────────────────
@@ -1489,7 +1709,9 @@ do_repair_unit() {
 
 # ── Uninstall ──────────────────────────────────────────────────────────
 do_uninstall() {
-    [[ -d "$APP_DIR" ]] || die "Not installed ($APP_DIR missing)" "$EX_NOTINSTALLED"
+    # Also reached for the remains of a node (unit files, a data directory)
+    # that parse_args already let through: removing those is what this does.
+    [[ -d "$APP_DIR" ]] || node_exists || die "Not installed ($APP_DIR missing)" "$EX_NOTINSTALLED"
     check_root
     operation_begin uninstall
     trap operation_end EXIT
@@ -1521,9 +1743,9 @@ do_uninstall() {
     systemctl_bounded stop "$OPENVPN_SERVICE"
     systemctl disable --now "$CLEANUP_TIMER" >/dev/null 2>&1 || true
     systemctl disable "$SYSTEMD_SERVICE" "$NAT_SERVICE" "$OPENVPN_SERVICE" 2>/dev/null || true
-    rm -f "/etc/systemd/system/$SYSTEMD_SERVICE" "/etc/systemd/system/$NAT_SERVICE" \
-          "/etc/systemd/system/$OPENVPN_SERVICE" "/etc/systemd/system/$CLEANUP_SERVICE" \
-          "/etc/systemd/system/$CLEANUP_TIMER"
+    rm -f "$SYSTEMD_DIR/$SYSTEMD_SERVICE" "$SYSTEMD_DIR/$NAT_SERVICE" \
+          "$SYSTEMD_DIR/$OPENVPN_SERVICE" "$SYSTEMD_DIR/$CLEANUP_SERVICE" \
+          "$SYSTEMD_DIR/$CLEANUP_TIMER"
     systemctl daemon-reload 2>/dev/null || true
 
     if command -v docker >/dev/null 2>&1 && [[ -f "$(compose_file)" ]]; then
@@ -1837,6 +2059,29 @@ parse_args() {
             *)            fail "Unknown option: $1 (--help for usage)" "$EX_USAGE" ;;
         esac
     done
+    # A command that acts on an installed node must not bootstrap one. Left to
+    # load_helpers, `uninstall` on a fresh server downloaded a release, wrote a
+    # binary into $APP_DIR and then reported "not installed" — a box changed by
+    # a command that had already decided nothing could be done on it. Checked
+    # after parsing, so every spelling is covered, and before the first byte is
+    # fetched; only the early `fail` is available this soon, and it needs
+    # nothing from lib.sh.
+    #
+    # `uninstall` asks the weaker question: a node must have *existed*, because
+    # clearing up its remains is exactly what it is for.
+    case "$ACTION" in
+        uninstall)
+            case "$(install_state_of "$APP_DIR")" in
+                installed|unit-only|node-data) ;;
+                *) fail "Not installed ($APP_DIR has no node). Nothing was downloaded or changed." "$EX_NOTINSTALLED" ;;
+            esac
+            ;;
+        update|recover-update|repair-unit)
+            if [[ "$(install_state_of "$APP_DIR")" != "installed" ]]; then
+                fail "Not installed ($APP_DIR has no node). Nothing was downloaded or changed." "$EX_NOTINSTALLED"
+            fi
+            ;;
+    esac
 }
 
 # ── Main ───────────────────────────────────────────────────────────────
@@ -1847,6 +2092,12 @@ main() {
             || fail "Bad --version '$PIN' (use 1.2.3, v1.2.3, 1.2.3-rc1)" "$EX_USAGE"
         VERSION="${PIN#v}"
     fi
+    # Before anything touches $APP_DIR — before load_helpers, which downloads
+    # the binary into that directory, and before --local, which rsyncs into it.
+    # Capture first, or the "already installed" check below reads the
+    # bootstrap's own mkdir and every fresh server is told it already has a
+    # node (exit 3, nothing installed).
+    capture_install_state
     # A local build replaces the download: the checkout is the release.
     [[ "$LOCAL" -eq 1 ]] && do_local_build
     load_helpers
@@ -1889,12 +2140,24 @@ main() {
     esac
 
     # install
-    if [[ -d "$APP_DIR" ]]; then
+    # INSTALL_STATE, not [[ -d "$APP_DIR" ]]: load_helpers has created that
+    # directory by now on a fresh box. Only a real node stops the run.
+    if node_is_installed; then
         if [[ "$YES" -eq 1 ]]; then
             die "Already installed ($APP_DIR exists). Run 'update' to refresh or 'uninstall' first." "$EX_ALREADY"
         fi
         installed_menu
         exit "$EX_OK"
+    fi
+    # Not a node, but not nothing either: unit files or a data directory from
+    # an earlier install. Installing would mint a second identity beside them.
+    if node_exists; then
+        refuse_partial_node
+    fi
+    # Everything else at $APP_DIR is debris: reported, installed over, and left
+    # on disk for the operator to inspect — one of those files may be data.
+    if [[ "$INSTALL_STATE" == "bootstrap" ]]; then
+        report_bootstrap_dir
     fi
 
     # Bare interactive invocation gets the start menu; flags and OVN_* inputs
@@ -1951,4 +2214,11 @@ main() {
     do_install
 }
 
-main "$@"
+# Sourced (a test, an operator poking at one helper) rather than run. Every
+# documented invocation runs the file — `bash install.sh`, `bash -s < install.sh`,
+# `bash <(curl ...)` and `curl ... | bash` all leave BASH_SOURCE unset or equal
+# to $0 — so this changes nothing about how the installer is started. Without
+# it there was no way to test a predicate here without installing a node.
+if [[ "${BASH_SOURCE[0]:-}" == "$0" ]]; then
+    main "$@"
+fi

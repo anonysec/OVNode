@@ -2,6 +2,28 @@
 
 ## 1.4.0 — 2026-10-31
 
+- Fix(installer): a fresh server no longer reports "already installed" (exit 3)
+  and install nothing. `main` called `load_helpers` — which downloads the
+  release binary *into* `APP_DIR` — before the `[[ -d $APP_DIR ]]` check, so the
+  bootstrap's own `mkdir` answered the question. The installation state is now
+  read once, before the bootstrap, and every later check reads it.
+- Fix(installer): an installation is now recognised by what a node owns —
+  `.env`, the verified binary, its systemd units, its data directory — instead
+  of by the existence of `APP_DIR`, which the bootstrap creates. A directory
+  left by an interrupted bootstrap is reported and installed over, and nothing
+  in it is deleted; an installed node is still never overwritten or removed,
+  and the remains of a node (unit files, or data with no app) are refused rather
+  than adopted with a second identity.
+- Fix(installer): `update`, `uninstall`, `recover-update` and `repair-unit` on a
+  box with no node exit 4 before downloading anything, instead of writing a
+  binary into `APP_DIR` and then reporting "not installed". `uninstall` still
+  handles the remains of a node, unpacking its helpers in a scratch directory
+  rather than into `APP_DIR`.
+- Test: `scripts/test-installer.sh` (also `make check-installer`, run in CI)
+  covers fresh and existing installs, interactive, wizard and `-y`, leftover
+  bootstrap directories, node remains and `--local`, with a local release
+  fixture instead of the network.
+
 - Fix(pki): generate standard OpenVPN static key at `/etc/openvpn/server/tls.key` for tls-crypt.
 - Fix(restore): preserve executable permissions on restored agent scripts and binaries.
 - Fix(cli): eliminate legacy `ovn` command in favor of `ovnode`.
