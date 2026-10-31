@@ -28,9 +28,12 @@ sudo apt-get install -y openvpn easy-rsa iptables iproute2 logrotate
 .venv/bin/ruff check backend tests
 .venv/bin/ruff format --check backend tests
 bash -n install.sh ovnode.sh lib.sh doctor.sh scripts/compose/*.sh
+bash scripts/test-installer.sh               # installer: fresh and existing boxes
 ```
 
-All four must pass; CI runs the same suite.
+All of them must pass; CI runs the same suite. `scripts/test-installer.sh` needs
+no root, no network and no Go toolchain: the release is a local fixture and the
+install itself is stubbed, so it tests the installer's decisions, not the box.
 
 **Tests that need root are gated, not deleted.** The suite runs unprivileged in CI
 and as root locally, so anything asserting ownership or an unreadable file uses

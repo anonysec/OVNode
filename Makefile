@@ -1,7 +1,7 @@
 # Copyright (c) 2026 anonysec
 # SPDX-License-Identifier: MIT
 
-.PHONY: setup test check check-cli check-bash lint format verify clean
+.PHONY: setup test check check-cli check-bash check-installer lint format verify clean
 
 setup:
 	go mod download
@@ -13,10 +13,15 @@ test:
 # file that escaped the check is a file nobody checked.
 SHELL_FILES = find . -name '*.sh' -not -path './.git/*' -not -path './.slim/*' -not -path './data/*'
 
-check: check-bash
+check: check-bash check-installer
 check-bash:
 	@$(SHELL_FILES) -exec bash -n {} \;
 	@echo "bash syntax OK"
+
+# Fresh-install and existing-install paths, end to end, with the release
+# fixture instead of the network.
+check-installer:
+	@bash scripts/test-installer.sh
 
 lint:
 	@$(SHELL_FILES) -exec bash -n {} \;
