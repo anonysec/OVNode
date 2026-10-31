@@ -6,7 +6,9 @@
 # Multi-stage: build the Go binary, runtime ships binary + OpenVPN.
 
 # ── build: static Go binary ──────────────────────────────────────────
-FROM golang:1.27 AS builder
+# Use native builder platform + Go cross-compilation instead of QEMU emulation.
+FROM --platform=$BUILDPLATFORM golang:1.27 AS builder
+ARG TARGETOS TARGETARCH
 WORKDIR /src
 COPY go.mod ./
 COPY cmd/ ./cmd/
@@ -15,7 +17,7 @@ COPY internal/ ./internal/
 # made of, so they have to be in the build context.
 COPY assets.go ./
 COPY install.sh ovnode.sh lib.sh doctor.sh ./
-RUN CGO_ENABLED=0 go build -o /out/ovnode ./cmd/ovnode
+RUN CGO_ENABLED=0 GOOS=$TARGETOS GOARCH=$TARGETARCH go build -trimpath -ldflags "-s -w" -o /out/ovnode ./cmd/ovnode
 
 # ── runtime ────────────────────────────────────────────────────────────
 FROM debian:bookworm-slim
