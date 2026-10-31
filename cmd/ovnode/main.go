@@ -243,7 +243,7 @@ func runProbeCheck() {
 	}
 	envGet := func(key string) string {
 		for _, path := range []string{appDir + "/.env", "/etc/openvpn/ovnode/.env"} {
-			data, err := os.ReadFile(path)
+			data, err := os.ReadFile(path) // #nosec G304 G703 -- path from installed .env, not user input
 			if err != nil {
 				continue
 			}
@@ -283,7 +283,8 @@ func runProbeCheck() {
 		url := "https://127.0.0.1:" + port + r.Path
 		req, _ := http.NewRequest(r.Method, url, nil)
 		req.Header.Set("key", key)
-		client := &http.Client{Transport: &http.Transport{TLSClientConfig: &tls.Config{InsecureSkipVerify: true}}}
+		client := &http.Client{Transport: &http.Transport{TLSClientConfig: &tls.Config{InsecureSkipVerify: true}}} // #nosec G402 -- local probe to self-signed agent
+
 		resp, err := client.Do(req)
 		status := "FAIL"
 		if err == nil && resp.StatusCode < 500 {

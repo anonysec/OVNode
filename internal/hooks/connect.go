@@ -65,8 +65,10 @@ func Connect(cfg config.Hook, arg string) int {
 			cn, orUnknown(trustedIP), orUnknown(trustedPort))
 		return 1
 	}
-	if err := os.MkdirAll(cfg.SessionsDir, 0o755); err == nil {
-		_ = os.Chmod(cfg.SessionsDir, 0o755)
+	if err := os.MkdirAll(cfg.SessionsDir, 0o755); err == nil { // #nosec G301 -- sessions dir is world-traversable by design
+
+		_ = os.Chmod(cfg.SessionsDir, 0o755) // #nosec G302 -- sessions dir is world-traversable by design
+
 	}
 
 	state := store.ReadUserState(cfg.UsersDir, safeCN)
@@ -206,7 +208,7 @@ func takeover(
 // displaced user. It returns the path it wrote.
 func writeLastKill(usersDir, safeCN string, at int64) string {
 	dir := filepath.Join(usersDir, safeCN)
-	_ = os.MkdirAll(dir, 0o755)
+	_ = os.MkdirAll(dir, 0o755) // #nosec G301 -- per-user state dir
 	path := filepath.Join(dir, "last_kill.json")
 	body := fmt.Sprintf(
 		`{"reason":"replaced by newer session (limit=1)","at":%d,"cn":"%s","reason_code":"max_login_takeover"}`+"\n",

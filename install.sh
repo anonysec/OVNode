@@ -22,7 +22,7 @@
 set -Eeuo pipefail
 
 # ── Configuration ──────────────────────────────────────────────────────────
-VERSION="1.4.5"
+VERSION="1.4.6"
 # Forks: point source downloads (and update pulls) at your own repo.
 REPO="${OVN_REPO:-anonysec/OVNode}"
 # Versioned GitHub Release tarballs only: verified checksum, no git needed.
@@ -558,12 +558,15 @@ state_restore() {
 # Authenticated "version openvpn_running" from the agent. Empty output means
 # unreachable or rejected (identity broken).
 node_api_status() {
-    local key="$1" port="$2" tls="$3" scheme="http"
+    local key="$1" port="$2" tls="$3" scheme="http" body version ovpn
     [[ "$tls" != "none" ]] && scheme="https"
-    curl -fskS --max-time 5 "${scheme}://127.0.0.1:${port}/sync/status" \
-        -H "key: ${key}" 2>/dev/null \
-        | grep -o '"version": *"[^"]*"' | head -1 | sed 's/.*"//;s/"$//' 2>/dev/null || true
+    body="$(curl -fskS --max-time 5 "${scheme}://127.0.0.1:${port}/sync/status" -H "key: ${key}" 2>/dev/null || true)"
+    version="$(printf '%s' "$body" | grep -o '"version": *"[^"]*"' | head -1 | sed 's/.*"//;s/"$//' 2>/dev/null || true)"
+    ovpn="$(printf '%s' "$body" | grep -o '"openvpn_running":[a-z]*' | head -1 | cut -d: -f2 2>/dev/null || true)"
+    [[ "$ovpn" == "true" ]] || ovpn="false"
+    printf '%s %s\n' "${version:-}" "$ovpn"
 }
+
 
 write_env() {
     # TUNNEL_ADDRESS is deliberately not written here: the panel pushes it

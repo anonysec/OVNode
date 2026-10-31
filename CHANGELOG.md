@@ -1,5 +1,12 @@
 # Changelog
 
+## 1.4.6 — 2026-10-31
+
+- Fix(update): make node_api_status return version and openvpn status so verification can pass.
+- Fix(toolchain): use Go 1.27.3.
+- Chore(security): triage gosec findings in probe/hooks.
+- Test(credentials): add regression test.
+
 ## 1.4.5 — 2026-10-31
 
 - Change(credentials): show the node certificate in `ovnode credentials`/`ovnode auth key`; remove standalone `ovnode certificate`.
