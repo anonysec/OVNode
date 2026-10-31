@@ -248,6 +248,20 @@ Every install adds one command, `ovnode` (short for `ovnode`). With no argument 
 | `ovnode rollback` | Restore the newest pre-update code snapshot. |
 | `ovnode config` | Every effective setting and where it comes from. Read-only. |
 | `ovnode uninstall [--purge]` | Remove OVNode. Data is kept unless `--purge`. |
+| `ovnode info` | Connection details (address, port, protocol, key, certificate). |
+| `ovnode edit` | Edit the OpenVPN server configuration. |
+| `ovnode edit-env` | Edit the node `.env` file. |
+
+### Multi-instance
+
+Each instance keeps its own app and data directories and command name:
+
+```bash
+OVN_INSTANCE=node2 bash install.sh   # or: bash install.sh --instance node2
+node2 status
+```
+
+Native installs use less memory and CPU on small servers; Docker remains available for portability.
 
 ### Retired names
 
