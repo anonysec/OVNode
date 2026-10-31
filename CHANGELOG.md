@@ -1,5 +1,9 @@
 # Changelog
 
+## 1.4.8 — 2026-10-31
+
+- Remove retired `ovnode credentials` alias; use `ovnode auth key`.
+
 ## 1.4.7 — 2026-10-31
 
 - Fix(update): repair node_api_status version extraction.

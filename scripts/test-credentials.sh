@@ -22,7 +22,7 @@ openssl req -x509 -newkey rsa:2048 -keyout "$WORK/tls/privkey.pem" \
     -out "$WORK/tls/fullchain.pem" -days 1 -nodes -subj "/CN=test" >/dev/null 2>&1
 printf 'NODE_NAME=testnode\nSERVICE_PORT=2083\nTLS_METHOD=selfsigned\nSSL_CERTFILE=%s/tls/fullchain.pem\nAPI_KEY=secretkey\n' "$WORK" > "$WORK/.env"
 
-OVN_APP_DIR="$WORK" "$OVNODE_SH" credentials >"$WORK/out.txt" 2>&1
+OVN_APP_DIR="$WORK" "$OVNODE_SH" auth key >"$WORK/out.txt" 2>&1
 
 grep -qF "API key        secretkey" "$WORK/out.txt" || { echo "API key missing"; cat "$WORK/out.txt"; exit 1; }
 grep -q "BEGIN CERTIFICATE" "$WORK/out.txt" || { echo "certificate missing"; cat "$WORK/out.txt"; exit 1; }

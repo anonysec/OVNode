@@ -10,7 +10,7 @@
 set -Eeuo pipefail
 
 # ── Constants ──────────────────────────────────────────────────────────
-VERSION="1.4.7"
+VERSION="1.4.8"
 APP_DIR="${OVN_APP_DIR:-/opt/ovnode}"
 DATA_BASE="/var/lib/ovnode"
 OPENVPN_ROOT="/etc/openvpn"
@@ -714,10 +714,10 @@ do_config() {
         [[ -n "$key" && "$key" != \#* ]] || continue
         case "$key" in
             API_KEY)
-                # Never printed. `ovnode credentials` is where it is shown, once,
+                # Never printed. `ovnode auth key` is where it is shown, once,
                 # on purpose — a value that appears in two places is a value
                 # that ends up in a screenshot.
-                render_kv "$key" "set — see: ovnode credentials" ;;
+                render_kv "$key" "set — see: ovnode auth key" ;;
             TLS_METHOD|SSL_KEYFILE|SSL_CERTFILE)
                 render_kv "$key" "$value  — read by ovnode tls" ;;
             *)
@@ -737,7 +737,7 @@ _ovnode_completions() {
     local cur
     COMPREPLY=()
     cur="${COMP_WORDS[COMP_CWORD]}"
-    local cmds="status credentials config update enable disable restart restart-vpn logs backup restore auto-backup tls doctor rollback recover-update uninstall completion help start stop"
+    local cmds="status config update enable disable restart restart-vpn logs backup restore auto-backup tls doctor rollback recover-update uninstall completion help start stop"
     local flags="--yes -y --help -h --quiet -q --purge --keep -v --version --fix -a --all"
     if [[ "$cur" == -* ]]; then
         COMPREPLY=( $(compgen -W "$flags" -- "$cur") )
@@ -833,7 +833,6 @@ show_help_full() {
     ovnode config              Every effective setting and where it comes from
 
   RETIRED NAMES — still work, no longer in the short help
-    ovnode credentials         → ovnode auth key
     ovnode restart-vpn         → ovnode restart core
     ovnode auto-backup         → ovnode backup schedule
     ovnode recover-update      → ovnode update (it recovers first)
@@ -966,7 +965,6 @@ parse_args() {
             # the first one winning and `ovnode backup schedule` becoming dead
             # code — both shipped, both invisible to the tests.
             restart-vpn)  ACTION="restart-core"; shift ;;
-            credentials)  ACTION="auth"; AUTH_ACTION="key"; shift ;;
             recover-update) ACTION="recover-update"; shift ;;
 
             --yes|-y)     YES=1; shift ;;
