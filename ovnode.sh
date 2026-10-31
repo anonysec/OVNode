@@ -10,7 +10,7 @@
 set -Eeuo pipefail
 
 # ── Constants ──────────────────────────────────────────────────────────
-VERSION="1.4.4"
+VERSION="1.4.5"
 APP_DIR="${OVN_APP_DIR:-/opt/ovnode}"
 DATA_BASE="/var/lib/ovnode"
 OPENVPN_ROOT="/etc/openvpn"
@@ -464,28 +464,6 @@ auto_backup_cli() {
     esac
 }
 
-do_certificate() {
-    [[ -f "$APP_DIR/.env" ]] || die "OVNode is not installed." "$EX_NOTINSTALLED"
-    check_root
-    local envfile="$APP_DIR/.env"
-    local certfile node port tls scheme host
-    certfile="$(env_get "$envfile" SSL_CERTFILE)"
-    [[ -n "$certfile" ]] || certfile="/etc/ovnode/tls/fullchain.pem"
-    [[ -f "$certfile" ]] || die "Certificate file not found: $certfile" "$EX_ERROR"
-    node="$(env_get "$envfile" NODE_NAME)"; : "${node:=ovnode}"
-    port="$(env_get "$envfile" SERVICE_PORT)"; : "${port:=$DEFAULT_PORT}"
-    tls="$(env_get "$envfile" TLS_METHOD)"; : "${tls:=selfsigned}"
-    scheme="http"; [[ "$tls" != "none" ]] && scheme="https"
-    host="$(primary_ip)"
-    render_line ""
-    render_line "${B}TLS certificate — panel ↔ node API${NC}"
-    render_kv "Node"     "$node"
-    render_kv "Service"  "${scheme}://${host}:${port}"
-    render_key "Certificate" "$(cat "$certfile")"
-    render_line "  paste this into the panel: Nodes → Add Node"
-    return 0
-}
-
 node_tls() {
     # `ovnode tls cert` prints the panel-facing certificate the way
     # `ovnode auth key` prints the API key: the whole PEM, bold, ready to copy.
@@ -652,11 +630,15 @@ do_auth() {
         key)
             render_kv "Node"     "$node"
             render_kv "Service"  "${scheme}://${host}:${port}"
-            # Bold, and one line of prose under it, because this is the one value
-            # on screen that gets copied out of it. Printed at the same weight as
-            # every other row it was read past, and the key is not recoverable
-            # from the panel — losing it means re-enrolling the node.
+            # The API key and the certificate are the two values an operator
+            # copies into the panel, so both are shown here, bold, like the key
+            # always was. The certificate is public; the key is not.
             render_key "API key" "$key"
+            certfile="$(env_get "$APP_DIR/.env" SSL_CERTFILE)"
+            [[ -n "$certfile" ]] || certfile="/etc/ovnode/tls/fullchain.pem"
+            if [[ -f "$certfile" ]]; then
+                render_key "Certificate" "$(cat "$certfile")"
+            fi
             render_line "  register this node in the panel: Nodes → Add Node"
             return 0 ;;
         rotate) auth_rotate; return $? ;;
@@ -755,7 +737,7 @@ _ovnode_completions() {
     local cur
     COMPREPLY=()
     cur="${COMP_WORDS[COMP_CWORD]}"
-    local cmds="status credentials certificate config update enable disable restart restart-vpn logs backup restore auto-backup tls doctor rollback recover-update uninstall completion help start stop"
+    local cmds="status credentials config update enable disable restart restart-vpn logs backup restore auto-backup tls doctor rollback recover-update uninstall completion help start stop"
     local flags="--yes -y --help -h --quiet -q --purge --keep -v --version --fix -a --all"
     if [[ "$cur" == -* ]]; then
         COMPREPLY=( $(compgen -W "$flags" -- "$cur") )
@@ -799,7 +781,6 @@ show_help() {
 
     ovnode auth                Owner credential — lists the options
     ovnode auth key            Node name and API key
-    ovnode certificate         Node certificate (panel Server CA)
     ovnode certificate         Node certificate (panel Server CA)
     ovnode auth rotate         Generate a new API key
     ovnode auth disconnect     Release the paired panel now
@@ -986,7 +967,6 @@ parse_args() {
             # code — both shipped, both invisible to the tests.
             restart-vpn)  ACTION="restart-core"; shift ;;
             credentials)  ACTION="auth"; AUTH_ACTION="key"; shift ;;
-            certificate|cert) ACTION="certificate"; shift ;;
             recover-update) ACTION="recover-update"; shift ;;
 
             --yes|-y)     YES=1; shift ;;
@@ -1017,7 +997,6 @@ main() {
     case "$ACTION" in
         status)    do_status; exit "$EX_OK" ;;
         auth)      do_auth; exit $? ;;
-        certificate) do_certificate; exit $? ;;
         config)    do_config; exit "$EX_OK" ;;
         update|recover-update) delegate_update; exit "$EX_OK" ;;
         start|stop|restart) check_root; node_service_action "$ACTION"; exit "$EX_OK" ;;

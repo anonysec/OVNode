@@ -1,5 +1,9 @@
 # Changelog
 
+## 1.4.5 — 2026-10-31
+
+- Change(credentials): show the node certificate in `ovnode credentials`/`ovnode auth key`; remove standalone `ovnode certificate`.
+
 ## 1.4.4 — 2026-10-31
 
 - Feat(installer): print node certificate content like the API key on the ready card.
