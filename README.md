@@ -292,6 +292,8 @@ docker compose -f scripts/compose/docker-compose.yml up -d
 
 All state lives in the `/etc/openvpn` volume, so the container itself is replaceable. `OVNODE_SKIP_OPENVPN=1` runs the agent alone, for debugging.
 
+Native installs are the lighter option for small or low-resource servers; Docker is provided for portability and reproducible deployments. The compose file and entrypoint are validated by `scripts/test-compose.sh`.
+
 ## 📚 Docs
 
 Full documentation is published at **<https://anonysec.github.io/OVManager/>** — OVNode shares the OVManager site.
