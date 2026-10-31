@@ -10,7 +10,7 @@
 set -Eeuo pipefail
 
 # ── Constants ──────────────────────────────────────────────────────────
-VERSION="1.4.3"
+VERSION="1.4.4"
 APP_DIR="${OVN_APP_DIR:-/opt/ovnode}"
 DATA_BASE="/var/lib/ovnode"
 OPENVPN_ROOT="/etc/openvpn"
@@ -464,7 +464,53 @@ auto_backup_cli() {
     esac
 }
 
+do_certificate() {
+    [[ -f "$APP_DIR/.env" ]] || die "OVNode is not installed." "$EX_NOTINSTALLED"
+    check_root
+    local envfile="$APP_DIR/.env"
+    local certfile node port tls scheme host
+    certfile="$(env_get "$envfile" SSL_CERTFILE)"
+    [[ -n "$certfile" ]] || certfile="/etc/ovnode/tls/fullchain.pem"
+    [[ -f "$certfile" ]] || die "Certificate file not found: $certfile" "$EX_ERROR"
+    node="$(env_get "$envfile" NODE_NAME)"; : "${node:=ovnode}"
+    port="$(env_get "$envfile" SERVICE_PORT)"; : "${port:=$DEFAULT_PORT}"
+    tls="$(env_get "$envfile" TLS_METHOD)"; : "${tls:=selfsigned}"
+    scheme="http"; [[ "$tls" != "none" ]] && scheme="https"
+    host="$(primary_ip)"
+    render_line ""
+    render_line "${B}TLS certificate — panel ↔ node API${NC}"
+    render_kv "Node"     "$node"
+    render_kv "Service"  "${scheme}://${host}:${port}"
+    render_key "Certificate" "$(cat "$certfile")"
+    render_line "  paste this into the panel: Nodes → Add Node"
+    return 0
+}
+
 node_tls() {
+    # `ovnode tls cert` prints the panel-facing certificate the way
+    # `ovnode auth key` prints the API key: the whole PEM, bold, ready to copy.
+    if [[ "${TLS_ACTION:-}" == "cert" || "${TLS_ACTION:-}" == "certificate" ]]; then
+        local envfile="$APP_DIR/.env"
+        [[ -f "$envfile" ]] || die "Not installed ($envfile missing)" "$EX_NOTINSTALLED"
+        check_root
+        local certfile
+        certfile="$(env_get "$envfile" SSL_CERTFILE)"
+        [[ -n "$certfile" ]] || certfile="/etc/ovnode/tls/fullchain.pem"
+        [[ -f "$certfile" ]] || die "Certificate file not found: $certfile" "$EX_ERROR"
+        local node port tls scheme host
+        node="$(env_get "$envfile" NODE_NAME)"; : "${node:=ovnode}"
+        port="$(env_get "$envfile" SERVICE_PORT)"; : "${port:=$DEFAULT_PORT}"
+        tls="$(env_get "$envfile" TLS_METHOD)"; : "${tls:=selfsigned}"
+        scheme="http"; [[ "$tls" != "none" ]] && scheme="https"
+        host="$(primary_ip)"
+        render_line ""
+        render_line "${B}TLS certificate — panel ↔ node API${NC}"
+        render_kv "Node"     "$node"
+        render_kv "Service"  "${scheme}://${host}:${port}"
+        render_key "Certificate" "$(cat "$certfile")"
+        render_line "  paste this into the panel: Nodes → Add Node"
+        return 0
+    fi
     local envfile="$APP_DIR/.env"
     local method="selfsigned" keyfile="" certfile="" expiry=""
     # Bare, it reports and lists. The numbered menu it used to open is the one
@@ -709,7 +755,7 @@ _ovnode_completions() {
     local cur
     COMPREPLY=()
     cur="${COMP_WORDS[COMP_CWORD]}"
-    local cmds="status credentials config update enable disable restart restart-vpn logs backup restore auto-backup tls doctor rollback recover-update uninstall completion help start stop"
+    local cmds="status credentials certificate config update enable disable restart restart-vpn logs backup restore auto-backup tls doctor rollback recover-update uninstall completion help start stop"
     local flags="--yes -y --help -h --quiet -q --purge --keep -v --version --fix -a --all"
     if [[ "$cur" == -* ]]; then
         COMPREPLY=( $(compgen -W "$flags" -- "$cur") )
@@ -753,6 +799,8 @@ show_help() {
 
     ovnode auth                Owner credential — lists the options
     ovnode auth key            Node name and API key
+    ovnode certificate         Node certificate (panel Server CA)
+    ovnode certificate         Node certificate (panel Server CA)
     ovnode auth rotate         Generate a new API key
     ovnode auth disconnect     Release the paired panel now
     ovnode tls                 Certificate — lists the options
@@ -921,6 +969,7 @@ parse_args() {
                                   le)         eval "$need2"; TLS_ACTION="le"; TLS_DOMAIN="$2"; shift 2 ;;
                                   custom)     eval "$need2"; eval "$need2"
                                               TLS_ACTION="custom"; TLS_CERT="$2"; TLS_KEY="$3"; shift 3 ;;
+                                   cert|certificate) TLS_ACTION="cert"; shift ;;
                                   *) die "ovnode tls: unknown option '$1'  (see: ovnode tls)" "$EX_USAGE" ;;
                               esac
                           fi ;;
@@ -937,6 +986,7 @@ parse_args() {
             # code — both shipped, both invisible to the tests.
             restart-vpn)  ACTION="restart-core"; shift ;;
             credentials)  ACTION="auth"; AUTH_ACTION="key"; shift ;;
+            certificate|cert) ACTION="certificate"; shift ;;
             recover-update) ACTION="recover-update"; shift ;;
 
             --yes|-y)     YES=1; shift ;;
@@ -967,6 +1017,7 @@ main() {
     case "$ACTION" in
         status)    do_status; exit "$EX_OK" ;;
         auth)      do_auth; exit $? ;;
+        certificate) do_certificate; exit $? ;;
         config)    do_config; exit "$EX_OK" ;;
         update|recover-update) delegate_update; exit "$EX_OK" ;;
         start|stop|restart) check_root; node_service_action "$ACTION"; exit "$EX_OK" ;;

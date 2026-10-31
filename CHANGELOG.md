@@ -1,5 +1,10 @@
 # Changelog
 
+## 1.4.4 — 2026-10-31
+
+- Feat(installer): print node certificate content like the API key on the ready card.
+- Feat(ovnode): add `ovnode certificate` (and `ovnode tls cert`) to print the panel-facing certificate.
+
 ## 1.4.3 — 2026-10-31
 
 - Fix(httpapi): pass ResponseWriter to MaxBytesReader so oversized bodies return 413 instead of panicking.
