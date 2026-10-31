@@ -2143,6 +2143,9 @@ main() {
     if [[ -z "${OVN_DATA_BASE:-}" ]]; then DATA_BASE="/var/lib/$INSTANCE_NAME"; fi
     SYSTEMD_SERVICE="${INSTANCE_NAME}.service"
     OPENVPN_SERVICE="${INSTANCE_NAME}-openvpn.service"
+    NAT_SERVICE="${INSTANCE_NAME}-nat.service"
+    CLEANUP_SERVICE="${INSTANCE_NAME}-cleanup.service"
+    CLEANUP_TIMER="${INSTANCE_NAME}-cleanup.timer"
     CLI_NAME="$INSTANCE_NAME"
 
     # Before anything touches $APP_DIR — before load_helpers, which downloads
