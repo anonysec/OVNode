@@ -29,7 +29,8 @@ REPO="${OVN_REPO:-anonysec/OVNode}"
 SRC="release"
 # OVN_APP_DIR lets tests run status/uninstall on a box already hosting a node.
 APP_DIR="${OVN_APP_DIR:-/opt/ovnode}"
-DATA_BASE="/var/lib/ovnode"
+DATA_BASE="${OVN_DATA_BASE:-/var/lib/ovnode}"
+INSTANCE_NAME="${OVN_INSTANCE:-}"
 OPENVPN_ROOT="/etc/openvpn"
 # The agent and the OpenVPN hook are the same Go binary. It lives where the
 # server.conf writer points the hooks, so there is exactly one copy of it.
@@ -385,7 +386,7 @@ validate_input() {
         udp|tcp) ;;
         *) die "Invalid transport '$VPN_PROTO' (use udp or tcp)" "$EX_USAGE" ;;
     esac
-    [[ -n "$NODE_NAME" ]] || NODE_NAME="ovnode"
+        [[ -n "$NODE_NAME" ]] || NODE_NAME="$INSTANCE_NAME"
     [[ "$NODE_NAME" =~ ^[A-Za-z0-9_-]{1,64}$ ]] || die "Invalid node name" "$EX_USAGE"
     [[ -n "$API_KEY" ]] || generate_api_key
     [[ ${#API_KEY} -ge 16 ]] || die "API key must be at least 16 characters (openssl rand -hex 32)" "$EX_USAGE"
@@ -2064,6 +2065,7 @@ parse_args() {
             --vpn-ports|--vpn-port) eval "$need2"; deprecated "$1" "set OVN_VPN_PORTS instead"; VPN_PORTS="$2"; CLI_FLAGS=1; shift 2 ;;
             --proto) eval "$need2"; deprecated "--proto" "set OVN_PROTO instead"; VPN_PROTO="$2"; CLI_FLAGS=1; shift 2 ;;
             --name)       eval "$need2"; deprecated "--name" "set OVN_NAME instead"; NODE_NAME="$2"; CLI_FLAGS=1; shift 2 ;;
+            --instance)   eval "$need2"; OVN_INSTANCE="$2"; INSTANCE_NAME="$2"; if [[ -z "$NODE_NAME" ]]; then NODE_NAME="$2"; fi; CLI_FLAGS=1; shift 2 ;;
             --tls)        eval "$need2"; deprecated "--tls" "set OVN_TLS instead"; CLI_FLAGS=1
                           case "$2" in
                               1|selfsigned) TLS_METHOD="selfsigned" ;;
@@ -2127,6 +2129,19 @@ main() {
             || fail "Bad --version '$PIN' (use 1.2.3, v1.2.3, 1.2.3-rc1)" "$EX_USAGE"
         VERSION="${PIN#v}"
     fi
+    # Multi-instance: the instance name selects the app/data directories and
+    # the service/command names. OVN_NAME (the node identity) defaults to it.
+    # shortcut: instances share one OpenVPN root and pairing state; full
+    # per-instance isolation needs OVN_NODE_OPENVPN_ROOT plumbing.
+    INSTANCE_NAME="${INSTANCE_NAME:-${OVN_INSTANCE:-${NODE_NAME:-}}}"
+    : "${INSTANCE_NAME:=ovnode}"
+    [[ -n "$NODE_NAME" ]] || NODE_NAME="$INSTANCE_NAME"
+    if [[ -z "${OVN_APP_DIR:-}" ]]; then APP_DIR="/opt/$INSTANCE_NAME"; fi
+    if [[ -z "${OVN_DATA_BASE:-}" ]]; then DATA_BASE="/var/lib/$INSTANCE_NAME"; fi
+    SYSTEMD_SERVICE="${INSTANCE_NAME}.service"
+    OPENVPN_SERVICE="${INSTANCE_NAME}-openvpn.service"
+    CLI_NAME="$INSTANCE_NAME"
+
     # Before anything touches $APP_DIR — before load_helpers, which downloads
     # the binary into that directory, and before --local, which rsyncs into it.
     # Capture first, or the "already installed" check below reads the
@@ -2141,7 +2156,7 @@ main() {
         [[ -n "$PORT" ]]      || PORT="$DEFAULT_PORT"
         [[ -n "$TLS_METHOD" ]]|| TLS_METHOD="selfsigned"
         [[ -n "$VPN_PORTS" ]] || VPN_PORTS="$DEFAULT_VPN"
-        [[ -n "$NODE_NAME" ]] || NODE_NAME="ovnode"
+        [[ -n "$NODE_NAME" ]] || NODE_NAME="$INSTANCE_NAME"
         validate_input
     fi
     # A local build always proceeds to install: the dev loop rsyncs and

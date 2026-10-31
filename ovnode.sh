@@ -11,18 +11,22 @@ set -Eeuo pipefail
 
 # ── Constants ──────────────────────────────────────────────────────────
 VERSION="1.4.9"
-APP_DIR="${OVN_APP_DIR:-/opt/ovnode}"
-DATA_BASE="/var/lib/ovnode"
+_INVOKED_NAME="$(basename "${BASH_SOURCE[0]:-$0}")"
+_INVOKED_NAME="${_INVOKED_NAME%.sh}"
+INSTANCE_NAME="${OVN_INSTANCE:-$_INVOKED_NAME}"
+: "${INSTANCE_NAME:=ovnode}"
+APP_DIR="${OVN_APP_DIR:-/opt/$INSTANCE_NAME}"
+DATA_BASE="${OVN_DATA_BASE:-/var/lib/$INSTANCE_NAME}"
 OPENVPN_ROOT="/etc/openvpn"
 # Panel pairing record — one panel owns the node; `ovnode auth disconnect` is
 # the release, so the path has to be known to the CLI as well as the agent.
-PAIRING_FILE="$OPENVPN_ROOT/ovnode/state/pairing.json"
+PAIRING_FILE="$OPENVPN_ROOT/$INSTANCE_NAME/state/pairing.json"
 DEFAULT_PORT=2083
-SYSTEMD_SERVICE="ovnode.service"
-OPENVPN_SERVICE="ovnode-openvpn.service"
+SYSTEMD_SERVICE="${INSTANCE_NAME}.service"
+OPENVPN_SERVICE="${INSTANCE_NAME}-openvpn.service"
 INSTALLER="$APP_DIR/install.sh"
 BIN_DIR="${OVN_BIN_DIR:-/usr/local/bin}"
-CLI_NAME="ovnode"
+CLI_NAME="$INSTANCE_NAME"
 # OVN_COMPLETION_DIR override exists for hermetic tests, like OVN_APP_DIR.
 COMPLETION_DIR="${OVN_COMPLETION_DIR:-/etc/bash_completion.d}"
 
@@ -909,6 +913,11 @@ parse_args() {
     while [[ $# -gt 0 ]]; do
         case "$1" in
             status)       ACTION="status"; shift ;;
+            --instance)   eval "$need2"; OVN_INSTANCE="$2"; INSTANCE_NAME="$2"; export OVN_INSTANCE
+                          if [[ -z "${OVN_APP_DIR:-}" ]]; then APP_DIR="/opt/$INSTANCE_NAME"; fi
+                          if [[ -z "${OVN_DATA_BASE:-}" ]]; then DATA_BASE="/var/lib/$INSTANCE_NAME"; fi
+                          SYSTEMD_SERVICE="${INSTANCE_NAME}.service"; OPENVPN_SERVICE="${INSTANCE_NAME}-openvpn.service"; CLI_NAME="$INSTANCE_NAME"; INSTALLER="$APP_DIR/install.sh"
+                          shift 2 ;;
             update)       ACTION="update"; shift ;;
             uninstall|--uninstall) ACTION="uninstall"; shift ;;
             help|--help|-h)
