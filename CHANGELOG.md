@@ -1,5 +1,10 @@
 # Changelog
 
+## 1.4.9 — 2026-10-31
+
+- Feat: write setup-info file (PasarGuard-style connection details).
+- Feat: add `ovnode info` to print setup details.
+
 ## 1.4.8 — 2026-10-31
 
 - Remove retired `ovnode credentials` alias; use `ovnode auth key`.

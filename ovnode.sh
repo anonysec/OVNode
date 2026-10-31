@@ -10,7 +10,7 @@
 set -Eeuo pipefail
 
 # ── Constants ──────────────────────────────────────────────────────────
-VERSION="1.4.8"
+VERSION="1.4.9"
 APP_DIR="${OVN_APP_DIR:-/opt/ovnode}"
 DATA_BASE="/var/lib/ovnode"
 OPENVPN_ROOT="/etc/openvpn"
@@ -702,6 +702,34 @@ auth_disconnect() {
 # using this file, or something else? Everything the agent needs at boot lives
 # here and nowhere else, so the honest answer is "all of it, and here is the
 # file" — which is worth saying once, in a place an operator can look.
+do_info() {
+    [[ -f "$APP_DIR/.env" ]] || die "OVNode is not installed." "$EX_NOTINSTALLED"
+    check_root
+    local info_file
+    info_file="$(node_data_dir)/setup-info"
+    if [[ -f "$info_file" ]]; then
+        cat "$info_file"
+        return 0
+    fi
+    # Older installs have no setup-info file: print the live values.
+    local envfile="$APP_DIR/.env" certfile node port tls scheme host key
+    node="$(env_get "$envfile" NODE_NAME)"; : "${node:=ovnode}"
+    port="$(env_get "$envfile" SERVICE_PORT)"; : "${port:=$DEFAULT_PORT}"
+    tls="$(env_get "$envfile" TLS_METHOD)"; : "${tls:=selfsigned}"
+    key="$(env_get "$envfile" API_KEY)"
+    scheme="http"; [[ "$tls" != "none" ]] && scheme="https"
+    host="$(primary_ip)"
+    certfile="$(env_get "$envfile" SSL_CERTFILE)"; [[ -n "$certfile" ]] || certfile="/etc/ovnode/tls/fullchain.pem"
+    printf '# OVNode connection details\n'
+    printf 'Address: %s\n' "$host"
+    printf 'Port: %s\n' "$port"
+    printf 'Protocol: %s\n' "$scheme"
+    printf 'API Key: %s\n' "$key"
+    printf 'Certificate:\n'
+    [[ -f "$certfile" ]] && cat "$certfile"
+    return 0
+}
+
 do_config() {
     local envfile="$APP_DIR/.env"
     [[ -f "$envfile" ]] || die "OVNode is not installed." "$EX_NOTINSTALLED"
@@ -737,7 +765,7 @@ _ovnode_completions() {
     local cur
     COMPREPLY=()
     cur="${COMP_WORDS[COMP_CWORD]}"
-    local cmds="status config update enable disable restart restart-vpn logs backup restore auto-backup tls doctor rollback recover-update uninstall completion help start stop"
+    local cmds="status config info update enable disable restart restart-vpn logs backup restore auto-backup tls doctor rollback recover-update uninstall completion help start stop"
     local flags="--yes -y --help -h --quiet -q --purge --keep -v --version --fix -a --all"
     if [[ "$cur" == -* ]]; then
         COMPREPLY=( $(compgen -W "$flags" -- "$cur") )
@@ -780,6 +808,7 @@ show_help() {
     ovnode enable | disable    Automatic start on or off
 
     ovnode auth                Owner credential — lists the options
+    ovnode info                Connection details (address, port, key, cert)
     ovnode auth key            Node name and API key
     ovnode certificate         Node certificate (panel Server CA)
     ovnode auth rotate         Generate a new API key
@@ -815,6 +844,7 @@ show_help_full() {
     ovnode enable | disable    Turn automatic start on or off
 
     ovnode auth                Credential state, and what to do about it
+    ovnode info                Connection details (address, port, key, cert)
     ovnode auth key            Node name and API key
     ovnode auth rotate         Generate a new API key, printed not stored
     ovnode auth disconnect     Release the paired panel (otherwise a 30-min lease)
@@ -954,6 +984,7 @@ parse_args() {
                               esac
                           fi ;;
             config)       ACTION="config"; shift ;;
+            info|setup-info) ACTION="info"; shift ;;
 
             # ── retired names ──
             # Still dispatched, out of the short help, and mapped in
@@ -996,6 +1027,7 @@ main() {
         status)    do_status; exit "$EX_OK" ;;
         auth)      do_auth; exit $? ;;
         config)    do_config; exit "$EX_OK" ;;
+        info)      do_info; exit "$EX_OK" ;;
         update|recover-update) delegate_update; exit "$EX_OK" ;;
         start|stop|restart) check_root; node_service_action "$ACTION"; exit "$EX_OK" ;;
         enable|disable) check_root; node_autostart "$ACTION"; exit "$EX_OK" ;;

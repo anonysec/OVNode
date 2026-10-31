@@ -22,7 +22,7 @@
 set -Eeuo pipefail
 
 # ── Configuration ──────────────────────────────────────────────────────────
-VERSION="1.4.8"
+VERSION="1.4.9"
 # Forks: point source downloads (and update pulls) at your own repo.
 REPO="${OVN_REPO:-anonysec/OVNode}"
 # Versioned GitHub Release tarballs only: verified checksum, no git needed.
@@ -1267,6 +1267,7 @@ do_install() {
     render_ok "$BIN_DIR/$CLI_NAME"
 
     write_install_result "$DATA_BASE/install-result.env"
+    write_setup_info
     node_success_card "$scheme" "$host"
 }
 
@@ -1282,6 +1283,31 @@ preflight_summary() {
 
 installer_uninstall_command() {
     printf 'bash <(curl -sSL https://raw.githubusercontent.com/%s/main/install.sh) uninstall --purge -y' "$REPO"
+}
+
+write_setup_info() {
+    local path scheme host cert_file
+    path="$(node_data_dir)/setup-info"
+    mkdir -p "$(dirname "$path")"
+    scheme="http"; [[ "$TLS_METHOD" != "none" ]] && scheme="https"
+    host="$(primary_ip)"
+    cert_file="${TLS_CERT:-}"
+    if [[ -z "$cert_file" || ! -f "$cert_file" ]]; then
+        cert_file="$(env_get "$APP_DIR/.env" SSL_CERTFILE 2>/dev/null || true)"
+    fi
+    {
+        printf '# OVNode connection details\n'
+        printf 'Address: %s\n' "$host"
+        printf 'Port: %s\n' "$PORT"
+        printf 'Protocol: %s\n' "$scheme"
+        printf 'API Key: %s\n' "$API_KEY"
+        printf 'Certificate:\n'
+        if [[ -n "$cert_file" && -f "$cert_file" ]]; then
+            cat "$cert_file"
+        fi
+    } > "$path"
+    chmod 600 "$path"
+    render_ok "setup info written to $path"
 }
 
 node_success_card() {
