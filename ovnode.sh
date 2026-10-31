@@ -734,6 +734,37 @@ do_info() {
     return 0
 }
 
+pick_editor() {
+    if [[ -n "${EDITOR:-}" ]]; then printf '%s' "$EDITOR"; return 0; fi
+    if [[ -n "${VISUAL:-}" ]]; then printf '%s' "$VISUAL"; return 0; fi
+    local e
+    for e in nano vi vim; do
+        if command -v "$e" >/dev/null 2>&1; then printf '%s' "$e"; return 0; fi
+    done
+    return 1
+}
+
+do_edit() {
+    [[ -f "$APP_DIR/.env" ]] || die "OVNode is not installed." "$EX_NOTINSTALLED"
+    check_root
+    local file="${OPENVPN_ROOT}/server/server.conf"
+    [[ -f "$file" ]] || die "OpenVPN server config not found: $file" "$EX_ERROR"
+    local editor
+    editor="$(pick_editor)" || die "No editor found (set EDITOR)" "$EX_ERROR"
+    "$editor" "$file"
+    render_note "Restart OpenVPN to apply: ovnode restart core"
+}
+
+do_edit_env() {
+    [[ -f "$APP_DIR/.env" ]] || die "OVNode is not installed." "$EX_NOTINSTALLED"
+    check_root
+    local file="$APP_DIR/.env"
+    local editor
+    editor="$(pick_editor)" || die "No editor found (set EDITOR)" "$EX_ERROR"
+    "$editor" "$file"
+    render_note "Restart the node agent to apply: ovnode restart"
+}
+
 do_config() {
     local envfile="$APP_DIR/.env"
     [[ -f "$envfile" ]] || die "OVNode is not installed." "$EX_NOTINSTALLED"
@@ -813,6 +844,8 @@ show_help() {
 
     ovnode auth                Owner credential — lists the options
     ovnode info                Connection details (address, port, key, cert)
+    ovnode edit                Edit the OpenVPN server config
+    ovnode edit-env            Edit the node .env file
     ovnode auth key            Node name and API key
     ovnode certificate         Node certificate (panel Server CA)
     ovnode auth rotate         Generate a new API key
@@ -994,6 +1027,8 @@ parse_args() {
                           fi ;;
             config)       ACTION="config"; shift ;;
             info|setup-info) ACTION="info"; shift ;;
+            edit)         ACTION="edit"; shift ;;
+            edit-env)     ACTION="edit-env"; shift ;;
 
             # ── retired names ──
             # Still dispatched, out of the short help, and mapped in
@@ -1037,6 +1072,8 @@ main() {
         auth)      do_auth; exit $? ;;
         config)    do_config; exit "$EX_OK" ;;
         info)      do_info; exit "$EX_OK" ;;
+        edit)      do_edit; exit "$EX_OK" ;;
+        edit-env)  do_edit_env; exit "$EX_OK" ;;
         update|recover-update) delegate_update; exit "$EX_OK" ;;
         start|stop|restart) check_root; node_service_action "$ACTION"; exit "$EX_OK" ;;
         enable|disable) check_root; node_autostart "$ACTION"; exit "$EX_OK" ;;
