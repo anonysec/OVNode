@@ -42,7 +42,7 @@ func writeFail(w http.ResponseWriter, msg string) {
 //
 // A malformed body is a business failure, not a 500: the panel must see the
 // refusal instead of a transport error it retries forever.
-func decodeBody(r *http.Request, v any) error {
-	r.Body = http.MaxBytesReader(nil, r.Body, 1<<20)
+func decodeBody(w http.ResponseWriter, r *http.Request, v any) error {
+	r.Body = http.MaxBytesReader(w, r.Body, 1<<20)
 	return json.NewDecoder(r.Body).Decode(v)
 }

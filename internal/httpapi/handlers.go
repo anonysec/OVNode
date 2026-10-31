@@ -106,7 +106,7 @@ func (s *Server) handleConfigPost(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	var req ovpn.ChangeConfigRequest
-	if err := decodeBody(r, &req); err != nil {
+	if err := decodeBody(w, r, &req); err != nil {
 		writeFail(w, "Invalid configuration payload")
 		return
 	}

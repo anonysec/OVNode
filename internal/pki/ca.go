@@ -211,6 +211,11 @@ func GenerateCRL() error {
 
 // RenewServerCertificateNative renews server cert.
 func RenewServerCertificateNative() error {
+	unlock, err := lockPKI()
+	if err != nil {
+		return err
+	}
+	defer unlock()
 	caCert, caKey, err := loadCA()
 	if err != nil {
 		return err

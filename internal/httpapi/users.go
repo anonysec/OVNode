@@ -94,7 +94,7 @@ func (s *Server) handleUserCreate(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	var body createUserRequest
-	if err := decodeBody(r, &body); err != nil {
+	if err := decodeBody(w, r, &body); err != nil {
 		writeFail(w, "Invalid user payload")
 		return
 	}
@@ -122,7 +122,7 @@ func (s *Server) handleUserStatus(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	var body userStatusRequest
-	if err := decodeBody(r, &body); err != nil {
+	if err := decodeBody(w, r, &body); err != nil {
 		writeFail(w, "Invalid user payload")
 		return
 	}
@@ -157,7 +157,7 @@ func (s *Server) handleUserLimit(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	var body userLimitRequest
-	if err := decodeBody(r, &body); err != nil {
+	if err := decodeBody(w, r, &body); err != nil {
 		writeFail(w, "Invalid user payload")
 		return
 	}
@@ -299,7 +299,7 @@ func (s *Server) handleBulkLimits(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	var body bulkLimitsRequest
-	if err := decodeBody(r, &body); err != nil {
+	if err := decodeBody(w, r, &body); err != nil {
 		writeFail(w, "Invalid user payload")
 		return
 	}
@@ -343,7 +343,7 @@ func (s *Server) handlePushCreds(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	var body pushCredentialRequest
-	if err := decodeBody(r, &body); err != nil {
+	if err := decodeBody(w, r, &body); err != nil {
 		writeFail(w, "Invalid credential payload")
 		return
 	}
@@ -370,7 +370,7 @@ func (s *Server) handlePushPKI(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	var body pushPKIRequest
-	if err := decodeBody(r, &body); err != nil {
+	if err := decodeBody(w, r, &body); err != nil {
 		writeFail(w, "Invalid PKI payload")
 		return
 	}

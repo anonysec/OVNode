@@ -28,7 +28,10 @@ func TriggerUpdate(appDir string) error {
 	}
 	cmd := exec.Command("bash", installer, "update")
 	cmd.Dir = appDir
-	// detached
-	cmd.Start()
+	// detached: reap the child so it cannot become a zombie.
+	if err := cmd.Start(); err != nil {
+		return err
+	}
+	go func() { _ = cmd.Wait() }()
 	return nil
 }

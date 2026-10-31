@@ -10,7 +10,7 @@
 set -Eeuo pipefail
 
 # ── Constants ──────────────────────────────────────────────────────────
-VERSION="1.4.2"
+VERSION="1.4.3"
 APP_DIR="${OVN_APP_DIR:-/opt/ovnode}"
 DATA_BASE="/var/lib/ovnode"
 OPENVPN_ROOT="/etc/openvpn"
@@ -236,11 +236,6 @@ restart_vpn() {
         pid="$(cat "$pidfile" 2>/dev/null || true)"
         if [[ -n "$pid" ]] && kill -HUP "$pid" 2>/dev/null; then found=1; fi
     done
-    if [[ "$found" -eq 0 ]]; then
-        for pid in $(pgrep -x openvpn 2>/dev/null || true); do
-            kill -HUP "$pid" 2>/dev/null && found=1
-        done
-    fi
     if [[ "$found" -eq 1 ]]; then
         render_ok "OpenVPN reloaded (SIGHUP)"
     else

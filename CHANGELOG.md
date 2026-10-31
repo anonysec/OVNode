@@ -1,5 +1,13 @@
 # Changelog
 
+## 1.4.3 — 2026-10-31
+
+- Fix(httpapi): pass ResponseWriter to MaxBytesReader so oversized bodies return 413 instead of panicking.
+- Fix(updater): reap detached update child to avoid zombies.
+- Fix(pki): serialize RenewServerCertificateNative with the PKI lock.
+- Fix(ovnode.sh): stop SIGHUP-ing unrelated OpenVPN processes.
+- Fix(install.sh): keep install.sh/compose in Docker build context.
+
 ## 1.4.2 — 2026-10-31
 
 - Fix(pairing): fail closed on unreadable or corrupt pairing state instead of resetting ownership.
