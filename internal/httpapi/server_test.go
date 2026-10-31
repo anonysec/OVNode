@@ -4,7 +4,10 @@
 package httpapi
 
 import (
+	"bytes"
+	"compress/gzip"
 	"encoding/json"
+	"io"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -359,5 +362,48 @@ func TestFirstBootSetupPrintsOnce(t *testing.T) {
 	}
 	if _, err := os.Stat(setupPrintedPath()); err != nil {
 		t.Fatalf("marker missing: %v", err)
+	}
+}
+
+// TestGzipMiddlewareCompressesWhenAccepted verifies usage-sized responses can
+// be compressed for high-traffic nodes.
+func TestGzipMiddlewareCompressesWhenAccepted(t *testing.T) {
+	h := gzipMiddleware(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		_, _ = w.Write([]byte(strings.Repeat("x", 1024)))
+	}))
+	req := httptest.NewRequest(http.MethodGet, "/", nil)
+	req.Header.Set("Accept-Encoding", "gzip")
+	rec := httptest.NewRecorder()
+	h.ServeHTTP(rec, req)
+	if rec.Header().Get("Content-Encoding") != "gzip" {
+		t.Fatal("expected gzip content-encoding")
+	}
+	gz, err := gzip.NewReader(bytes.NewReader(rec.Body.Bytes()))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer gz.Close()
+	out, err := io.ReadAll(gz)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(out) != 1024 {
+		t.Fatalf("decoded length = %d, want 1024", len(out))
+	}
+}
+
+// TestGzipMiddlewareSkipsWhenNotAccepted verifies plain responses stay plain.
+func TestGzipMiddlewareSkipsWhenNotAccepted(t *testing.T) {
+	h := gzipMiddleware(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		_, _ = w.Write([]byte("plain"))
+	}))
+	req := httptest.NewRequest(http.MethodGet, "/", nil)
+	rec := httptest.NewRecorder()
+	h.ServeHTTP(rec, req)
+	if rec.Header().Get("Content-Encoding") != "" {
+		t.Fatal("did not expect content-encoding")
+	}
+	if rec.Body.String() != "plain" {
+		t.Fatalf("body = %q, want plain", rec.Body.String())
 	}
 }

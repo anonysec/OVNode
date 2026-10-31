@@ -14,12 +14,15 @@
 package httpapi
 
 import (
+	"compress/gzip"
 	"crypto/tls"
 	"fmt"
+	"io"
 	"net"
 	"net/http"
 	"os"
 	"path/filepath"
+	"strings"
 	"time"
 
 	"ovnode/internal/logging"
@@ -110,6 +113,31 @@ func (s *Server) recoveryMiddleware(next http.Handler) http.Handler {
 	})
 }
 
+// gzipMiddleware compresses JSON responses when the client accepts gzip, which
+// keeps high-traffic usage reports small on the wire.
+func gzipMiddleware(next http.Handler) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if !strings.Contains(r.Header.Get("Accept-Encoding"), "gzip") {
+			next.ServeHTTP(w, r)
+			return
+		}
+		w.Header().Set("Content-Encoding", "gzip")
+		w.Header().Set("Vary", "Accept-Encoding")
+		gz := gzip.NewWriter(w)
+		defer gz.Close()
+		next.ServeHTTP(&gzipWriter{ResponseWriter: w, Writer: gz}, r)
+	})
+}
+
+type gzipWriter struct {
+	http.ResponseWriter
+	io.Writer
+}
+
+func (g *gzipWriter) Write(b []byte) (int, error) {
+	return g.Writer.Write(b)
+}
+
 // ListenAndServe serves the /sync API over TLS.
 //
 // TLS is not optional: the panel pins the node CA, so a missing or
@@ -130,7 +158,7 @@ func (s *Server) ListenAndServe() error {
 		TLSConfig: &tls.Config{
 			Certificates: []tls.Certificate{cert},
 		},
-		Handler: s.recoveryMiddleware(s.routes()),
+		Handler: gzipMiddleware(s.recoveryMiddleware(s.routes())),
 	}
 	return srv.ListenAndServeTLS("", "")
 }
