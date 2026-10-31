@@ -360,7 +360,7 @@ generate_selfsigned() {
     local key cert
     { read -r key; read -r cert; } < <(node_tls_paths)
     mkdir -p "$(dirname "$key")" "$(dirname "$cert")"
-    # Reuse an intact pair, permissions included. `ovn tls selfsigned` is the
+    # Reuse an intact pair, permissions included. `ovnode tls selfsigned` is the
     # explicit way to ask for a new one, and only that sets TLS_REGENERATE.
     if [[ "${TLS_REGENERATE:-0}" != "1" ]] && _existing_tls_pair_usable "$key" "$cert"; then
         TLS_KEY="$key"

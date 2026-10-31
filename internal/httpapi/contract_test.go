@@ -191,9 +191,11 @@ func TestContractMatchesThePanelTable(t *testing.T) {
 // nodeOnlyRoutes are the routes the node serves for its own sake. The panel
 // does not call them today; they are not drift.
 var nodeOnlyRoutes = map[string]bool{
-	"GET /sync/config":     true,
-	"PUT /sync/users/{cn}": true,
-	"PUT /sync/pki":        true,
+	"GET /sync/config":                  true,
+	"PUT /sync/users/{cn}":              true,
+	"PUT /sync/pki":                     true,
+	"POST /sync/user":                   true,
+	"POST /sync/user/{uid}/reset-usage": true,
 }
 
 // methodName renders an HTTP method the way the panel's table spells it.

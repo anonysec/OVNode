@@ -115,15 +115,20 @@ func homeDir() string {
 	return "/root"
 }
 
-// GenTLSKey generates tls-crypt key (idempotent).
+// GenTLSKey generates OpenVPN tls-crypt key at /etc/openvpn/server/tls.key (idempotent).
 func GenTLSKey() error {
-	path := filepath.Join(PKIDir(), "tls.key")
+	path := TLSKey()
 	if _, err := os.Stat(path); err == nil {
 		return nil
 	}
 	os.MkdirAll(filepath.Dir(path), 0o755)
-	// Use openssl to generate a 256-bit key for tls-crypt.
-	cmd := exec.Command("openssl", "genpkey", "-algorithm", "ED25519", "-out", path)
-	cmd.Dir = EasyRSADir()
-	return cmd.Run()
+	cmd := exec.Command("openvpn", "--genkey", "secret", path)
+	if err := cmd.Run(); err != nil {
+		// Fallback for older openvpn versions with --secret flag
+		cmd2 := exec.Command("openvpn", "--genkey", "--secret", path)
+		if err2 := cmd2.Run(); err2 != nil {
+			return err2
+		}
+	}
+	return os.Chmod(path, 0o644)
 }

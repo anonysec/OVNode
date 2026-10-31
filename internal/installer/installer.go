@@ -507,6 +507,8 @@ func Restore(bundle, appDir, dataBase, ovpnRoot string) error {
 		fd.Close()
 		if strings.HasSuffix(dst, ".env") {
 			os.Chmod(tmp, 0o600)
+		} else if strings.Contains(dst, "scripts/") || strings.HasSuffix(dst, "/ovnode") {
+			os.Chmod(tmp, 0o755)
 		}
 		if err := os.Rename(tmp, dst); err != nil {
 			os.Remove(tmp)

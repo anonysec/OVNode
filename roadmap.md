@@ -13,14 +13,14 @@ Smallest set. Each item is ≤ 1 day, no new dependencies.
 
 1. **Rate-limit `/api/login`** — in-process token bucket keyed on IP + username,
    ~30 lines, no middleware.
-2. **`ovm update` typed confirmation** — `read -p` + case match in `manager.sh`.
+2. **`ovmanager update` typed confirmation** — `read -p` + case match in `manager.sh`.
    Stops the silent self-upgrade foot-gun.
 3. **Last-login IP + timestamp on header** — almost certainly already in
    `sessions` / `audit_log`, just surface.
 
 ## Later (v1.1.3)
 
-4. **`ovm doctor` round-trip** — login + node API ping via `curl`. Catches
+4. **`ovmanager doctor` round-trip** — login + node API ping via `curl`. Catches
    JWT-secret drift and node TLS expiry that current checks miss.
 5. **Audit log → CSV export** — stdlib `csv` + one button in `AuditLog.tsx`.
 

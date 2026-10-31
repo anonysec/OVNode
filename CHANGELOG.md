@@ -1,11 +1,19 @@
 # Changelog
 
+## 1.4.0 — 2026-10-31
+
+- Fix(pki): generate standard OpenVPN static key at `/etc/openvpn/server/tls.key` for tls-crypt.
+- Fix(restore): preserve executable permissions on restored agent scripts and binaries.
+- Fix(cli): eliminate legacy `ovn` command in favor of `ovnode`.
+- Chore: removed `ovnode://` registration bundle URI from installer and CLI outputs.
+- Test: updated HTTP API contract test table to recognize `/sync/user` creation and reset routes.
+
 ## 1.3.0 — 2026-10-07
 
 Single-panel pairing: X-Panel-ID lease enforced in check_api_key (all keyed
 routes). First panel pairs; foreign panels get 409 while the 30-minute lease
 holds, silent takeover after expiry; anonymous (headerless) requests pass only
-while unpaired. New CLI: `ovn auth disconnect` clears pairing immediately.
+while unpaired. New CLI: `ovnode auth disconnect` clears pairing immediately.
 Unkeyed /sync/health unaffected.
 
 Panel-owned PKI: node accepts pushed credentials. New endpoints PUT /sync/users/{cn}
@@ -162,11 +170,11 @@ input is still reported as bad input.
 
 **CLI**
 
-- Bare `ovn` prints thirteen verbs and exits, like `ovm`. It used to open a
+- Bare `ovnode` prints thirteen verbs and exits, like `ovmanager`. It used to open a
   numbered menu on a tty and die without one, so a provisioning script either
   hung or looked broken. The menu was also a second hand-maintained list of the
   tool's own commands.
-- `ovn doctor` collects then renders: failures first, each fix in the label's
+- `ovnode doctor` collects then renders: failures first, each fix in the label's
   column, passes counted, a clean run one line. `--all` works — it was in the
   help and did nothing.
 - `credentials` is now `auth`; `restart-vpn` is now `restart core`.
@@ -186,7 +194,7 @@ source instead of running the command. Running every verb is now a test.
 **Data directory**
 
 `/var/lib/ovnode`, not `/var/lib/ovnode/<name>` — the nesting was a layout for
-several nodes on a host that nothing implemented. `ovn update` migrates existing
+several nodes on a host that nothing implemented. `ovnode update` migrates existing
 installs before re-reading `.env`, copies rather than moves, and refuses to merge
 rather than guessing which copy is live.
 
@@ -207,7 +215,7 @@ bash <(curl -sSL https://raw.githubusercontent.com/anonysec/OVNode/main/install.
 
 One question — host service, or Docker — then safe defaults: node `ovnode`,
 sync API on `2083`, OpenVPN on `1194/udp`, self-signed TLS and a generated API
-key. The install ends with the node name, API key and an `ovnode://` bundle for
+key. The install ends with the node name and API key for
 **Nodes → Add Node** in the panel.
 
 - Three flags: `-y`/`--yes`, `--docker`, `-h`/`--help`. Every other setting is
@@ -227,12 +235,12 @@ Every menu item is also a plain command with a stable exit code — `status`,
 `credentials`, `logs`, `backup`, `restore`, `auto-backup`, `doctor`, `update`,
 `rollback`, `tls`, `completion` and the service controls.
 
-- `ovn credentials` reprints the node name, API key and panel bundle at any
+- `ovnode credentials` reprints the node name and API key at any
   time; the install summary is no longer the only place they exist.
-- `ovn restore` lists data backups and restores one, taking a safety copy first.
-- `ovn update` snapshots identity, node data, `/etc/openvpn` and the API TLS
+- `ovnode restore` lists data backups and restores one, taking a safety copy first.
+- `ovnode update` snapshots identity, node data, `/etc/openvpn` and the API TLS
   files before it starts, and rolls back if the new release does not come up.
-- `ovn completion` installs shell completion.
+- `ovnode completion` installs shell completion.
 - `install.sh version-script` reports which installer was actually run.
 - Read-only commands report an unreadable `.env` as an error instead of
   reporting defaults that look like real data.

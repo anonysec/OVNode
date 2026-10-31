@@ -10,7 +10,7 @@
 set -Eeuo pipefail
 
 # ── Constants ──────────────────────────────────────────────────────────
-VERSION="1.3.0"
+VERSION="1.4.0"
 APP_DIR="${OVN_APP_DIR:-/opt/ovnode}"
 DATA_BASE="/var/lib/ovnode"
 OPENVPN_ROOT="/etc/openvpn"
@@ -588,12 +588,12 @@ do_rollback() {
 # `ovnode auth`. The node has one credential and two states — before the panel
 # has it, and after — and the right action differs between them, so the state
 # comes first and the action follows from it. Same shape as the panel's
-# `ovm auth`, so the rule is learned once for both tools.
+# `ovmanager auth`, so the rule is learned once for both tools.
 do_auth() {
     [[ -f "$APP_DIR/.env" ]] || die "OVNode is not installed." "$EX_NOTINSTALLED"
     check_root
 
-    local node port tls key scheme tls_flag host bundle
+    local node port tls key scheme host
     node="$(env_get "$APP_DIR/.env" NODE_NAME)"
     [[ -n "$node" ]] || node="ovnode"
     port="$(env_get "$APP_DIR/.env" SERVICE_PORT)"
@@ -605,11 +605,7 @@ do_auth() {
 
     scheme="http"
     if [[ "$tls" != "none" ]]; then scheme="https"; fi
-    tls_flag=0
-    if [[ "$tls" != "none" ]]; then tls_flag=1; fi
     host="$(primary_ip)"
-    # Same shape as the installer's Ready card, or the panel cannot register it.
-    bundle="ovnode://${node}@${host}:${port}?key=${key}&tls=${tls_flag}"
 
     case "$AUTH_ACTION" in
         key)
@@ -620,8 +616,7 @@ do_auth() {
             # every other row it was read past, and the key is not recoverable
             # from the panel — losing it means re-enrolling the node.
             render_key "API key" "$key"
-            render_url "Bundle"  "$bundle"
-            render_line "  paste the bundle into the panel to register this node"
+            render_line "  register this node in the panel: Nodes → Add Node"
             return 0 ;;
         rotate) auth_rotate; return $? ;;
         disconnect) auth_disconnect; return $? ;;
@@ -637,7 +632,7 @@ do_auth() {
         render_kv "Panel"     "not paired — the first panel to call with its id pairs"
     fi
     render_blank
-    render_kv "Key"    "ovnode auth key — print the key and the registration bundle"
+    render_kv "Key"    "ovnode auth key — print the node name and API key"
     render_kv "Rotate" "ovnode auth rotate — generate a new key"
     render_kv "Disconnect" "ovnode auth disconnect — release the paired panel now"
 }
@@ -762,7 +757,7 @@ show_help() {
     ovnode enable | disable    Automatic start on or off
 
     ovnode auth                Owner credential — lists the options
-    ovnode auth key            API key and the panel registration bundle
+    ovnode auth key            Node name and API key
     ovnode auth rotate         Generate a new API key
     ovnode auth disconnect     Release the paired panel now
     ovnode tls                 Certificate — lists the options
@@ -796,7 +791,7 @@ show_help_full() {
     ovnode enable | disable    Turn automatic start on or off
 
     ovnode auth                Credential state, and what to do about it
-    ovnode auth key            API key and the panel registration bundle
+    ovnode auth key            Node name and API key
     ovnode auth rotate         Generate a new API key, printed not stored
     ovnode auth disconnect     Release the paired panel (otherwise a 30-min lease)
     ovnode tls                 Certificate: method, key, cert, expiry
@@ -971,7 +966,7 @@ main() {
     # wired into it and nothing failed when someone forgot.
     #
     # The list is the same text as `ovnode help`, so there is one place a verb is
-    # written down rather than two, and `ovm` behaves this way too.
+    # written down rather than two, and `ovmanager` behaves this way too.
     [[ -z "$ACTION" ]] && { show_help; exit "$EX_OK"; }
     local rc=0
     case "$ACTION" in

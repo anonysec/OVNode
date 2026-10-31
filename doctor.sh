@@ -285,7 +285,7 @@ do_doctor() {
     doctor_check "Unit"        "ovnode doctor --fix"     fix_unit  chk_unit
 
     render_rule
-    # Non-zero when something is wrong, so `ovn doctor` is usable in a
+    # Non-zero when something is wrong, so `ovnode doctor` is usable in a
     # monitoring check. It was always zero, which meant a script could not tell
     # a healthy box from a broken one without reading the text.
     #

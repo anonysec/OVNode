@@ -6,7 +6,7 @@ The VPN server half of an [OVManager](https://github.com/anonysec/OVManager) dep
   <img src=".github/assets/banner.svg" alt="OVNode — the VPN server agent for OVManager" width="820">
   <br><br>
 
-  [![Version](https://img.shields.io/badge/version-1.3.0-blue)](CHANGELOG.md)
+  [![Version](https://img.shields.io/badge/version-1.4.0-blue)](CHANGELOG.md)
   [![License: MIT](https://img.shields.io/badge/License-MIT-green.svg)](LICENSE)
   [![CI](https://github.com/anonysec/OVNode/actions/workflows/ci.yml/badge.svg)](https://github.com/anonysec/OVNode/actions/workflows/ci.yml)
   [![Go](https://img.shields.io/badge/go-1.27-00ADD8?logo=go&logoColor=white)](go.mod)
@@ -39,7 +39,7 @@ The VPN server half of an [OVManager](https://github.com/anonysec/OVManager) dep
 - **The panel holds the secrets, the node holds the traffic.** A node does not store the panel's address and never initiates a connection, so replacing the panel is a panel-side operation. Re-attach the nodes with the same name, address and key.
 - **Limits enforced where the connections are.** The login limit runs in OpenVPN's connect hook, not in the panel, so it holds even while the panel is unreachable.
 - **Traffic that survives reconnects.** The disconnect hook banks each session's final byte counters into a lifetime total per user, so a dropped connection or a restart cannot lose the count.
-- **Nothing to migrate.** There is no database. Node state is plain files under `/etc/openvpn` and `/var/lib/ovnode`, which is what makes `ovn backup` a tarball and a restore a file copy.
+- **Nothing to migrate.** There is no database. Node state is plain files under `/etc/openvpn` and `/var/lib/ovnode`, which is what makes `ovnode backup` a tarball and a restore a file copy.
 - **Upgrades that keep your edits.** Hardening directives are appended to an existing `server.conf` rather than replacing it, and an older on-disk layout is migrated when the agent starts, so restoring an old backup just works.
 - **A verified identity at all times.** Every panel request carries the node's API key, and the panel is the side that dials — so a node is reachable only by something that already knows the key.
 
@@ -72,11 +72,11 @@ The VPN server half of an [OVManager](https://github.com/anonysec/OVManager) dep
 - `OVN_NO_NAT=1` skips forwarding, NAT and port redirects when you would rather handle them yourself.
 
 ### 🔧 Operations
-- `ovn doctor` checks the agent, OpenVPN, disk space, the certificate and recent backups, and applies the safe repairs with `--fix`.
-- `ovn update` takes a verified snapshot of the identity file, the node data directory, `/etc/openvpn` and the API TLS files, then swaps in the release and restores the snapshot if the new one does not come up healthy.
-- `ovn rollback` returns to the previous code tree; `ovn update` cleans up an update interrupted by a reboot or power loss before it starts a new one.
-- `ovn backup` archives the node data and PKI into root-only tarballs, on demand or through a daily system timer, with retention you set.
-- Log rotation, disk-space checks and a stable set of exit codes, so `ovn` is scriptable rather than menu-only.
+- `ovnode doctor` checks the agent, OpenVPN, disk space, the certificate and recent backups, and applies the safe repairs with `--fix`.
+- `ovnode update` takes a verified snapshot of the identity file, the node data directory, `/etc/openvpn` and the API TLS files, then swaps in the release and restores the snapshot if the new one does not come up healthy.
+- `ovnode rollback` returns to the previous code tree; `ovnode update` cleans up an update interrupted by a reboot or power loss before it starts a new one.
+- `ovnode backup` archives the node data and PKI into root-only tarballs, on demand or through a daily system timer, with retention you set.
+- Log rotation, disk-space checks and a stable set of exit codes, so `ovnode` is scriptable rather than menu-only.
 
 ## 🚀 Install
 
@@ -136,7 +136,7 @@ Older flag spellings still work but print what replaces them. The installer's ow
 
 ## 🏁 After it finishes
 
-The install ends with a **Ready — save this login** card holding the node name, the service URL, the API key and an `ovnode://…` bundle. The API key is shown there once; `ovn auth key` reprints it whenever you need it.
+The install ends with a **Ready — save this login** card holding the node name, the service URL and the API key. The API key is shown there once; `ovnode auth key` reprints it whenever you need it.
 
 **Register the node in the panel.** This is the step people get stuck on. OVManager has to be told the node exists before it can use it.
 
@@ -153,12 +153,12 @@ If the card shows a private address (`10.x`, `192.168.x`), the server is behind 
 
 | Path | What |
 | --- | --- |
-| `/opt/ovnode` | The installed tree, with its own virtualenv and the `ovn` manager |
+| `/opt/ovnode` | The installed tree, with its own virtualenv and the `ovnode` manager |
 | `/opt/ovnode/.env` | Runtime settings — port, VPN pool, DNS, extra ports, IPv6, runtime user |
 | `/etc/openvpn/server` | `server.conf`, the PKI and the OpenVPN logs |
 | `/etc/openvpn/ovnode` | Per-user folders, session markers, usage counters and the hooks |
 | `/var/lib/ovnode` | The agent's own data. `DATA_DIR` in `.env` names it |
-| `/var/backups` | Backup archives written by `ovn backup` |
+| `/var/backups` | Backup archives written by `ovnode backup` |
 
 The agent's runtime settings use `OVNODE_*` names and live in `/opt/ovnode/.env`; they are separate from the installer's `OVN_*` variables above. Every one is documented in [.env.example](.env.example).
 
@@ -197,28 +197,28 @@ Diagnostics without SSH: `GET /sync/logs?level=ERROR` reads the agent's in-memor
 
 ## 🧰 Day-to-day commands
 
-Every install adds one command, `ovn` (short for `ovnode`). With no argument it prints this list and exits — there is no menu, so a provisioning script that invokes it never blocks waiting for input. Twelve verbs; `ovn help --all` carries every option and the retired names.
+Every install adds one command, `ovnode` (short for `ovnode`). With no argument it prints this list and exits — there is no menu, so a provisioning script that invokes it never blocks waiting for input. Twelve verbs; `ovnode help --all` carries every option and the retired names.
 
 | Command | What it does |
 | --- | --- |
-| `ovn status` | Agent, health, version and VPN state. `--all` adds node, mode, port and TLS. |
-| `ovn logs [N\|-f]` | Last N log lines (default 100), or follow live. |
-| `ovn doctor [--fix]` | Health check across agent, VPN, disk, certificate and backups. Output leads with what is wrong and the command that fixes it. |
-| `ovn restart` | Restart the node agent. |
-| `ovn restart core` | Restart the OpenVPN server. |
-| `ovn enable \| disable` | Automatic start at boot. |
-| `ovn auth` | Credential state, then the options that apply. |
-| `ovn auth key` | Node name, API key and the panel bundle, any time. |
-| `ovn auth rotate` | Generate a new API key. Prints it and the `.env` line to change. |
-| `ovn auth disconnect` | Release the paired panel now — a paired node refuses a second panel for 30 minutes otherwise. |
-| `ovn tls` | Certificate state, then `selfsigned`, `le IP\|DOMAIN` or `custom CERT KEY`. |
-| `ovn backup [--keep N]` | Save state and PKI backups now. |
-| `ovn backup schedule [on\|off\|status]` | Host timer: a daily backup at `03:30`. |
-| `ovn restore [name]` | List data backups, or restore one by name. |
-| `ovn update` | Update through the installer, with a verified snapshot first. Recovers an interrupted update before starting a new one. |
-| `ovn rollback` | Restore the newest pre-update code snapshot. |
-| `ovn config` | Every effective setting and where it comes from. Read-only. |
-| `ovn uninstall [--purge]` | Remove OVNode. Data is kept unless `--purge`. |
+| `ovnode status` | Agent, health, version and VPN state. `--all` adds node, mode, port and TLS. |
+| `ovnode logs [N\|-f]` | Last N log lines (default 100), or follow live. |
+| `ovnode doctor [--fix]` | Health check across agent, VPN, disk, certificate and backups. Output leads with what is wrong and the command that fixes it. |
+| `ovnode restart` | Restart the node agent. |
+| `ovnode restart core` | Restart the OpenVPN server. |
+| `ovnode enable \| disable` | Automatic start at boot. |
+| `ovnode auth` | Credential state, then the options that apply. |
+| `ovnode auth key` | Node name and API key, any time. |
+| `ovnode auth rotate` | Generate a new API key. Prints it and the `.env` line to change. |
+| `ovnode auth disconnect` | Release the paired panel now — a paired node refuses a second panel for 30 minutes otherwise. |
+| `ovnode tls` | Certificate state, then `selfsigned`, `le IP\|DOMAIN` or `custom CERT KEY`. |
+| `ovnode backup [--keep N]` | Save state and PKI backups now. |
+| `ovnode backup schedule [on\|off\|status]` | Host timer: a daily backup at `03:30`. |
+| `ovnode restore [name]` | List data backups, or restore one by name. |
+| `ovnode update` | Update through the installer, with a verified snapshot first. Recovers an interrupted update before starting a new one. |
+| `ovnode rollback` | Restore the newest pre-update code snapshot. |
+| `ovnode config` | Every effective setting and where it comes from. Read-only. |
+| `ovnode uninstall [--purge]` | Remove OVNode. Data is kept unless `--purge`. |
 
 ### Retired names
 
@@ -226,29 +226,29 @@ These still work, unchanged. Nothing warns — a deprecation line on every night
 
 | Old | Now |
 | --- | --- |
-| `ovn credentials` | `ovn auth key` |
-| `ovn restart-vpn` | `ovn restart core` |
-| `ovn auto-backup [on\|off\|status]` | `ovn backup schedule [on\|off\|status]` |
-| `ovn recover-update` | `ovn update` — it recovers an interrupted one first |
-| `ovn start` / `ovn stop` | `ovn restart` |
+| `ovnode credentials` | `ovnode auth key` |
+| `ovnode restart-vpn` | `ovnode restart core` |
+| `ovnode auto-backup [on\|off\|status]` | `ovnode backup schedule [on\|off\|status]` |
+| `ovnode recover-update` | `ovnode update` — it recovers an interrupted one first |
+| `ovnode start` / `ovnode stop` | `ovnode restart` |
 
 ### `.env` is yours
 
-The installer writes `.env` once, at install, and **nothing in `ovn` ever edits it again** — not `ovn auth rotate`, not `ovn tls`. Edit it freely; changes take effect on `ovn restart`. `ovn config` prints every effective setting and its source.
+The installer writes `.env` once, at install, and **nothing in `ovnode` ever edits it again** — not `ovnode auth rotate`, not `ovnode tls`. Edit it freely; changes take effect on `ovnode restart`. `ovnode config` prints every effective setting and its source.
 
-That is why `ovn auth rotate` prints the new key and the line to change rather than making the change: a command that quietly rewrote the file would mean the `.env` in your backups is not the one you last edited.
+That is why `ovnode auth rotate` prints the new key and the line to change rather than making the change: a command that quietly rewrote the file would mean the `.env` in your backups is not the one you last edited.
 
 Node data lives at `/var/lib/ovnode`, and `DATA_DIR` in `.env` names it. Older
 installs kept it one level down at `/var/lib/ovnode/<name>` — a layout for several
-nodes on one host that nothing ever implemented. `ovn update` moves it up and
+nodes on one host that nothing ever implemented. `ovnode update` moves it up and
 repoints `DATA_DIR`; it refuses rather than merging if both directories hold the
 same file, and it is a no-op on an install that is already flat.
 
-The API key lives in `.env`, not in the panel. It is printed by the installer and by `ovn auth key`; neither can be recovered elsewhere, so losing `.env` means re-enrolling the node. The node keeps its own certificate in `/etc/ovnode/tls` (or wherever `SSL_KEYFILE` says) rather than in `/etc/ssl/self-signed`, which is shared with an OVManager panel on the same host.
+The API key lives in `.env`, not in the panel. It is printed by the installer and by `ovnode auth key`; neither can be recovered elsewhere, so losing `.env` means re-enrolling the node. The node keeps its own certificate in `/etc/ovnode/tls` (or wherever `SSL_KEYFILE` says) rather than in `/etc/ssl/self-signed`, which is shared with an OVManager panel on the same host.
 
-`ovn restore` takes a safety copy before it replaces anything, and refuses to continue if it cannot. `ovn update` and `ovn uninstall` delegate to the installer, so each exists in exactly one place.
+`ovnode restore` takes a safety copy before it replaces anything, and refuses to continue if it cannot. `ovnode update` and `ovnode uninstall` delegate to the installer, so each exists in exactly one place.
 
-`ovn backup` archives `/var/lib/ovnode` and the OpenVPN PKI (`/etc/openvpn/server/pki`) into root-only tarballs in `/var/backups`, keeping the newest 14 (`--keep N` changes that). `ovn update` is stricter still: it snapshots the identity file, the node data directory, `/etc/openvpn` and the API TLS files before it touches anything, and rolls back if the new release does not come up.
+`ovnode backup` archives `/var/lib/ovnode` and the OpenVPN PKI (`/etc/openvpn/server/pki`) into root-only tarballs in `/var/backups`, keeping the newest 14 (`--keep N` changes that). `ovnode update` is stricter still: it snapshots the identity file, the node data directory, `/etc/openvpn` and the API TLS files before it touches anything, and rolls back if the new release does not come up.
 
 ## 🐳 Docker
 
@@ -271,7 +271,7 @@ Full documentation is published at **<https://anonysec.github.io/OVManager/>** �
 | --- | --- |
 | [Adding nodes](https://anonysec.github.io/OVManager/wiki/nodes.html) | Install the agent, register it in the panel, and get the firewall right. |
 | [How it works](https://anonysec.github.io/OVManager/wiki/how-it-works.html) | What runs where on a node, where its data lives, and the security model. |
-| [CLI reference](https://anonysec.github.io/OVManager/wiki/cli.html) | Every `ovn` command, and the node installer's flags and `OVN_*` settings. |
+| [CLI reference](https://anonysec.github.io/OVManager/wiki/cli.html) | Every `ovnode` command, and the node installer's flags and `OVN_*` settings. |
 | [TLS certificates](https://anonysec.github.io/OVManager/wiki/tls.html) | Self-signed vs Let's Encrypt, renewals, and the node-side certificate. |
 | [Troubleshooting](https://anonysec.github.io/OVManager/wiki/troubleshooting.html) | A red node, an unhealthy agent, and no internet through the tunnel. |
 

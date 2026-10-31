@@ -22,7 +22,7 @@
 set -Eeuo pipefail
 
 # ── Configuration ──────────────────────────────────────────────────────────
-VERSION="1.3.0"
+VERSION="1.4.0"
 # Forks: point source downloads (and update pulls) at your own repo.
 REPO="${OVN_REPO:-anonysec/OVNode}"
 # Versioned GitHub Release tarballs only: verified checksum, no git needed.
@@ -320,7 +320,7 @@ identity_sha() {
 fetch_release_binary() {
     local dest="$1" work asset retries=0
     asset="$(release_asset)"
-    work="$(mktemp -d /tmp/ovn.XXXXXX)"
+    work="$(mktemp -d /tmp/ovnode.XXXXXX)"
     trap 'rm -rf "$work"' EXIT
 
     # Retry up to 3 times with exponential backoff. A release asset can be
@@ -1062,9 +1062,7 @@ installer_uninstall_command() {
 }
 
 node_success_card() {
-    local scheme="$1" host="$2" tls_flag=0 key_note bundle where
-    [[ "$TLS_METHOD" != "none" ]] && tls_flag=1
-    bundle="ovnode://${host}:${PORT}?key=${API_KEY}&tls=${tls_flag}"
+    local scheme="$1" host="$2" key_note where
     # Name what the panel will reach: the public IP, or the domain when the
     # certificate names one. A node has no URL of its own — it is an address, a
     # key, and a place to read logs — so the card says exactly that.
@@ -1084,8 +1082,7 @@ node_success_card() {
         "data|$(node_data_dir)" \
         "logs|$CLI_NAME logs -f"
     render_line "  $(printf '%slost it?  %s credentials%s' "$GY" "$CLI_NAME" "$NC")"
-    render_line "  $(printf '%bpanel%s  Nodes → Add Node → paste the bundle below' "$GY" "$NC")"
-    render_kv "bundle" "$bundle"
+    render_line "  $(printf '%bpanel%s  Nodes → Add Node in the panel' "$GY" "$NC")"
     render_line "  uninstall: $(installer_uninstall_command)"
     render_blank
 }
@@ -1119,7 +1116,7 @@ do_update() {
     # last thing standing between a failed migration and a lost node — so it has
     # to be taken after, not before.
     #
-    # Done here, in the installer, rather than in `ovn`: install.sh is what owns
+    # Done here, in the installer, rather than in `ovnode`: install.sh is what owns
     # .env, and the operator CLI never edits it.
     node_env_before_migration="$(env_get "$APP_DIR/.env" DATA_DIR)"
     flat_migration_needed=0
@@ -1656,7 +1653,7 @@ start_menu() {
 
 
 # ── Terminal command (TUI) ─────────────────────────────────────────────
-# install_cli() copies manager.sh to $BIN_DIR as "ovnode" (+ "ovn"), so a bare
+# install_cli() copies manager.sh to $BIN_DIR as "ovnode", so a bare
 # `ovnode` opens the menu. Every action is also a subcommand for scripts.
 
 # systemd waits up to TimeoutStopSec for a stuck unit; bound the wait so an
