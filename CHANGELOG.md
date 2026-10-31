@@ -1,5 +1,9 @@
 # Changelog
 
+## 1.4.7 — 2026-10-31
+
+- Fix(update): repair node_api_status version extraction.
+
 ## 1.4.6 — 2026-10-31
 
 - Fix(update): make node_api_status return version and openvpn status so verification can pass.
