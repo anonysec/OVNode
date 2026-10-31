@@ -38,6 +38,8 @@ jobs:
             exit 1
           fi
           echo "contract: in sync"
+      - name: Installer regression tests
+        run: bash scripts/test-installer.sh
 
   lint:
     runs-on: ubuntu-latest
