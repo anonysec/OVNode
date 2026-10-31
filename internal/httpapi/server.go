@@ -16,8 +16,10 @@ package httpapi
 import (
 	"crypto/tls"
 	"fmt"
+	"net"
 	"net/http"
 	"os"
+	"path/filepath"
 	"time"
 
 	"ovnode/internal/logging"
@@ -162,6 +164,62 @@ func TLSMaterial() (string, string, error) {
 	return cert, key, nil
 }
 
+// primaryIP returns the host's outbound IPv4 address, falling back to the
+// hostname when the network is unavailable. It is used only for the one-time
+// setup print; the panel still learns the real address from the operator.
+func primaryIP() string {
+	conn, err := net.DialTimeout("udp", "8.8.8.8:80", 2*time.Second)
+	if err == nil {
+		defer conn.Close()
+		if addr, ok := conn.LocalAddr().(*net.UDPAddr); ok && addr.IP != nil {
+			return addr.IP.String()
+		}
+	}
+	if h, err := os.Hostname(); err == nil && h != "" {
+		return h
+	}
+	return "127.0.0.1"
+}
+
+// setupPrintedPath is the marker that makes the first-boot print happen once.
+func setupPrintedPath() string {
+	dir := envOr("DATA_DIR", "/var/lib/ovnode")
+	return filepath.Join(dir, ".setup-printed")
+}
+
+// printSetupIfFirstBoot writes the connection details to stdout the first time
+// the agent successfully serves. It returns true when it printed.
+func printSetupIfFirstBoot() bool {
+	marker := setupPrintedPath()
+	if _, err := os.Stat(marker); err == nil {
+		return false
+	}
+	port := envOr("SERVICE_PORT", "2083")
+	key := envOr("API_KEY", "")
+	certFile := envOr("SSL_CERTFILE", "")
+	if certFile == "" {
+		certFile = pki.ServerCert()
+	}
+	proto := "https"
+	fmt.Println("# OVNode connection details")
+	fmt.Println("Address:", primaryIP())
+	fmt.Println("Port:", port)
+	fmt.Println("Protocol:", proto)
+	fmt.Println("API Key:", key)
+	fmt.Println("Certificate:")
+	if data, err := os.ReadFile(certFile); err == nil {
+		fmt.Print(string(data))
+	}
+	return true
+}
+
+// markSetupPrinted records that the first successful serve has happened.
+func markSetupPrinted() {
+	marker := setupPrintedPath()
+	_ = os.MkdirAll(filepath.Dir(marker), 0o700)
+	_ = os.WriteFile(marker, []byte(time.Now().UTC().Format(time.RFC3339)), 0o600)
+}
+
 // Run starts the agent.
 func Run() error {
 	cert, key, err := TLSMaterial()
@@ -174,5 +232,12 @@ func Run() error {
 	logging.Info("ovnode agent %s starting (addr=%s, openvpn_root=%s)",
 		version.Version, s.Addr, pki.OpenVPNRoot())
 	fmt.Println("ovnode serve listening on", s.Addr)
-	return s.ListenAndServe()
+	printed := printSetupIfFirstBoot()
+	err = s.ListenAndServe()
+	if err == nil || err == http.ErrServerClosed {
+		if printed {
+			markSetupPrinted()
+		}
+	}
+	return err
 }

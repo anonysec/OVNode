@@ -216,7 +216,7 @@ func TestStatusCarriesThePanelKeys(t *testing.T) {
 			t.Errorf("the status has no %q key: %s", key, rec.Body.String())
 		}
 	}
-	if data["version"] != "1.4.9" {
+	if data["version"] != "1.4.10" {
 		t.Errorf("version = %v, want the agent version", data["version"])
 	}
 }
@@ -334,5 +334,30 @@ func TestDecodeBodyEnforcesMaxBytes(t *testing.T) {
 	body := envelopeOf(t, rec)
 	if body["success"] == true {
 		t.Fatal("oversized body should fail decode")
+	}
+}
+
+// TestFirstBootSetupPrintsOnce ensures the first-boot connection details are
+// printed exactly once and recorded by a marker file.
+func TestFirstBootSetupPrintsOnce(t *testing.T) {
+	dir := t.TempDir()
+	t.Setenv("DATA_DIR", dir)
+	t.Setenv("SERVICE_PORT", "2083")
+	t.Setenv("API_KEY", "secretkey")
+	cert := filepath.Join(dir, "cert.pem")
+	if err := os.WriteFile(cert, []byte("-----BEGIN CERTIFICATE-----\ntest\n-----END CERTIFICATE-----\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("SSL_CERTFILE", cert)
+
+	if !printSetupIfFirstBoot() {
+		t.Fatal("first call should print")
+	}
+	markSetupPrinted()
+	if printSetupIfFirstBoot() {
+		t.Fatal("second call should not print")
+	}
+	if _, err := os.Stat(setupPrintedPath()); err != nil {
+		t.Fatalf("marker missing: %v", err)
 	}
 }

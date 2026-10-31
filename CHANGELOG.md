@@ -1,5 +1,9 @@
 # Changelog
 
+## 1.4.10 — 2026-10-31
+
+- Feat: print connection details on first successful serve.
+
 ## 1.4.9 — 2026-10-31
 
 - Feat: write setup-info file (PasarGuard-style connection details).
