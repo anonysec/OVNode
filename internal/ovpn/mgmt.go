@@ -6,6 +6,8 @@ package ovpn
 import (
 	"fmt"
 	"net"
+
+	"ovnode/internal/fsx"
 	"os"
 	"strconv"
 	"strings"
@@ -111,10 +113,10 @@ func Takeover(host string, port int, passFile, cn string, cids []string) (Takeov
 
 // mgmtHost returns the management socket host.
 func mgmtHost() string {
-	if v := os.Getenv("OVNODE_MANAGEMENT_HOST"); v != "" {
+	if v := fsx.EnvOr("OVNODE_MANAGEMENT_HOST", ""); v != "" {
 		return v
 	}
-	if v := os.Getenv("OVNODE_MGMT_HOST"); v != "" {
+	if v := fsx.EnvOr("OVNODE_MGMT_HOST", ""); v != "" {
 		return v
 	}
 	return "127.0.0.1"

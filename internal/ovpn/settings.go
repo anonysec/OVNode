@@ -47,7 +47,7 @@ func IPv6Prefix() string { return fsx.Env("IPV6_PREFIX", "fd42:42:42:42::/64") }
 
 // OpenVPNPort reads OPENVPN_PORT (not OVNODE_*) per Python.
 func OpenVPNPort() int {
-	if v, ok := os.LookupEnv("OPENVPN_PORT"); ok && v != "" {
+	if v := fsx.EnvOr("OPENVPN_PORT", ""); v != "" {
 		if n, err := strconv.Atoi(v); err == nil {
 			return n
 		}
@@ -87,8 +87,5 @@ func ExtraVPNPorts() []int {
 
 // Env is the generic accessor matching Python _env.
 func Env(name, defaultVal string) string {
-	if v, ok := os.LookupEnv("OVNODE_" + strings.ToUpper(name)); ok && v != "" {
-		return v
-	}
-	return defaultVal
+	return fsx.Env(name, defaultVal)
 }

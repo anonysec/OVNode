@@ -6,6 +6,8 @@ package pki
 import (
 	"fmt"
 	"os"
+
+	"ovnode/internal/fsx"
 	"os/exec"
 	"path/filepath"
 	"syscall"
@@ -48,7 +50,7 @@ func RunEasyRSAWithTimeout(timeout int, pkiDir string, args ...string) bool {
 		"EASYRSA_BATCH=1",
 		"HOME=" + homeDir(),
 	}
-	if DebugEnabled || os.Getenv("OVNODE_DEBUG") != "" {
+	if DebugEnabled || fsx.Env("DEBUG", "") != "" {
 		fmt.Fprintf(os.Stderr, "DEBUG easyrsa: dir=%s args=%v\n", cmd.Dir, cmd.Args)
 	}
 	// ensure PATH default
@@ -64,7 +66,7 @@ func RunEasyRSAWithTimeout(timeout int, pkiDir string, args ...string) bool {
 	select {
 	case err := <-done:
 		if err != nil {
-			if DebugEnabled || os.Getenv("OVNODE_DEBUG") != "" {
+			if DebugEnabled || fsx.Env("DEBUG", "") != "" {
 				fmt.Fprintf(os.Stderr, "DEBUG easyrsa run error: %v\n", err)
 			}
 			return false

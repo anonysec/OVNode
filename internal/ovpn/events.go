@@ -7,6 +7,8 @@ import (
 	"encoding/json"
 	"io"
 	"os"
+
+	"ovnode/internal/fsx"
 	"path/filepath"
 	"regexp"
 	"strconv"
@@ -106,7 +108,7 @@ func classifyReject(message string) (string, string, string) {
 
 // hookEventLogPath returns the path of the hook event log.
 func hookEventLogPath() string {
-	if v := os.Getenv("OVNODE_LOG_FILE"); v != "" {
+	if v := fsx.Env("LOG_FILE", ""); v != "" {
 		return v
 	}
 	return "/var/log/ovnode/hook-events.log"

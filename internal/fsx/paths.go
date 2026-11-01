@@ -7,10 +7,47 @@ package fsx
 import (
 	"os"
 	"os/exec"
+	"strings"
 	"path/filepath"
 )
 
+// envFileValues reads uncommented KEY=VALUE pairs from the first .env file
+// found, so a user can force an option by editing the file (PasarGuard-style:
+// .env wins over the process environment).
+func envFileValues() map[string]string {
+	out := map[string]string{}
+	paths := []string{}
+	if d := os.Getenv("OVN_APP_DIR"); d != "" {
+		paths = append(paths, filepath.Join(d, ".env"))
+	}
+	paths = append(paths, "/opt/ovnode/.env", "/etc/openvpn/ovnode/.env", ".env")
+	for _, p := range paths {
+		data, err := os.ReadFile(p)
+		if err != nil {
+			continue
+		}
+		for _, line := range strings.Split(string(data), "\n") {
+			line = strings.TrimSpace(line)
+			if line == "" || strings.HasPrefix(line, "#") || !strings.Contains(line, "=") {
+				continue
+			}
+			k, v, _ := strings.Cut(line, "=")
+			k = strings.TrimSpace(k)
+			v = strings.Trim(strings.TrimSpace(v), `"'`)
+			if k != "" {
+				out[k] = v
+			}
+		}
+		break // first readable .env wins
+	}
+	return out
+}
+
 func envOr(name, fallback string) string {
+	// .env wins over process env
+	if v := envFileValues()[name]; v != "" {
+		return v
+	}
 	if v, ok := os.LookupEnv(name); ok && v != "" {
 		return v
 	}

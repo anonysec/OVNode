@@ -6,6 +6,8 @@ package ovpn
 import (
 	"fmt"
 	"os"
+
+	"ovnode/internal/fsx"
 	"path/filepath"
 
 	"ovnode/internal/pki"
@@ -29,20 +31,20 @@ func InitPKI() error {
 	// Check if CA already exists (both cert and private key)
 	caPath := pki.CACert()
 	caKeyPath := filepath.Join(pki.PKIDir(), "private", "ca.key")
-	if DebugEnabled || os.Getenv("OVNODE_DEBUG") != "" {
+	if DebugEnabled || fsx.Env("DEBUG", "") != "" {
 		fmt.Fprintf(os.Stderr, "DEBUG: checking CA at %s\n", caPath)
 	}
 	caCertExists := false
 	caKeyExists := false
 	if _, err := os.Stat(caPath); err == nil {
 		caCertExists = true
-		if DebugEnabled || os.Getenv("OVNODE_DEBUG") != "" {
+		if DebugEnabled || fsx.Env("DEBUG", "") != "" {
 			fmt.Fprintf(os.Stderr, "DEBUG: CA cert exists at %s\n", caPath)
 		}
 	}
 	if _, err := os.Stat(caKeyPath); err == nil {
 		caKeyExists = true
-		if DebugEnabled || os.Getenv("OVNODE_DEBUG") != "" {
+		if DebugEnabled || fsx.Env("DEBUG", "") != "" {
 			fmt.Fprintf(os.Stderr, "DEBUG: CA key exists at %s\n", caKeyPath)
 		}
 	}
@@ -57,17 +59,17 @@ func InitPKI() error {
 			EnsureClientTemplate()
 			return nil
 		}
-		if DebugEnabled || os.Getenv("OVNODE_DEBUG") != "" {
+		if DebugEnabled || fsx.Env("DEBUG", "") != "" {
 			fmt.Fprintf(os.Stderr, "DEBUG: CA exists but server cert missing, building server cert\n")
 		}
 	} else {
 		if !caCertExists {
-			if DebugEnabled || os.Getenv("OVNODE_DEBUG") != "" {
+			if DebugEnabled || fsx.Env("DEBUG", "") != "" {
 				fmt.Fprintf(os.Stderr, "DEBUG: CA cert NOT found at %s\n", caPath)
 			}
 		}
 		if !caKeyExists {
-			if DebugEnabled || os.Getenv("OVNODE_DEBUG") != "" {
+			if DebugEnabled || fsx.Env("DEBUG", "") != "" {
 				fmt.Fprintf(os.Stderr, "DEBUG: CA key NOT found at %s\n", caKeyPath)
 			}
 		}
@@ -79,18 +81,18 @@ func InitPKI() error {
 	// Debug: check if private dir exists
 	privateDir := filepath.Join(pki.PKIDir(), "private")
 	if _, err := os.Stat(privateDir); err != nil {
-		if DebugEnabled || os.Getenv("OVNODE_DEBUG") != "" {
+		if DebugEnabled || fsx.Env("DEBUG", "") != "" {
 			fmt.Fprintf(os.Stderr, "DEBUG: private dir missing: %v\n", err)
 		}
 	} else {
-		if DebugEnabled || os.Getenv("OVNODE_DEBUG") != "" {
+		if DebugEnabled || fsx.Env("DEBUG", "") != "" {
 			fmt.Fprintf(os.Stderr, "DEBUG: private dir exists\n")
 		}
 	}
 	// Debug: list PKI dir contents
 	if entries, err := os.ReadDir(pki.PKIDir()); err == nil {
 		for _, e := range entries {
-			if DebugEnabled || os.Getenv("OVNODE_DEBUG") != "" {
+			if DebugEnabled || fsx.Env("DEBUG", "") != "" {
 				fmt.Fprintf(os.Stderr, "DEBUG PKI entry: %s\n", e.Name())
 			}
 		}
@@ -98,7 +100,7 @@ func InitPKI() error {
 
 	// Build CA if it doesn't exist
 	if !caCertExists || !caKeyExists {
-		if DebugEnabled || os.Getenv("OVNODE_DEBUG") != "" {
+		if DebugEnabled || fsx.Env("DEBUG", "") != "" {
 			fmt.Fprintf(os.Stderr, "DEBUG: CA cert or key NOT found, building CA\n")
 		}
 		// Clean up any existing partial CA files
@@ -114,11 +116,11 @@ func InitPKI() error {
 	// Debug: check if reqs dir exists
 	reqsDir := filepath.Join(pki.PKIDir(), "reqs")
 	if _, err := os.Stat(reqsDir); err != nil {
-		if DebugEnabled || os.Getenv("OVNODE_DEBUG") != "" {
+		if DebugEnabled || fsx.Env("DEBUG", "") != "" {
 			fmt.Fprintf(os.Stderr, "DEBUG: reqs dir missing: %v\n", err)
 		}
 	} else {
-		if DebugEnabled || os.Getenv("OVNODE_DEBUG") != "" {
+		if DebugEnabled || fsx.Env("DEBUG", "") != "" {
 			fmt.Fprintf(os.Stderr, "DEBUG: reqs dir exists\n")
 		}
 	}
