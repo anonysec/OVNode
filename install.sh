@@ -1943,7 +1943,7 @@ parse_args() {
             help|--help|-h) show_help ;;
             --port)       eval "$need2"; deprecated "--port" "set OVN_PORT instead"; PORT="$2"; CLI_FLAGS=1; shift 2 ;;
             -p|--key)       eval "$need2"; deprecated "$1" "set OVN_KEY instead"; API_KEY="$2"; CLI_FLAGS=1; shift 2 ;;
-            -v|--version)   eval "$need2"; deprecated "$1" "set OVN_VERSION instead"; PIN="$2"; CLI_FLAGS=1; shift 2 ;;
+            -v|--version)   eval "$need2"; PIN="$2"; CLI_FLAGS=1; shift 2 ;;
             -i)             ACTION="interactive"; CMD_GIVEN=1; shift ;;
             --vpn-ports|--vpn-port) eval "$need2"; deprecated "$1" "set OVN_VPN_PORTS instead"; VPN_PORTS="$2"; CLI_FLAGS=1; shift 2 ;;
             --proto) eval "$need2"; deprecated "--proto" "set OVN_PROTO instead"; VPN_PROTO="$2"; CLI_FLAGS=1; shift 2 ;;
