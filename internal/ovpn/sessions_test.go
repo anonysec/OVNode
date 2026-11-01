@@ -19,7 +19,7 @@ import (
 func TestUserDiagnosticsCountsLiveSessionsAndStaleMarkers(t *testing.T) {
 	root := t.TempDir()
 	t.Setenv("OVNODE_OPENVPN_ROOT", root)
-t.Setenv("OVNODE_DATA_DIR", root+"/ovnode-data")
+	t.Setenv("OVNODE_DATA_DIR", root+"/ovnode-data")
 	t.Setenv("OVNODE_LOG_FILE", filepath.Join(root, "hook-events.log"))
 	sessionsDir := filepath.Join(root, "ovnode-data", "sessions")
 	if err := os.MkdirAll(sessionsDir, 0o755); err != nil {
@@ -75,7 +75,7 @@ t.Setenv("OVNODE_DATA_DIR", root+"/ovnode-data")
 func TestUserDiagnosticsClassifiesHookEvents(t *testing.T) {
 	root := t.TempDir()
 	t.Setenv("OVNODE_OPENVPN_ROOT", root)
-t.Setenv("OVNODE_DATA_DIR", root+"/ovnode-data")
+	t.Setenv("OVNODE_DATA_DIR", root+"/ovnode-data")
 	logFile := filepath.Join(root, "hook-events.log")
 	t.Setenv("OVNODE_LOG_FILE", logFile)
 	if err := os.MkdirAll(filepath.Join(root, "ovnode-data", "sessions"), 0o755); err != nil {
@@ -129,7 +129,7 @@ t.Setenv("OVNODE_DATA_DIR", root+"/ovnode-data")
 func TestUserDiagnosticsMapsTheCNToTheDisplayName(t *testing.T) {
 	root := t.TempDir()
 	t.Setenv("OVNODE_OPENVPN_ROOT", root)
-t.Setenv("OVNODE_DATA_DIR", root+"/ovnode-data")
+	t.Setenv("OVNODE_DATA_DIR", root+"/ovnode-data")
 	logFile := filepath.Join(root, "hook-events.log")
 	t.Setenv("OVNODE_LOG_FILE", logFile)
 	userDir := filepath.Join(root, "ovnode-data", "users", "42")

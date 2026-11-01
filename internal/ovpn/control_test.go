@@ -62,7 +62,7 @@ func TestChangeConfigRequestBindsThePanelFields(t *testing.T) {
 func TestReadConfigReadsTheTree(t *testing.T) {
 	root := t.TempDir()
 	t.Setenv("OVNODE_OPENVPN_ROOT", root)
-t.Setenv("OVNODE_DATA_DIR", root+"/ovnode-data")
+	t.Setenv("OVNODE_DATA_DIR", root+"/ovnode-data")
 	serverDir := filepath.Join(root, "server")
 	if err := os.MkdirAll(serverDir, 0o755); err != nil {
 		t.Fatal(err)
@@ -95,7 +95,7 @@ t.Setenv("OVNODE_DATA_DIR", root+"/ovnode-data")
 func TestTreeOpenVPNRunningIgnoresForeignInstances(t *testing.T) {
 	root := t.TempDir()
 	t.Setenv("OVNODE_OPENVPN_ROOT", root)
-t.Setenv("OVNODE_DATA_DIR", root+"/ovnode-data")
+	t.Setenv("OVNODE_DATA_DIR", root+"/ovnode-data")
 	serverDir := filepath.Join(root, "server")
 	if err := os.MkdirAll(serverDir, 0o755); err != nil {
 		t.Fatal(err)
@@ -117,7 +117,7 @@ t.Setenv("OVNODE_DATA_DIR", root+"/ovnode-data")
 func TestRestartOpenVPNLeavesTheInstalledNodeAlone(t *testing.T) {
 	root := t.TempDir()
 	t.Setenv("OVNODE_OPENVPN_ROOT", root)
-t.Setenv("OVNODE_DATA_DIR", root+"/ovnode-data")
+	t.Setenv("OVNODE_DATA_DIR", root+"/ovnode-data")
 	if pki.IsInstalledTree() {
 		t.Fatal("the temporary tree is the installed one")
 	}
@@ -132,7 +132,7 @@ t.Setenv("OVNODE_DATA_DIR", root+"/ovnode-data")
 func TestSessionMarkersAreReadFromTheTree(t *testing.T) {
 	root := t.TempDir()
 	t.Setenv("OVNODE_OPENVPN_ROOT", root)
-t.Setenv("OVNODE_DATA_DIR", root+"/ovnode-data")
+	t.Setenv("OVNODE_DATA_DIR", root+"/ovnode-data")
 	sessionsDir := filepath.Join(root, "ovnode-data", "sessions")
 	if err := os.MkdirAll(sessionsDir, 0o755); err != nil {
 		t.Fatal(err)

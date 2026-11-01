@@ -26,7 +26,7 @@ func testServer(t *testing.T) *Server {
 	t.Helper()
 	dir := t.TempDir()
 	t.Setenv("OVNODE_OPENVPN_ROOT", dir)
-t.Setenv("OVNODE_DATA_DIR", dir+"/ovnode-data")
+	t.Setenv("OVNODE_DATA_DIR", dir+"/ovnode-data")
 	for _, d := range []string{
 		filepath.Join(dir, "server", "pki", "private"),
 		filepath.Join(dir, "server", "pki", "issued"),

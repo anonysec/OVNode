@@ -18,7 +18,7 @@ import (
 func TestHookTargetsPointAtTheGoBinary(t *testing.T) {
 	dir := t.TempDir()
 	t.Setenv("OVNODE_OPENVPN_ROOT", dir)
-t.Setenv("OVNODE_DATA_DIR", dir+"/ovnode-data")
+	t.Setenv("OVNODE_DATA_DIR", dir+"/ovnode-data")
 	targets := HookTargets()
 	for _, directive := range []string{"client-connect", "client-disconnect"} {
 		target := targets[directive]
@@ -38,7 +38,7 @@ func TestFreshServerConfOnlyRealOptions(t *testing.T) {
 	}
 	dir := t.TempDir()
 	t.Setenv("OVNODE_OPENVPN_ROOT", dir)
-t.Setenv("OVNODE_DATA_DIR", dir+"/ovnode-data")
+	t.Setenv("OVNODE_DATA_DIR", dir+"/ovnode-data")
 	os.MkdirAll(filepath.Join(dir, "server"), 0o755)
 	os.MkdirAll(filepath.Join(dir, "ovnode-data"), 0o755)
 	conf := FreshServerConf()
@@ -75,7 +75,7 @@ func TestIsOVNodeHook(t *testing.T) {
 func TestFreshServerConfHasCRLVerify(t *testing.T) {
 	dir := t.TempDir()
 	t.Setenv("OVNODE_OPENVPN_ROOT", dir)
-t.Setenv("OVNODE_DATA_DIR", dir+"/ovnode-data")
+	t.Setenv("OVNODE_DATA_DIR", dir+"/ovnode-data")
 	os.MkdirAll(filepath.Join(dir, "server"), 0o755)
 	os.MkdirAll(filepath.Join(dir, "ovnode-data"), 0o755)
 	conf := FreshServerConf()
