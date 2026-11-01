@@ -1,5 +1,9 @@
 # Changelog
 
+## 1.4.14 — 2026-11-01
+
+- Fix(installer): print `ovnode auth key` instead of removed `ovnode credentials`.
+
 ## 1.4.13 — 2026-11-01
 
 - Feat(env): `.env` wins over process env (PasarGuard style) in fsx + mgmt/debug/log reads.

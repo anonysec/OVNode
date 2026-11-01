@@ -22,7 +22,7 @@
 set -Eeuo pipefail
 
 # ── Configuration ──────────────────────────────────────────────────────────
-VERSION="1.4.13"
+VERSION="1.4.14"
 # Forks: point source downloads (and update pulls) at your own repo.
 REPO="${OVN_REPO:-anonysec/OVNode}"
 # Versioned GitHub Release tarballs only: verified checksum, no git needed.
@@ -1340,7 +1340,7 @@ node_success_card() {
         render_key "Certificate" "$(cat "$cert_file")"
         render_line "  $(printf '%spaste this into the panel: Nodes → Add Node%s' "$GY" "$NC")"
     }
-    render_line "  $(printf '%slost it?  %s credentials%s' "$GY" "$CLI_NAME" "$NC")"
+    render_line "  $(printf '%slost it?  %s auth key%s' "$GY" "$CLI_NAME" "$NC")"
     render_line "  $(printf '%bpanel%s  Nodes → Add Node in the panel' "$GY" "$NC")"
     render_line "  uninstall: $(installer_uninstall_command)"
     render_blank
