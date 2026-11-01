@@ -39,9 +39,9 @@ RUN apt-get update \
 
 WORKDIR /app
 ENV OVNODE_DATA_DIR=/var/lib/ovnode
-COPY --from=builder /out/ovnode /opt/ovnode/agent
+COPY --from=builder /out/ovnode /app/ovnode
 COPY scripts/compose/entrypoint.sh /usr/local/bin/ovnode-entrypoint
-RUN mkdir -p /opt/ovnode /var/lib/ovnode && chmod 755 /opt/ovnode/agent /usr/local/bin/ovnode-entrypoint
+RUN mkdir -p /app /var/lib/ovnode && chmod 755 /app/ovnode /usr/local/bin/ovnode-entrypoint
 
 VOLUME ["/etc/openvpn", "/app/data"]
 
