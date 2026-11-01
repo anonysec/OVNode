@@ -1712,8 +1712,14 @@ dir_size() {
 # /sync/config rewrites proto and restarts OpenVPN), so the installer only has to
 # write something valid to start from.
 interactive_setup() {
+    render_line "  $(printf '%bnode name%s' "$B" "$NC")"
+    NODE_NAME="$(ask "node name" "${NODE_NAME:-ovnode}")"
+
     render_line "  $(printf '%bport%s' "$B" "$NC")"
     PORT="$(ask "" "${PORT:-$(find_free_port "$DEFAULT_PORT")}")"
+
+    render_line "  $(printf '%bvpn ports%s' "$B" "$NC")"
+    VPN_PORTS="$(ask "openvpn ports, comma separated" "${VPN_PORTS:-1194}")"
 
     render_line "  $(printf '%btls%s' "$B" "$NC")"
     local tls_choice
