@@ -7,8 +7,8 @@ package fsx
 import (
 	"os"
 	"os/exec"
-	"strings"
 	"path/filepath"
+	"strings"
 )
 
 // envFileValues reads uncommented KEY=VALUE pairs from the first .env file
