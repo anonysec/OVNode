@@ -1402,7 +1402,8 @@ do_update() {
         local reported vpn_ok ident_ok
         read -r reported vpn_ok < <(node_api_status "$API_KEY" "$PORT" "$TLS_METHOD") || true
         ident_ok="$(identity_sha "$(env_get_after NODE_NAME)" "$(env_get_after API_KEY)")"
-        if [[ "$reported" == "$VERSION" && "$vpn_ok" == "true" && "$ident_ok" == "$identity" ]]; then
+        # Dev builds report "dev-YYYYMMDD.N-sha", not "dev"; accept any dev-* build.
+        if { [[ "$VERSION" == "dev" && "$reported" == dev-* ]] || [[ "$reported" == "$VERSION" ]]; } && [[ "$vpn_ok" == "true" && "$ident_ok" == "$identity" ]]; then
             start_ok=1
         else
             render_warn "Candidate verification mismatch (version='${reported:-unknown}' openvpn='${vpn_ok:-unknown}' identity-preserved=$([[ "$ident_ok" == "$identity" ]] && echo yes || echo no))"
