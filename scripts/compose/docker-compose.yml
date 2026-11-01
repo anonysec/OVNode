@@ -30,7 +30,7 @@ services:
       # Everything worth backing up: PKI, server.conf and the ovnode store
       # (users/sessions/usage). Survives container replacement/updates.
       - openvpn:/etc/openvpn
-      - /var/lib/ovnode:/var/lib/ovnode
+      - ${OVNODE_HOST_DATA_DIR:-/var/lib/ovnode}:/var/lib/ovnode
       # Agent log (data/app.log, rotated by the agent itself).
       - ../../data:/app/data
       # Host tun device — preferred over CAP_MKNOD'ing one inside.
