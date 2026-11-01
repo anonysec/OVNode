@@ -22,7 +22,7 @@
 set -Eeuo pipefail
 
 # ── Configuration ──────────────────────────────────────────────────────────
-VERSION="1.4.11"
+VERSION="1.4.12"
 # Forks: point source downloads (and update pulls) at your own repo.
 REPO="${OVN_REPO:-anonysec/OVNode}"
 # Versioned GitHub Release tarballs only: verified checksum, no git needed.
@@ -1399,7 +1399,9 @@ do_update() {
     : "${NODE_NAME:=ovnode}"
     [[ -n "$PORT" ]] || PORT="$(env_get SERVICE_PORT)"
     : "${PORT:=$DEFAULT_PORT}"
-    [[ -n "$API_KEY" ]] || API_KEY="$(env_get API_KEY)"
+    # Update never rotates identity: always recover the existing key from .env,
+    # even when -y triggered validate_input() and generated a throwaway key.
+    API_KEY="$(env_get API_KEY)"
     [[ -n "$API_KEY" ]] || die "Installed .env has no API key — refusing to rotate identity (restore .env or reinstall)" "$EX_ERROR"
     if [[ -z "$VPN_PORTS" ]]; then
         VPN_PORT="$(env_get OPENVPN_PORT)"; : "${VPN_PORT:=$DEFAULT_VPN}"
@@ -1409,8 +1411,9 @@ do_update() {
     fi
     # Keep the install's existing TLS mode: read it from .env unless the caller
     # passed --tls. Legacy nodes recording "none" still work.
-    if [[ "$CLI_FLAGS" -eq 0 && -z "${OVN_TLS:-}" ]]; then
-        TLS_METHOD="$(env_get TLS_METHOD)"
+    if [[ -z "${OVN_TLS:-}" ]]; then
+        _recovered_tls="$(env_get TLS_METHOD)"
+        [[ -n "$_recovered_tls" ]] && TLS_METHOD="$_recovered_tls"
     fi
     : "${TLS_METHOD:=selfsigned}"
     # Recover everything not passed as a flag, so a refresh never drops TLS
