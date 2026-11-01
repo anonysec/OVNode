@@ -1,5 +1,9 @@
 # Changelog
 
+## 1.4.22 — 2026-11-01
+
+- Fix(installer): restore OPENVPN_SERVICE default (fixes install_state_of tests).
+
 ## 1.4.21 — 2026-11-01
 
 - Fix(vpn): default subnet changed to 10.66.0.0/24 to avoid stock OpenVPN's 10.8.0.0/24.

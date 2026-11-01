@@ -22,7 +22,7 @@
 set -Eeuo pipefail
 
 # ── Configuration ──────────────────────────────────────────────────────────
-VERSION="1.4.21"
+VERSION="1.4.22"
 # Forks: point source downloads (and update pulls) at your own repo.
 REPO="${OVN_REPO:-anonysec/OVNode}"
 # Versioned GitHub Release tarballs only: verified checksum, no git needed.
@@ -41,6 +41,7 @@ DEFAULT_VPN=1194
 # real /etc/systemd/system. Unset it and the path is exactly what it was.
 SYSTEMD_DIR="${OVN_SYSTEMD_DIR:-/etc/systemd/system}"
 SYSTEMD_SERVICE="ovnode.service"
+OPENVPN_SERVICE="ovnode-openvpn.service"
 NAT_CONF="/etc/default/ovnode-nat"
 SYSCTL_CONF="/etc/sysctl.d/99-ovnode.conf"
 LOGROTATE_CONF="/etc/logrotate.d/ovnode"
@@ -199,12 +200,12 @@ install_state_of() {  # install_state_of <dir> — prints the state, ASCII only
         return 0
     fi
     if [[ ! -d "$dir" ]]; then
-        _any_node_unit && { printf 'unit-only'; return 0; }
+        if _any_node_unit; then printf 'unit-only'; return 0; fi
         printf 'absent'
         return 0
     fi
     _dir_has_node "$dir" && { printf 'installed'; return 0; }
-    _any_node_unit && { printf 'unit-only'; return 0; }
+    if _any_node_unit; then printf 'unit-only'; return 0; fi
     if [[ -d "$dir/data" && -n "$(ls -A "$dir/data" 2>/dev/null)" ]]; then
         printf 'node-data'
         return 0
