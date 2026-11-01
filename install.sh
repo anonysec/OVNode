@@ -2,7 +2,7 @@
 # Copyright (c) 2026 anonysec
 # SPDX-License-Identifier: MIT
 #
-# OVNode — OpenVPN node agent installer.
+# OVNode, OpenVPN node agent installer.
 #
 #   zero-question: bash <(curl -Ls URL)
 #   wizard       : bash <(curl -Ls URL) interactive
@@ -121,7 +121,7 @@ fail() { printf '\n  %bError:%b %s\n\n' "${RD:-}" "${NC:-}" "$1" >&2; exit "${2:
 # load_helpers has to download the binary *into* $APP_DIR, so by the time it
 # returns, $APP_DIR exists on a box that has never hosted a node. "The
 # directory is there" therefore stops meaning "a node is installed" the moment
-# the bootstrap runs — and that is exactly the check `if [[ -d $APP_DIR ]]`
+# the bootstrap runs, and that is exactly the check `if [[ -d $APP_DIR ]]`
 # used to make. It answered yes on every fresh server, because the fetch it
 # had just done had created the directory it was asking about.
 #
@@ -137,7 +137,7 @@ fail() { printf '\n  %bError:%b %s\n\n' "${RD:-}" "${NC:-}" "$1" >&2; exit "${2:
 #                    plus the update/uninstall menu on a terminal.
 #   unit-only        an OVNode systemd unit exists and APP_DIR holds no node.
 #                    Something was installed here once. Refused like `installed`
-#                    — but `uninstall` is allowed, because cleaning it up is
+#                   , but `uninstall` is allowed, because cleaning it up is
 #                    what it needs.
 #   node-data        a data directory with the PKI in it and no node around it.
 #                    Installing would mint a second identity beside a CA that
@@ -145,7 +145,7 @@ fail() { printf '\n  %bError:%b %s\n\n' "${RD:-}" "${NC:-}" "$1" >&2; exit "${2:
 #                    (with --purge for the data) is the way to clear it.
 #   bootstrap        $APP_DIR exists and holds nothing a node owns: the debris of
 #                    a download interrupted between mkdir and .env. Installed
-#                    over, never deleted — nothing here can tell debris from
+#                    over, never deleted, nothing here can tell debris from
 #                    data it does not recognise.
 #   absent           nothing at $APP_DIR. A plain fresh server.
 #   not-a-directory  a file sits where the directory goes. Reported, never
@@ -160,7 +160,7 @@ INSTALL_STATE_DIR=""
 # and removed before the command does anything else: a command that removes a
 # node must not leave a second copy of the release in /tmp. Not cleaned by a
 # single global EXIT trap, because fetch_release_binary and the update journal
-# both install and clear one of their own — the scratch is removed explicitly,
+# both install and clear one of their own, the scratch is removed explicitly,
 # and by a trap only for the window in which it exists.
 HELPER_SCRATCH=""
 cleanup_scratch() {
@@ -176,7 +176,7 @@ helper_scratch() {
 
 # What an installed node owns. .env is the marker that matters: write_env is
 # the only thing that writes it, it arrives last in do_install, and it holds
-# the identity and the API key. The binary counts only if it is executable —
+# the identity and the API key. The binary counts only if it is executable,
 # fetch_release_binary installs 0755 after verifying the checksum, so a
 # non-executable "ovnode" is a truncated download, which is the one thing a
 # failed bootstrap really leaves behind.
@@ -195,14 +195,14 @@ _any_node_unit() {
     return 1
 }
 
-# _dir_has_node <dir> — does this directory hold a node?
+# _dir_has_node <dir>, does this directory hold a node?
 _dir_has_node() {
     [[ -f "$1/$NODE_ENV_FILE" ]] && return 0
     [[ -x "$1/$NODE_BIN_FILE" ]] && return 0
     return 1
 }
 
-install_state_of() {  # install_state_of <dir> — prints the state, ASCII only
+install_state_of() {  # install_state_of <dir>, prints the state, ASCII only
     local dir="$1"
     if [[ -e "$dir" && ! -d "$dir" ]]; then
         printf 'not-a-directory'
@@ -229,7 +229,7 @@ capture_install_state() {
     INSTALL_STATE_DIR="$APP_DIR"
 }
 
-# ensure_install_state — capture on first use, for paths that never ran main
+# ensure_install_state, capture on first use, for paths that never ran main
 # (a test that sources this file and calls one function).
 ensure_install_state() {
     if [[ "$INSTALL_STATE" == "unknown" || "$INSTALL_STATE_DIR" != "$APP_DIR" ]]; then
@@ -257,7 +257,7 @@ node_is_installed() {
 
 # What the bootstrap left behind, reported rather than removed. There is no
 # way to tell a half-downloaded binary from a node whose .env was deleted by
-# hand, so the debris is named and then written over — never rm -rf'd.
+# hand, so the debris is named and then written over, never rm -rf'd.
 report_bootstrap_dir() {
     local listing entries=() f
     for f in "$APP_DIR"/* "$APP_DIR"/.[!.]* "$APP_DIR"/..?*; do
@@ -270,12 +270,12 @@ report_bootstrap_dir() {
         # A list long enough to hide the rest is noise; the operator can look.
         (( ${#listing} > 160 )) && listing="${listing:0:157}..."
     fi
-    render_warn "$APP_DIR holds no node (${listing}) — treating it as an interrupted bootstrap"
+    render_warn "$APP_DIR holds no node (${listing}), treating it as an interrupted bootstrap"
     render_warn "Installing over it; nothing is deleted, and the previous contents stay listed above"
 }
 
 # The refusal for a box that has the remains of a node but not a whole one.
-# Installing would write a new .env — a new identity and a new API key — beside
+# Installing would write a new .env, a new identity and a new API key, beside
 # state that already has both. Exit 3, because "something is already here" is
 # the answer a caller branches on; nothing is written and nothing is deleted.
 #
@@ -293,7 +293,7 @@ refuse_partial_node() {
     printf '\n  %bError:%b %s holds no node, but %s remains at %s\n' \
         "${RD:-}" "${NC:-}" "$APP_DIR" "$what" "$where" >&2
     printf '  Installing here would mint a second identity beside it. This run deletes neither.\n' >&2
-    printf '  Finish that install instead: %s %s — or move it aside and re-run.\n\n' "$0" "$hint" >&2
+    printf '  Finish that install instead: %s %s, or move it aside and re-run.\n\n' "$0" "$hint" >&2
     exit "$EX_ALREADY"
 }
 
@@ -304,8 +304,8 @@ trap 'render_warn "Command failed near line $LINENO (running: ${BASH_COMMAND:0:8
 OS_ID="" OS_NAME="" PKG_INSTALL="" PKG_UPDATE=""
 
 detect_os() {
-    [[ -f /etc/os-release ]] || die "Unsupported OS — no /etc/os-release found."
-    # /etc/os-release defines its own VERSION — keep the app version.
+    [[ -f /etc/os-release ]] || die "Unsupported OS, no /etc/os-release found."
+    # /etc/os-release defines its own VERSION, keep the app version.
     local _app_version="$VERSION"
     # shellcheck disable=SC1091
     . /etc/os-release
@@ -397,7 +397,7 @@ validate_input() {
     [[ ${#API_KEY} -ge 16 ]] || die "API key must be at least 16 characters (openssl rand -hex 32)" "$EX_USAGE"
     case "$TLS_METHOD" in
         letsencrypt|letsencrypt-ip|selfsigned|custom) ;;
-        none) die "Plain HTTP is not allowed — pick selfsigned (default), letsencrypt, letsencrypt-ip or custom" "$EX_USAGE" ;;
+        none) die "Plain HTTP is not allowed, pick selfsigned (default), letsencrypt, letsencrypt-ip or custom" "$EX_USAGE" ;;
         *) die "Invalid TLS method: '$TLS_METHOD'" "$EX_USAGE" ;;
     esac
     if [[ "$TLS_METHOD" == "letsencrypt" || "$TLS_METHOD" == "letsencrypt-ip" ]]; then
@@ -530,7 +530,7 @@ fetch_release_binary() {
         if [[ $retries -ge 3 ]]; then
             rm -rf "$work"
             trap - EXIT
-            fail "No release file for v$VERSION — see https://github.com/$REPO/releases"
+            fail "No release file for v$VERSION, see https://github.com/$REPO/releases"
         fi
         sleep $((2 ** retries))
     done
@@ -538,7 +538,7 @@ fetch_release_binary() {
     curl -fsSL --max-time 30 --retry 2 -o "$work/$asset.sha256" "$(release_checksum_url)" \
         || { rm -rf "$work"; trap - EXIT; fail "Release checksum file is missing for v$VERSION"; }
     ( cd "$work" && sha256sum -c "$asset.sha256" >/dev/null ) \
-        || { rm -rf "$work"; trap - EXIT; fail "Release checksum mismatch for v$VERSION — possible tampering or incomplete download"; }
+        || { rm -rf "$work"; trap - EXIT; fail "Release checksum mismatch for v$VERSION, possible tampering or incomplete download"; }
     mkdir -p "$dest"
     install -m 0755 "$work/$asset" "$dest/ovnode"
     rm -rf "$work"
@@ -587,7 +587,7 @@ write_env() {
     # DATA_DIR is resolved through node_data_dir() so the file, the Docker
     # volume and the installer's own bookkeeping cannot disagree about the path.
     # On a fresh install there is no .env yet, so the helper falls back to the
-    # base — which is the flat layout this now uses.
+    # base, which is the flat layout this now uses.
     cat > "$APP_DIR/.env" << EOF
 NODE_NAME=${NODE_NAME}
 DATA_DIR=$(node_data_dir)
@@ -638,7 +638,7 @@ write_install_result() {
 # ── The agent binary ───────────────────────────────────────────────────
 #
 # OpenVPN calls one connect hook and one disconnect hook, and the agent
-# binary answers both — there is no second implementation to choose from.
+# binary answers both, there is no second implementation to choose from.
 # The server.conf writer points the hooks at that path, so the binary has to
 # be there before OpenVPN starts.
 #
@@ -687,12 +687,12 @@ start_openvpn_service() {
         write_openvpn_unit
         systemctl restart "$OPENVPN_SERVICE" >/dev/null 2>&1 && \
             render_ok "OpenVPN server service started" || \
-            render_warn "Could not start $OPENVPN_SERVICE — check: journalctl -u $OPENVPN_SERVICE -n 50"
+            render_warn "Could not start $OPENVPN_SERVICE, check: journalctl -u $OPENVPN_SERVICE -n 50"
     elif command -v rc-service >/dev/null 2>&1; then
         rc-update add openvpn default >/dev/null 2>&1 || true
         rc-service openvpn start >/dev/null 2>&1 && render_ok "OpenVPN started (OpenRC)" || render_warn "Start OpenVPN manually"
     else
-        render_warn "No init system detected — start OpenVPN manually: openvpn --config $OPENVPN_ROOT/server/server.conf"
+        render_warn "No init system detected, start OpenVPN manually: openvpn --config $OPENVPN_ROOT/server/server.conf"
     fi
 }
 
@@ -705,14 +705,14 @@ check_container_openvpn() {
     if [[ -n "$cid" ]] && docker exec "$cid" pgrep -x openvpn >/dev/null 2>&1; then
         render_ok "OpenVPN running in container"
     else
-        render_warn "OpenVPN not detected in container — check: docker logs ${NODE_NAME}; host stray check: ss -tlnp | grep -E '1194|7505'"
+        render_warn "OpenVPN not detected in container, check: docker logs ${NODE_NAME}; host stray check: ss -tlnp | grep -E '1194|7505'"
     fi
 }
 
 stop_native_openvpn() {
     # Docker mode only: a native daemon holding 1194/7505 crash-loops the
     # container's OpenVPN on the shared host network namespace. Host installs
-    # are untouched — start_openvpn_service owns that path.
+    # are untouched, start_openvpn_service owns that path.
     if has_systemd; then
         if systemctl is-active --quiet openvpn-server@server 2>/dev/null; then
             run "Stopping conflicting native openvpn-server@server (Docker mode)" \
@@ -846,7 +846,7 @@ setup_logrotate() {
         if [[ -n "$PKG_INSTALL" ]]; then
             pkg_install logrotate
         else
-            render_warn "logrotate not found — install it so openvpn.log gets rotated"
+            render_warn "logrotate not found, install it so openvpn.log gets rotated"
             return 0
         fi
     fi
@@ -895,12 +895,12 @@ ROTATE
 # ── Dev install from source ────────────────────────────────────────────
 # Install from a checkout instead of a release: rsync the tree, build the
 # binary, and run the same install the release path runs. Nothing is
-# fetched, so nothing is verified — this is the dev loop, not what a server
+# fetched, so nothing is verified, this is the dev loop, not what a server
 # should run.
 do_local_build() {
     local dest="${DEST_DIR:-$APP_DIR}"
     [[ -d "$SRC_DIR" ]] || fail "no source directory: $SRC_DIR"
-    [[ -f "$SRC_DIR/go.mod" ]] || fail "no go.mod under $SRC_DIR — --local needs an OVNode checkout"
+    [[ -f "$SRC_DIR/go.mod" ]] || fail "no go.mod under $SRC_DIR, --local needs an OVNode checkout"
     command -v rsync >/dev/null 2>&1 || fail "rsync is required for a local install"
     command -v go >/dev/null 2>&1 || fail "go is required for a local install"
     [[ -n "$dest" && "$dest" != "/" ]] || fail "refusing to install into '$dest'"
@@ -931,8 +931,8 @@ do_local_build() {
 #
 # The one exception is an uninstall of what a node left behind with no binary
 # among it (unit files, or a data directory). There is nothing on the box to
-# take the helpers from, so they are unpacked in a scratch directory instead —
-# /tmp, never $APP_DIR — and removed before the uninstall does anything else.
+# take the helpers from, so they are unpacked in a scratch directory instead,
+# /tmp, never $APP_DIR, and removed before the uninstall does anything else.
 load_helpers() {
     local helper_dir="$APP_DIR"
     if [[ ! -x "$APP_DIR/ovnode" ]]; then
@@ -944,15 +944,15 @@ load_helpers() {
         fi
         if node_exists; then
             # Remains of a node with no binary to take helpers from. Uninstall
-            # is the one command that has to work here — cleaning that up is
-            # its job — and it must not leave a new binary behind in APP_DIR
+            # is the one command that has to work here, cleaning that up is
+            # its job, and it must not leave a new binary behind in APP_DIR
             # while doing it. Its helpers come from a scratch directory.
             [[ "$ACTION" == "uninstall" ]] || refuse_partial_node
             helper_scratch
             helper_dir="$HELPER_SCRATCH"
         fi
         if [[ "$INSTALL_STATE" == "not-a-directory" ]]; then
-            fail "$APP_DIR exists and is not a directory — move it aside or set OVN_APP_DIR"
+            fail "$APP_DIR exists and is not a directory, move it aside or set OVN_APP_DIR"
         fi
         command -v curl >/dev/null 2>&1 || fail "curl is required to download the release"
         command -v sha256sum >/dev/null 2>&1 || fail "sha256sum is required to verify the release"
@@ -1001,7 +1001,7 @@ setup_docker() {
     if [[ ! -c /dev/net/tun ]]; then
         mkdir -p /dev/net && mknod /dev/net/tun c 10 200 2>/dev/null || true
     fi
-    [[ -c /dev/net/tun ]] || render_warn "/dev/net/tun missing — the VPN cannot start until the tun module is available"
+    [[ -c /dev/net/tun ]] || render_warn "/dev/net/tun missing, the VPN cannot start until the tun module is available"
 
     write_compose_file
 
@@ -1061,7 +1061,7 @@ $( [[ -n "$tls_mounts" ]] && printf '%s' "$tls_mounts" )
         max-size: "5m"
         max-file: "3"
 COMPOSE
-    # The compose file embeds the API key — keep it root-only, like .env.
+    # The compose file embeds the API key, keep it root-only, like .env.
     chmod 600 "$compose"
     render_ok "Compose file written: $compose (image ${IMAGE_REPO}:${tag})"
 }
@@ -1108,8 +1108,8 @@ do_install() {
         render_ok "container"
     else
         if ! has_systemd; then
-            render_ok "no systemd — start the agent by hand"
-            render_warn "systemd not found — start the agent manually: $AGENT_BIN serve"
+            render_ok "no systemd, start the agent by hand"
+            render_warn "systemd not found, start the agent manually: $AGENT_BIN serve"
         else
             write_systemd_unit
             render_note "$SYSTEMD_SERVICE"
@@ -1197,15 +1197,15 @@ write_setup_info() {
 node_success_card() {
     local scheme="$1" host="$2" key_note where
     # Name what the panel will reach: the public IP, or the domain when the
-    # certificate names one. A node has no URL of its own — it is an address, a
-    # key, and a place to read logs — so the card says exactly that.
+    # certificate names one. A node has no URL of its own, it is an address, a
+    # key, and a place to read logs, so the card says exactly that.
     if [[ -n "${TLS_DOMAIN:-}" && "$TLS_METHOD" == "letsencrypt" ]]; then
         where="$TLS_DOMAIN:$PORT"
     else
         where="$host:$PORT"
     fi
     if [[ "${KEY_GENERATED:-0}" -eq 1 ]]; then
-        key_note="  $(printf '%sgenerated — save this%s' "$GY" "$NC")"
+        key_note="  $(printf '%sgenerated, save this%s' "$GY" "$NC")"
     else
         key_note="  $(printf '%sthe key you supplied%s' "$GY" "$NC")"
     fi
@@ -1246,14 +1246,14 @@ do_update() {
     [[ -d "$APP_DIR" ]] || die "Not installed ($APP_DIR missing)" "$EX_NOTINSTALLED"
     # The journal, the identity hash and the state bundle all run through the
     # installed binary; without it there is nothing to update.
-    [[ -x "$AGENT_BIN" ]] || die "The node agent binary is missing ($AGENT_BIN) — reinstall instead of updating" "$EX_ERROR"
+    [[ -x "$AGENT_BIN" ]] || die "The node agent binary is missing ($AGENT_BIN), reinstall instead of updating" "$EX_ERROR"
     check_root
     operation_begin update
     trap operation_end EXIT
 
     # Flatten the data directory, before the .env is re-read or the safety
     # bundle is taken. Both need to see the new location, and the bundle is the
-    # last thing standing between a failed migration and a lost node — so it has
+    # last thing standing between a failed migration and a lost node, so it has
     # to be taken after, not before.
     #
     # Done here, in the installer, rather than in `ovnode`: install.sh is what owns
@@ -1269,7 +1269,7 @@ do_update() {
             render_ok "data directory flattened"
         else
             render_end
-            die "Could not move the node data to $DATA_BASE — nothing was changed"
+            die "Could not move the node data to $DATA_BASE, nothing was changed"
         fi
     fi
 
@@ -1283,7 +1283,7 @@ do_update() {
     # Update never rotates identity: always recover the existing key from .env,
     # even when -y triggered validate_input() and generated a throwaway key.
     API_KEY="$(env_get API_KEY)"
-    [[ -n "$API_KEY" ]] || die "Installed .env has no API key — refusing to rotate identity (restore .env or reinstall)" "$EX_ERROR"
+    [[ -n "$API_KEY" ]] || die "Installed .env has no API key, refusing to rotate identity (restore .env or reinstall)" "$EX_ERROR"
     if [[ -z "$VPN_PORTS" ]]; then
         VPN_PORT="$(env_get OPENVPN_PORT)"; : "${VPN_PORT:=$DEFAULT_VPN}"
         EXTRA_PORTS="$(env_get OVNODE_EXTRA_PORTS)"
@@ -1389,7 +1389,7 @@ do_update() {
     else
         has_systemd && write_systemd_unit
         # The ovnode binary lives outside the app dir, so a release must
-        # refresh it explicitly — otherwise the node keeps running the
+        # refresh it explicitly, otherwise the node keeps running the
         # previous version's hook. A failure here is not fatal: the old
         # binary still works.
         install_agent_binary || render_warn "The node keeps the previous ovnode binary"
@@ -1415,7 +1415,7 @@ do_update() {
     fi
 
     if [[ "$start_ok" -ne 1 ]]; then
-        render_warn "Candidate verification failed — failing over to v${from_version}"
+        render_warn "Candidate verification failed, failing over to v${from_version}"
         update_state failing_over "$from_version" "$VERSION" "$safety" "$identity"
         node_failover "$from_version" "$VERSION" "$safety" "$identity" "$snapshot"
     fi
@@ -1474,7 +1474,7 @@ node_failover() {
     fi
     update_state recovery_required "$from_version" "$target" "$safety" "$identity"
     operation_end
-    die "Failover did not restore health either — state backup at $safety, code snapshot at $snapshot. Check logs." "$EX_ERROR"
+    die "Failover did not restore health either, state backup at $safety, code snapshot at $snapshot. Check logs." "$EX_ERROR"
 }
 
 do_recover_update() {
@@ -1523,7 +1523,7 @@ do_recover_update() {
     : "${PORT:=$DEFAULT_PORT}"
     local api_key
     api_key="$(env_get API_KEY)"
-    [[ -n "$api_key" ]] || die "Installed .env has no API key — cannot verify identity. Restore .env from $safety, then retry." "$EX_ERROR"
+    [[ -n "$api_key" ]] || die "Installed .env has no API key, cannot verify identity. Restore .env from $safety, then retry." "$EX_ERROR"
     TLS_METHOD="$(env_get TLS_METHOD)"; : "${TLS_METHOD:=selfsigned}"
     local scheme="http"; [[ "$TLS_METHOD" != "none" ]] && scheme="https"
     local reported vpn_ok ident_ok
@@ -1535,14 +1535,14 @@ do_recover_update() {
         rm -f "$(update_marker)"
         update_state committed "$from" "$target" "$safety" "$identity"
         operation_end
-        render_ok "Recovered update journal — v${target} is healthy"
+        render_ok "Recovered update journal, v${target} is healthy"
         return 0
     fi
     if [[ "${reported:-}" == "$from" && "${vpn_ok:-}" == "true" && "${ident_ok:-}" == "$identity" && ! -d "$UPDATE_PREVIOUS" ]]; then
         rm -f "$(update_marker)"
         update_state failed_over "$from" "$target" "$safety" "$identity"
         operation_end
-        render_ok "Recovered update journal — previous v${from} is healthy"
+        render_ok "Recovered update journal, previous v${from} is healthy"
         return 0
     fi
     if [[ ! -d "$UPDATE_PREVIOUS" ]]; then
@@ -1557,14 +1557,14 @@ do_recover_update() {
             rm -f "$(update_marker)"
             update_state failed_over "$from" "$target" "$safety" "$identity"
             operation_end
-            render_ok "Interrupted update never activated — v${from} restarted, staging discarded"
+            render_ok "Interrupted update never activated, v${from} restarted, staging discarded"
             return 0
         fi
         update_state recovery_required "$from" "$target" "$safety" "$identity"
         operation_end
         die "Interrupted update never activated and v${from} does not answer health. Run: ovnode logs 100" "$EX_ERROR"
     fi
-    render_line "Interrupted candidate is unhealthy — failing over to v${from}"
+    render_line "Interrupted candidate is unhealthy, failing over to v${from}"
     if [[ "$DOCKER" -eq 1 ]]; then
         ( cd "$APP_DIR" && docker compose -f "$(compose_file)" down ) >/dev/null 2>&1 || true
         [[ -n "$safety" ]] && state_restore "$safety" \
@@ -1605,7 +1605,7 @@ do_repair_unit() {
     NODE_NAME="$(env_get NODE_NAME)"; : "${NODE_NAME:=ovnode}"
     PORT="$(env_get SERVICE_PORT)"; : "${PORT:=$DEFAULT_PORT}"
     API_KEY="$(env_get API_KEY)"
-    [[ -n "$API_KEY" ]] || die "Installed .env has no API key — restore .env first" "$EX_ERROR"
+    [[ -n "$API_KEY" ]] || die "Installed .env has no API key, restore .env first" "$EX_ERROR"
     VPN_PORT="$(env_get OPENVPN_PORT)"; : "${VPN_PORT:=$DEFAULT_VPN}"
     EXTRA_PORTS="$(env_get OVNODE_EXTRA_PORTS)"
     TLS_METHOD="$(env_get TLS_METHOD)"; : "${TLS_METHOD:=selfsigned}"
@@ -1619,7 +1619,7 @@ do_repair_unit() {
         render_ok "Compose file regenerated (image ${IMAGE_REPO}:${IMAGE_TAG:-$VERSION})"
     else
         DOCKER=0
-        has_systemd || die "systemd not found — cannot install the agent unit" "$EX_ERROR"
+        has_systemd || die "systemd not found, cannot install the agent unit" "$EX_ERROR"
         write_systemd_unit
         write_openvpn_unit
         run "Generating node PKI" "$AGENT_BIN" ca init
@@ -1627,7 +1627,7 @@ do_repair_unit() {
         setup_logrotate
     fi
     operation_end
-    render_ok "Host integration repaired — restart the agent if it is stopped: ovnode restart"
+    render_ok "Host integration repaired, restart the agent if it is stopped: ovnode restart"
 }
 
 # ── Uninstall ──────────────────────────────────────────────────────────
@@ -1707,7 +1707,7 @@ dir_size() {
 
 # ── Interactive setup (humans on a TTY) ────────────────────────────────
 # Two questions: the port the agent answers on, and the certificate. Everything
-# else — the VPN transport, the deployment mode — is either chosen on the front
+# else, the VPN transport, the deployment mode, is either chosen on the front
 # door menu or owned by the panel.
 #
 # The transport used to be asked here and got UDP when a person answered and TCP
@@ -1759,7 +1759,7 @@ ask_lets_encrypt() {
     if [[ -n "$others" && "$others" != "$here" && "$others" != "$here "* ]]; then
         render_ask_note "this box answers on ${others// /, }"
     fi
-    render_ask_note "Let's Encrypt sees whatever you type here — an IP gets a short-lived cert, a name gets a normal one"
+    render_ask_note "Let's Encrypt sees whatever you type here, an IP gets a short-lived cert, a name gets a normal one"
     answer="$(ask "ip or domain" "$detected")"
     [[ -n "$answer" ]] || answer="$detected"
     [[ -n "$answer" ]] || die "Let's Encrypt needs an IP or a domain"
@@ -1774,9 +1774,9 @@ ask_lets_encrypt() {
     # weekly attempts, which is the expensive way to learn a typo.
     resolved="$(resolve_host "$answer")"
     if [[ -z "$resolved" ]]; then
-        render_warn "$answer does not resolve yet — DNS has to point here before the certificate can be issued"
+        render_warn "$answer does not resolve yet, DNS has to point here before the certificate can be issued"
     elif [[ -n "$here" && "$resolved" != "$here" ]]; then
-        render_warn "$answer resolves to $resolved, not $here — Let's Encrypt will refuse it"
+        render_warn "$answer resolves to $resolved, not $here, Let's Encrypt will refuse it"
     fi
     return 0
 }
@@ -1794,7 +1794,7 @@ apply_express_defaults() {
 
 # Friendly front door: shown only for a bare interactive invocation.
 # Host install is the default; Docker is the explicit second choice.
-# The front door. The deployment mode is chosen here and nowhere else — the
+# The front door. The deployment mode is chosen here and nowhere else, the
 # wizard used to ask it again as "Step 3/4", so the answer could be given twice
 # and the two did not always agree.
 start_menu() {
@@ -1806,7 +1806,7 @@ start_menu() {
     case "$tag" in
         host)   apply_express_defaults ;;
         docker) DOCKER=1; apply_express_defaults ;;
-        *)      render_line "  cancelled — nothing was changed"; exit "$EX_OK" ;;
+        *)      render_line "  cancelled, nothing was changed"; exit "$EX_OK" ;;
     esac
 }
 
@@ -1825,7 +1825,7 @@ installed_menu() {
         # Exit 3, the documented "already installed" code, not die's 1: this is a
         # state the caller asked about, so a provisioning script can tell it
         # apart from a real failure.
-        render_fail "already installed" "$APP_DIR — re-run with: $0 update"
+        render_fail "already installed" "$APP_DIR, re-run with: $0 update"
         exit "$EX_ALREADY"
     fi
     local tag
@@ -1877,7 +1877,7 @@ print_script_version() {
 
 show_help() {
     cat << EOF >&2
-  OVNode installer — host (systemd) or Docker. Interactive unless you pass -y.
+  OVNode installer, host (systemd) or Docker. Interactive unless you pass -y.
 
   Usage:
     bash <(curl -Ls URL) [command] [flags]
@@ -1914,7 +1914,7 @@ show_help() {
 
   -h, --help              This help  (no env equivalent)
 
-  Deprecated (still works) — each flag is removed next release. Set the
+  Deprecated (still works), each flag is removed next release. Set the
   OVN_* variable instead:
     -p, --key KEY         API key, min 16 chars (generated if omitted)
                                                               [OVN_KEY]
@@ -1990,16 +1990,16 @@ parse_args() {
             --purge)      deprecated "--purge" "set OVN_PURGE=1 instead"; PURGE=1; CLI_FLAGS=1; shift ;;
             --quiet|-q)   deprecated "$1" "set OVN_QUIET=1 instead"; QUIET=1; shift ;;
             status|start|stop|restart|restart-vpn|logs|backup|auto-backup|tls)
-                          fail "'$1' moved to the manager — use: ovnode $1" "$EX_USAGE" ;;
-            menu)         fail "The menu lives in the manager — run: ovnode" "$EX_USAGE" ;;
-            install)      fail "'install' is the default — just drop the word" "$EX_USAGE" ;;
+                          fail "'$1' moved to the manager, use: ovnode $1" "$EX_USAGE" ;;
+            menu)         fail "The menu lives in the manager, run: ovnode" "$EX_USAGE" ;;
+            install)      fail "'install' is the default, just drop the word" "$EX_USAGE" ;;
             interactive)  ACTION="interactive"; CMD_GIVEN=1; shift ;;
             *)            fail "Unknown option: $1 (--help for usage)" "$EX_USAGE" ;;
         esac
     done
     # A command that acts on an installed node must not bootstrap one. Left to
     # load_helpers, `uninstall` on a fresh server downloaded a release, wrote a
-    # binary into $APP_DIR and then reported "not installed" — a box changed by
+    # binary into $APP_DIR and then reported "not installed", a box changed by
     # a command that had already decided nothing could be done on it. Checked
     # after parsing, so every spelling is covered, and before the first byte is
     # fetched; only the early `fail` is available this soon, and it needs
@@ -2043,7 +2043,7 @@ main() {
     OPENVPN_SERVICE="${INSTANCE_NAME}-openvpn.service"
     CLI_NAME="$INSTANCE_NAME"
 
-    # Before anything touches $APP_DIR — before load_helpers, which downloads
+    # Before anything touches $APP_DIR, before load_helpers, which downloads
     # the binary into that directory, and before --local, which rsyncs into it.
     # Capture first, or the "already installed" check below reads the
     # bootstrap's own mkdir and every fresh server is told it already has a
@@ -2066,8 +2066,8 @@ main() {
         do_install
         exit "$EX_OK"
     fi
-    [[ -n "${OVN_SRC:-}" && "${OVN_SRC}" != "release" ]] && die "Source installs were removed — the installer consumes verified releases only (developers: clone the repo)" "$EX_USAGE"
-    [[ -n "${OVN_BRANCH:-}" ]] && die "OVN_BRANCH was removed with source installs — developers: git checkout the branch in a clone" "$EX_USAGE"
+    [[ -n "${OVN_SRC:-}" && "${OVN_SRC}" != "release" ]] && die "Source installs were removed, the installer consumes verified releases only (developers: clone the repo)" "$EX_USAGE"
+    [[ -n "${OVN_BRANCH:-}" ]] && die "OVN_BRANCH was removed with source installs, developers: git checkout the branch in a clone" "$EX_USAGE"
     case "$SRC" in
         release) ;;
         *) die "Invalid source '$SRC' (releases only)" "$EX_USAGE" ;;
@@ -2102,7 +2102,7 @@ main() {
         refuse_partial_node
     fi
     # Everything else at $APP_DIR is debris: reported, installed over, and left
-    # on disk for the operator to inspect — one of those files may be data.
+    # on disk for the operator to inspect, one of those files may be data.
     if [[ "$INSTALL_STATE" == "bootstrap" ]]; then
         report_bootstrap_dir
     fi
@@ -2128,7 +2128,7 @@ main() {
 
     # A bare run is interactive, full stop. It used to be "no questions because
     # there is no terminal", and that inference installed things nobody chose and
-    # then reported success — the one outcome a silent default must never
+    # then reported success, the one outcome a silent default must never
     # produce. With no terminal there is nobody to answer, so say so and name the
     # flag rather than deciding on their behalf.
     #
@@ -2162,9 +2162,9 @@ main() {
 }
 
 # Sourced (a test, an operator poking at one helper) rather than run. Every
-# documented invocation runs the file — `bash install.sh`, `bash -s < install.sh`,
+# documented invocation runs the file, `bash install.sh`, `bash -s < install.sh`,
 # `bash <(curl ...)` and `curl ... | bash` all leave BASH_SOURCE unset or equal
-# to $0 — so this changes nothing about how the installer is started. Without
+# to $0, so this changes nothing about how the installer is started. Without
 # it there was no way to test a predicate here without installing a node.
 if [[ "${BASH_SOURCE[0]:-}" == "$0" ]]; then
     main "$@"

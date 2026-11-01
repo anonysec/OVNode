@@ -2,7 +2,7 @@
 # Copyright (c) 2026 anonysec
 # SPDX-License-Identifier: MIT
 #
-# OVNode shared shell library — the only copy of every helper below.
+# OVNode shared shell library, the only copy of every helper below.
 # Sourced by install.sh and ovnode.sh, and embedded in the binary so the scripts
 # on a box always match the binary beside them. The two halves below used to be
 # two files that called each other: render.sh asked common.sh for `ask`, and
@@ -11,7 +11,7 @@
 # ── Colour / TTY ───────────────────────────────────────────────────────
 # Every renderer writes to fd 2, so the gate tests fd 2. NO_COLOR removes the
 # colour; TERM=dumb removes the motion too, because a dumb terminal honours
-# neither. render.sh reads these globals — it does not define them.
+# neither. render.sh reads these globals, it does not define them.
 NC=$'\033[0m'; B=$'\033[1m'; D=$'\033[2m'
 WH=$'\033[97m'; GR=$'\033[32m'; RD=$'\033[31m'
 YL=$'\033[33m'; CY=$'\033[36m'; GY=$'\033[90m'
@@ -20,11 +20,11 @@ OR=$'\033[38;5;208m'
     || { NC=''; B=''; D=''; WH=''; GR=''; RD=''; YL=''; CY=''; GY=''; OR=''; }
 : "${QUIET:=0}"
 
-# die <message> [exit-code]  — single error path.
+# die <message> [exit-code] , single error path.
 #
 # Deliberately not a render helper: this is the exit path, not decoration, and
 # it must keep working when the terminal is unusable and when render.sh failed
-# to source. QUIET does not silence it — an error nobody sees is a silent
+# to source. QUIET does not silence it, an error nobody sees is a silent
 # failure.
 die() {
     local msg="$1" code="${2:-$EX_ERROR}"
@@ -35,14 +35,14 @@ die() {
 # is_tty asks for a terminal on BOTH ends: this is the prompt predicate, and a
 # prompt nobody can answer is worse than no prompt. The renderer asks only about
 # stderr, because `curl … | bash -s` has a pipe on stdin and a terminal an
-# operator is watching — the wrong answer here would degrade the most common
+# operator is watching, the wrong answer here would degrade the most common
 # install path.
 is_tty() { [[ -t 0 && -t 2 ]]; }
 
 # Spinners/prompts only for interactive humans.
 fancy()  { is_tty && [[ "$QUIET" -eq 0 ]]; }
 
-# run <label> <cmd...> — required step. A failure is fatal: continuing would
+# run <label> <cmd...>, required step. A failure is fatal: continuing would
 # leave a half-installed node the operator believes is whole.
 run() {
     local label="$1"; shift
@@ -54,14 +54,14 @@ run() {
     die "Step failed: $label"
 }
 
-# try_run <label> <cmd...> — best-effort step: warns instead of dying.
+# try_run <label> <cmd...>, best-effort step: warns instead of dying.
 try_run() {
     local label="$1"; shift
     if "$@" >/dev/null 2>&1; then
         render_ok "$label"
         return 0
     fi
-    render_warn "$label failed — continuing"
+    render_warn "$label failed, continuing"
     return 1
 }
 
@@ -93,7 +93,7 @@ ask() {
     echo "${val:-$default}"
 }
 
-# confirm <question> [default] — default is y, which is what a run with no
+# confirm <question> [default], default is y, which is what a run with no
 # gets. A destructive caller must pass n: with no terminal nobody can answer, and
 # answering yes on their behalf would replace live data from a cron or CI run.
 confirm() {
@@ -124,7 +124,7 @@ confirm_no() {
     [[ "$c" =~ ^[Yy]$ ]]
 }
 
-# confirm_word <question> <word> — the destructive default. `uninstall` asks for
+# confirm_word <question> <word>, the destructive default. `uninstall` asks for
 # the word "purge" before it deletes a node's PKI and key material, and Enter
 # keeps them. A plain y/N made the destructive answer one stray keystroke from
 # the default.
@@ -141,7 +141,7 @@ is_port() { [[ "$1" =~ ^[0-9]+$ ]] && (( $1 >= 1 && $1 <= 65535 )); }
 
 # backup_dir() and the code snapshots below share one root. OVN_BACKUP_ROOT
 # exists for the test suite and for an off-box backup target; unset, every
-# tarball lands where it always has — /var/backups.
+# tarball lands where it always has, /var/backups.
 backup_dir() {
     local src="$1" label="$2"
     [[ -d "$src" ]] || return 0
@@ -160,7 +160,7 @@ backup_dir() {
         render_ok "Backup saved: $file"
     else
         umask "$old_umask"
-        render_warn "Backup failed for $src — continuing anyway"
+        render_warn "Backup failed for $src, continuing anyway"
     fi
 }
 
@@ -173,7 +173,7 @@ wait_health() {
     return 1
 }
 
-# wait_health_live — wait_health, but the running step counts the attempts.
+# wait_health_live, wait_health, but the running step counts the attempts.
 #
 # The old wait was a minute of complete silence on first boot, which is
 # indistinguishable from a hang: first boot generates the PKI, so it is the
@@ -198,9 +198,9 @@ env_get() {  # env_get FILE KEY → value
     [[ -f "$1" ]] || return 0
     # A file we can see but cannot read is not "no value": returning empty made
     # callers fall back to defaults that look like real data, so a healthy node
-    # reported itself broken and exited 0 — worse than an error, because it
+    # reported itself broken and exited 0, worse than an error, because it
     # invites someone to repair a working box.
-    [[ -r "$1" ]] || die "Cannot read $1 — run with sudo." "$EX_ERROR"
+    [[ -r "$1" ]] || die "Cannot read $1, run with sudo." "$EX_ERROR"
     awk -F= -v k="$2" '$1 == k { sub(/^[^=]*=/, ""); print; exit }' "$1" | tr -d '\r'
 }
 
@@ -213,7 +213,7 @@ node_name_from_env() {
 #
 # It used to be written as ${DATA_BASE}/${NODE_NAME} in seventeen places, and
 # that nesting was a layout for several nodes per host that nothing ever
-# implemented — there is one NODE_NAME, one service, one agent. A node's data
+# implemented, there is one NODE_NAME, one service, one agent. A node's data
 # therefore belongs at the base, and the path belongs in one function so a layout
 # question is answered once rather than seventeen times.
 #
@@ -235,7 +235,7 @@ node_legacy_data_dir() { printf '%s/%s' "$DATA_BASE" "$(node_name_from_env)"; }
 # The flat layout's destination is always the base, and deliberately not
 # node_data_dir(). While the old declaration is still in .env that helper returns
 # the *old* path, so asking it where to migrate to answers "nowhere" and the
-# migration silently does nothing — which is exactly what it did the first time
+# migration silently does nothing, which is exactly what it did the first time
 # this ran. The base is not a guess: it is what the flat layout means.
 migrate_flat_data_dir() {
     local legacy node_data
@@ -251,7 +251,7 @@ migrate_flat_data_dir() {
         [[ -e "$node_data/$name" ]] && clash+=" $name"
     done
     if [[ -n "$clash" ]]; then
-        render_fail "flat data migration" "already present in $node_data:$clash — refusing to merge"
+        render_fail "flat data migration" "already present in $node_data:$clash, refusing to merge"
         return 1
     fi
 
@@ -268,7 +268,7 @@ migrate_flat_data_dir() {
 
     # And the declaration has to follow, or the agent comes back reading a
     # directory that is no longer there. This is the installer editing .env,
-    # which is its job — install.sh already rewrites it during an update to
+    # which is its job, install.sh already rewrites it during an update to
     # strip retired keys. The operator CLI never touches it.
     if [[ -f "$APP_DIR/.env" ]]; then
         local tmp; tmp="$(mktemp "${APP_DIR}/.env.XXXXXX")" || {
@@ -308,7 +308,7 @@ systemctl_bounded() {  # systemctl_bounded stop|restart <unit>
     if timeout "$STOP_TIMEOUT" systemctl "$action" "$unit" 2>/dev/null; then
         return 0
     fi
-    render_warn "systemctl $action $unit did not finish in ${STOP_TIMEOUT}s — forcing it"
+    render_warn "systemctl $action $unit did not finish in ${STOP_TIMEOUT}s, forcing it"
     systemctl kill -s SIGKILL "$unit" >/dev/null 2>&1 || true
     sleep 1
     if [[ "$action" == "restart" ]]; then
@@ -339,11 +339,11 @@ _existing_tls_pair_usable() {  # <key> <cert> → 0 when an intact, unexpired pa
 # It used to be /etc/ssl/self-signed, which is a *shared* convention: OVManager
 # keeps its panel certificate in exactly those two files on the same host. The
 # node then wrote over the panel's identity and chmod 600'd the key, which
-# drops the group read the panel's non-root service account needs — so the panel
+# drops the group read the panel's non-root service account needs, so the panel
 # stopped starting, and nothing in either project's doctor said why.
 #
 # Reusing an intact pair mitigated that only while the pair stayed intact. Once
-# it was not — a mismatched key, an unreadable file, anything — the fallback
+# it was not, a mismatched key, an unreadable file, anything, the fallback
 # regenerated into the shared path and did the damage again, which is how the
 # panel on this host spent a day in a restart loop.
 #
@@ -365,7 +365,7 @@ generate_selfsigned() {
     if [[ "${TLS_REGENERATE:-0}" != "1" ]] && _existing_tls_pair_usable "$key" "$cert"; then
         TLS_KEY="$key"
         TLS_CERT="$cert"
-        render_ok "self-signed certificate already present — reusing it"
+        render_ok "self-signed certificate already present, reusing it"
         return 0
     fi
     local cn san extra; cn="$(primary_ip)"
@@ -391,7 +391,7 @@ generate_selfsigned() {
         -out "$cert" \
         -subj "/C=US/ST=Local/L=Local/O=OVNode/CN=${cn:-ovnode}" \
         -addext "subjectAltName=${san}" >/dev/null 2>&1
-    # The sync API TLS key is a secret, so it is owner-only — but only ever at a
+    # The sync API TLS key is a secret, so it is owner-only, but only ever at a
     # path this node owns. The 600 used to be applied to whatever sat in the
     # shared directory, which is what took the panel down.
     chmod 600 "$key"
@@ -423,7 +423,7 @@ issue_letsencrypt() {
             TLS_KEY="$outdir/privkey.pem"; TLS_CERT="$outdir/fullchain.pem"
             return 0
         fi
-        render_warn "certificate expires soon (${days_left}d) — renewing"
+        render_warn "certificate expires soon (${days_left}d), renewing"
     fi
 
     local extra_args=()
@@ -465,7 +465,7 @@ primary_ip() { hostname -I 2>/dev/null | awk '{print $1}'; }
 # This box's public address, as Let's Encrypt would see it: a public resolver
 # first (the address the internet routes to), then the local interfaces filtered
 # to globally routable ranges. An address behind NAT is still the right answer
-# here — the certificate names what the world dials.
+# here, the certificate names what the world dials.
 public_ip() {
     local ip
     for ip in $(curl -fsS --max-time 3 https://api.ipify.org 2>/dev/null) \
@@ -562,7 +562,7 @@ else
 fi
 
 # Braille is the only widely-available frame set that reads as continuous
-# rotation without shifting the line. Nothing rotates any more — the set is
+# rotation without shifting the line. Nothing rotates any more, the set is
 # kept because the ASCII/Unicode split also decides the glyph vocabulary.
 if [[ "${LC_ALL:-${LC_CTYPE:-${LANG:-}}}" == *[Uu][Tt][Ff]* ]]; then
     RENDER_SPINNER_UNICODE=1
@@ -586,7 +586,7 @@ else
     RENDER_RULE='----------------------------------------------'
 fi
 
-_render_paint() {  # _render_paint <colour> <text> — no-op when colour is off
+_render_paint() {  # _render_paint <colour> <text>, no-op when colour is off
     if [[ "$RENDER_COLOR" -eq 1 ]]; then printf '%b%s%b' "$1" "$2" "${NC:-}"; else printf '%s' "$2"; fi
 }
 
@@ -608,7 +608,7 @@ render_screen() {
     [[ -t 2 ]] || return 0
     # `clear 2>/dev/null`, not `command clear >/dev/null 2>&1`. `clear` clears
     # by *printing* escape codes, so redirecting its stdout to /dev/null threw
-    # the codes away and the screen was never cleared — the exact opposite of
+    # the codes away and the screen was never cleared, the exact opposite of
     # what that redirection looks like it is doing.
     clear 2>/dev/null || printf '\033[H\033[2J\033[3J' >&2 || true
     return 0
@@ -655,20 +655,20 @@ render_menu() {
 #
 # There is no block, no counter and no repaint. The earlier renderer drew a
 # numbered block and rewrote it in place as each step finished; that looked
-# better in a terminal and was useless everywhere else — a piped install log
+# better in a terminal and was useless everywhere else, a piped install log
 # ended up as a column of escape sequences with the useful lines buried. The
 # numbering also cost a second, competing way of saying where you are.
 
 RENDER_STEP_LABEL=""
 
-# render_begin <label> — announce a step.
+# render_begin <label>, announce a step.
 render_begin() {
     RENDER_STEP_LABEL="$1"
     printf '  %b..%b    %s\n' "$GY" "$NC" "$1" >&2
     return 0
 }
 
-# render_stage <title> — the numbered stage header the installer uses. A bar,
+# render_stage <title>, the numbered stage header the installer uses. A bar,
 # not a step: it separates the phases of a long install the way the panel's
 # installer does, and the number tells an operator how much is left.
 render_stage() {
@@ -676,7 +676,7 @@ render_stage() {
     return 0
 }
 
-# render_done <detail> — close the step. An empty detail still says the step
+# render_done <detail>, close the step. An empty detail still says the step
 # finished, so the log never has a line that promises something and forgets it.
 render_done() {
     RENDER_STEP_LABEL=""
@@ -684,14 +684,14 @@ render_done() {
     return 0
 }
 
-# render_end — close the step without a result line. Used where a step failed
+# render_end, close the step without a result line. Used where a step failed
 # and the failure is reported by the caller.
 render_end() {
     RENDER_STEP_LABEL=""
     return 0
 }
 
-# render_note <detail> — a line under the open step.
+# render_note <detail>, a line under the open step.
 render_note() {
     printf '  %b..%b    %s\n' "$GY" "$NC" "$1" >&2
     return 0
@@ -704,14 +704,14 @@ render_note() {
 render_line() { _render_out "$*"; }
 render_blank() { printf '\n' >&2; }
 
-# render_ok <text> — a completed thing that is not one of the numbered steps.
+# render_ok <text>, a completed thing that is not one of the numbered steps.
 # The green check is the same glyph the steps use, so "done" looks the same
 # everywhere in the installer.
 render_ok() {
     printf '  %b%s%b  %s\n' "$GR" "$RENDER_OK" "$NC" "$1" >&2
 }
 
-# render_warn <text> — a caveat. Yellow, no glyph: a mid-run warning marker on
+# render_warn <text>, a caveat. Yellow, no glyph: a mid-run warning marker on
 # its own line is the thing operators learn to skip, so the colour carries it
 # and the text carries the meaning.
 render_warn() {
@@ -720,16 +720,16 @@ render_warn() {
 
 # Card rows share one label width, so every value starts in the same column.
 # 14 is the longest label either card uses ("install name" is 12, "setup key"
-# and "not written" are shorter) — wide enough for the node card's labels, and
+# and "not written" are shorter), wide enough for the node card's labels, and
 # not so wide that a short value sits in the middle of the screen.
 RENDER_LABEL_W=14
 
-# render_kv <label> <value> — a label/value row.
+# render_kv <label> <value>, a label/value row.
 render_kv() {
     printf '   %b%-*s%b %s\n' "$GY" "$RENDER_LABEL_W" "$1" "$NC" "$2" >&2
 }
 
-# render_kv_w <width> <label> <value> — a row in a column this caller computed.
+# render_kv_w <width> <label> <value>, a row in a column this caller computed.
 #
 # A fixed width only works when every label is shorter than it. At 14, a
 # 44-character backup filename printed whole and dropped its date a column right
@@ -739,13 +739,13 @@ render_kv_w() {
     printf '   %b%-*s%b %s\n' "$GY" "$1" "$2" "$NC" "$3" >&2
 }
 
-# render_key — a secret. The only thing in the installer that gets bold white,
+# render_key, a secret. The only thing in the installer that gets bold white,
 # because it is the only thing that must not be skimmed past.
 render_key() {
     printf '   %b%-*s%b %b%s%b\n' "$GY" "$RENDER_LABEL_W" "$1" "$NC" "$B" "$2" "$NC" >&2
 }
 
-# render_url — bold for the same reason as render_key: it gets copied.
+# render_url, bold for the same reason as render_key: it gets copied.
 render_url() { render_kv "$1" "$(_render_paint "$B" "$2")"; }
 
 # ── Card ───────────────────────────────────────────────────────────────
@@ -754,7 +754,7 @@ render_url() { render_kv "$1" "$(_render_paint "$B" "$2")"; }
 # it is on screen before the lines that explain it: an operator who interrupts
 # at the second line has the one thing they must not lose.
 #
-# render_card <title> <secret-label> <secret> <row>... — rows are "label|value".
+# render_card <title> <secret-label> <secret> <row>..., rows are "label|value".
 # The uninstall line is added by render_card_undo, not here, so a caller that
 # has no uninstall command does not print a broken one.
 
@@ -773,7 +773,7 @@ render_card() {
     return 0
 }
 
-# render_card_undo <url> — the removal command, spelled out in full. An operator
+# render_card_undo <url>, the removal command, spelled out in full. An operator
 # who wants it later is reading a log or a terminal scrollback, not the source.
 render_card_undo() {
     render_blank
@@ -784,7 +784,7 @@ render_card_undo() {
 # ── Failure ────────────────────────────────────────────────────────────
 #
 # One line, then one way out. The gap between what was promised and what
-# happened is the thing an operator actually needs, and it fits in a line — the
+# happened is the thing an operator actually needs, and it fits in a line, the
 # rest of the old error prose was the same information at four times the length.
 
 render_fail() {  # render_fail <label> <cause>
