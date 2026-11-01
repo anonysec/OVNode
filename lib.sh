@@ -368,10 +368,23 @@ generate_selfsigned() {
         render_ok "self-signed certificate already present — reusing it"
         return 0
     fi
-    local cn san; cn="$(primary_ip)"
+    local cn san extra; cn="$(primary_ip)"
     san="DNS:localhost"
     if [[ "$cn" =~ ^[0-9]+\.[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
         san="IP:${cn},DNS:localhost"
+    fi
+    if [[ -n "${OVN_SAN:-}" ]]; then
+        local entries=()
+        IFS=',' read -ra entries <<< "$OVN_SAN"
+        for extra in "${entries[@]}"; do
+            extra="${extra// /}"
+            [[ -z "$extra" ]] && continue
+            if [[ "$extra" =~ ^[0-9]+\.[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
+                san+=",IP:${extra}"
+            else
+                san+=",DNS:${extra}"
+            fi
+        done
     fi
     openssl req -x509 -nodes -days 3650 -newkey rsa:2048 \
         -keyout "$key" \

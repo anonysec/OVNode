@@ -1726,6 +1726,14 @@ interactive_setup() {
             [[ -f "$TLS_CERT" && -f "$TLS_KEY" ]] || die "Custom TLS files not found" ;;
         *) TLS_METHOD="selfsigned" ;;
     esac
+
+    render_line "  $(printf '%bapi key%s' "$B" "$NC")"
+    API_KEY="$(ask "api key (blank = auto)" "${API_KEY:-}")"
+
+    if [[ "$TLS_METHOD" == "selfsigned" ]]; then
+        render_line "  $(printf '%bsan entries%s' "$B" "$NC")"
+        OVN_SAN="$(ask "extra SAN entries, comma separated (blank = none)" "${OVN_SAN:-}")"
+    fi
     return 0
 }
 
