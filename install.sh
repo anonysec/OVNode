@@ -1091,7 +1091,7 @@ do_install() {
 
     local scheme="http"
     [[ "$TLS_METHOD" != "none" ]] && scheme="https"
-    local host; host="$(primary_ip)"
+    local host; host="$(public_ip 2>/dev/null || true)"; host="${host:-$(primary_ip)}"
 
     mkdir -p "$(node_data_dir)"
     ensure_openvpn_dirs
@@ -1174,7 +1174,7 @@ write_setup_info() {
     path="$(node_data_dir)/setup-info"
     mkdir -p "$(dirname "$path")"
     scheme="http"; [[ "$TLS_METHOD" != "none" ]] && scheme="https"
-    host="$(primary_ip)"
+    host="$(public_ip 2>/dev/null || true)"; host="${host:-$(primary_ip)}"
     cert_file="${TLS_CERT:-}"
     if [[ -z "$cert_file" || ! -f "$cert_file" ]]; then
         cert_file="$(env_get "$APP_DIR/.env" SSL_CERTFILE 2>/dev/null || true)"
@@ -1209,11 +1209,12 @@ node_success_card() {
     else
         key_note="  $(printf '%sthe key you supplied%s' "$GY" "$NC")"
     fi
-    render_card "ready" "api key" "${API_KEY}${key_note}" \
-        "node|$where" \
-        "tls|$(tls_summary)" \
-        "data|$(node_data_dir)" \
-        "logs|$CLI_NAME logs -f"
+    printf '\n  %sInstallation complete%s\n' "$CY" "$NC" >&2
+    render_ok "Node     $where"
+    render_ok "Key      ${API_KEY}${key_note}"
+    render_ok "TLS      $(tls_summary)"
+    render_ok "Data     $(node_data_dir)"
+    render_ok "Logs     $CLI_NAME logs -f"
     cert_file="$(env_get "$APP_DIR/.env" SSL_CERTFILE 2>/dev/null || true)"
     [[ -n "$cert_file" && -f "$cert_file" ]] && {
         render_blank
@@ -1642,7 +1643,6 @@ do_uninstall() {
     # The list of what goes comes before the question, and the question is not
     # yes/no: the destructive answer is a word, so a stray Enter keeps the PKI.
     # A y/N prompt put "yes, delete the CA" one keystroke from the default.
-    render_screen
     render_line "  $(printf '%bthis removes%b' "$B" "$NC")"
     render_rule
     render_kv "services" "$SYSTEMD_SERVICE, $OPENVPN_SERVICE"
@@ -1712,11 +1712,9 @@ dir_size() {
 # /sync/config rewrites proto and restarts OpenVPN), so the installer only has to
 # write something valid to start from.
 interactive_setup() {
-    render_screen
     render_line "  $(printf '%bport%s' "$B" "$NC")"
     PORT="$(ask "" "${PORT:-$(find_free_port "$DEFAULT_PORT")}")"
 
-    render_screen
     render_line "  $(printf '%btls%s' "$B" "$NC")"
     local tls_choice
     tls_choice="$(ask "1 self-signed · 2 lets encrypt · 3 custom" "1")"
@@ -2055,10 +2053,6 @@ main() {
         release) ;;
         *) die "Invalid source '$SRC' (releases only)" "$EX_USAGE" ;;
     esac
-    # render_screen, not a bare `clear`: no escape-sequence fallback here, so a
-    # host without terminfo silently skipped the wipe and the installer drew
-    # itself over whatever was already on the terminal.
-    render_screen
     render_banner "OVNode" "v${VERSION}"
     render_kv "repository" "anonysec/OVNode"
     render_kv "arch" "$(uname -m)"
