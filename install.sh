@@ -1738,6 +1738,7 @@ interactive_setup() {
 
     if [[ "$TLS_METHOD" == "selfsigned" ]]; then
         render_line "  $(printf '%bsan entries%s' "$B" "$NC")"
+        render_note "Examples: 192.168.1.100, node.example.com, *.example.com"
         OVN_SAN="$(ask "extra SAN entries, comma separated (blank = none)" "${OVN_SAN:-}")"
     fi
     return 0
