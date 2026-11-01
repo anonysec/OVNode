@@ -30,7 +30,7 @@ func ManagementPort() int  { return envInt("MANAGEMENT_PORT", 7505) }
 // VPNNetwork returns the VPN client subnet base (e.g. "10.8.0.0"). When
 // OVNODE_VPN_NETWORK is not set explicitly, a unique subnet is derived from
 // the data dir + OpenVPN root so multiple instances on one host do not
-// collide on 10.8.0.0/24.
+// collide on the default OpenVPN subnet (10.8.0.0/24).
 func VPNNetwork() string {
 	if v := fsx.Env("VPN_NETWORK", ""); v != "" {
 		return v
@@ -39,7 +39,7 @@ func VPNNetwork() string {
 	dataDir := fsx.OVNodeDir()
 	root := fsx.OpenVPNRoot()
 	if dataDir == "/var/lib/ovnode" && root == "/etc/openvpn" {
-		return "10.8.0.0"
+		return "10.66.0.0"
 	}
 	// deterministic per-instance subnet in 10.8.1.0 .. 10.8.254.0
 	h := 0
@@ -47,7 +47,7 @@ func VPNNetwork() string {
 		h = h*31 + int(c)
 	}
 	octet := (h % 253) + 1 // 1..253
-	return "10.8." + strconv.Itoa(octet) + ".0"
+	return "10.66." + strconv.Itoa(octet) + ".0"
 }
 func VPNNetmask() string   { return fsx.Env("VPN_NETMASK", "255.255.255.0") }
 
