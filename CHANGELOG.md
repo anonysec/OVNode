@@ -1,5 +1,10 @@
 # Changelog
 
+## 1.4.13 — 2026-11-01
+
+- Feat(env): `.env` wins over process env (PasarGuard style) in fsx + mgmt/debug/log reads.
+- Docs: note chunked sync/gRPC/stats as later/N-A.
+
 ## 1.4.11 — 2026-10-31
 
 - Complete PasarGuard-style handoff suggestions 1-8.
