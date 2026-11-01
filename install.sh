@@ -22,7 +22,7 @@
 set -Eeuo pipefail
 
 # ── Configuration ──────────────────────────────────────────────────────────
-VERSION="1.4.17"
+VERSION="1.4.18"
 # Forks: point source downloads (and update pulls) at your own repo.
 REPO="${OVN_REPO:-anonysec/OVNode}"
 # Versioned GitHub Release tarballs only: verified checksum, no git needed.
@@ -41,10 +41,6 @@ DEFAULT_VPN=1194
 # real /etc/systemd/system. Unset it and the path is exactly what it was.
 SYSTEMD_DIR="${OVN_SYSTEMD_DIR:-/etc/systemd/system}"
 SYSTEMD_SERVICE="ovnode.service"
-NAT_SERVICE="ovnode-nat.service"
-OPENVPN_SERVICE="ovnode-openvpn.service"
-CLEANUP_SERVICE="ovnode-cleanup.service"
-CLEANUP_TIMER="ovnode-cleanup.timer"
 NAT_SCRIPT="/usr/local/sbin/ovnode-nat.sh"
 NAT_CONF="/etc/default/ovnode-nat"
 SYSCTL_CONF="/etc/sysctl.d/99-ovnode.conf"
@@ -180,7 +176,7 @@ NODE_BIN_FILE="ovnode"
 
 # Node unit files: a host install writes these, so one is evidence of a node
 # even when the app directory is gone.
-NODE_UNITS=(SYSTEMD_SERVICE NAT_SERVICE OPENVPN_SERVICE CLEANUP_TIMER)
+NODE_UNITS=(SYSTEMD_SERVICE OPENVPN_SERVICE)
 
 _any_node_unit() {
     local name
@@ -685,34 +681,6 @@ start_openvpn_service() {
     fi
 }
 
-write_cleanup_units() {
-    # The purge runs the same implementation as the hooks: the agent binary.
-    local purge_cmd="${AGENT_BIN} hook purge-stale"
-    cat > "$SYSTEMD_DIR/$CLEANUP_SERVICE" << UNIT
-[Unit]
-Description=OVNode stale session marker purge
-
-[Service]
-Type=oneshot
-ExecStart=${purge_cmd}
-UNIT
-    cat > "$SYSTEMD_DIR/$CLEANUP_TIMER" << UNIT
-[Unit]
-Description=Daily OVNode stale session purge
-
-[Timer]
-OnCalendar=daily
-Persistent=true
-
-[Install]
-WantedBy=timers.target
-UNIT
-    systemctl daemon-reload >/dev/null 2>&1
-    systemctl enable --now "$CLEANUP_TIMER" >/dev/null 2>&1 \
-        && render_ok "Stale session purge scheduled ($CLEANUP_TIMER)" \
-        || render_warn "Could not enable $CLEANUP_TIMER"
-}
-
 # Docker mode post-flight: a native daemon holding 1194/7505 on the shared host
 # network namespace crash-loops the container's OpenVPN (mgmt bind EADDRINUSE)
 # while the agent health check stays green.
@@ -853,33 +821,6 @@ case "${1:-apply}" in
 esac
 NAT
     chmod +x "$NAT_SCRIPT"
-
-    cat > "$SYSTEMD_DIR/$NAT_SERVICE" << UNIT
-[Unit]
-Description=OVNode NAT (masquerade + VPN port redirects)
-After=network-online.target
-Wants=network-online.target
-
-[Service]
-Type=oneshot
-RemainAfterExit=yes
-ExecStart=$NAT_SCRIPT apply
-ExecStop=$NAT_SCRIPT cleanup
-
-[Install]
-WantedBy=multi-user.target
-UNIT
-    systemctl daemon-reload >/dev/null 2>&1
-    systemctl enable "$NAT_SERVICE" >/dev/null 2>&1
-    if systemctl restart "$NAT_SERVICE" >/dev/null 2>&1; then
-        if [[ -n "$EXTRA_PORTS" ]]; then
-            render_ok "NAT enabled, ports ${EXTRA_PORTS} → ${VPN_PORT}"
-        else
-            render_ok "NAT enabled"
-        fi
-    else
-        render_warn "Could not start NAT service — VPN clients may not route traffic"
-    fi
 }
 
 setup_nat() {
@@ -893,6 +834,7 @@ setup_nat() {
         pkg_install iptables iproute2
     fi
     write_nat_files
+    "$NAT_SCRIPT" apply >/dev/null 2>&1 || true
 }
 
 # ── Firewall ───────────────────────────────────────────────────────────
@@ -1244,11 +1186,13 @@ do_install() {
     # evicts any host daemon holding the VPN/management ports.
     if [[ "$DOCKER" -eq 0 ]]; then
         start_openvpn_service
-        write_cleanup_units
     else
         stop_native_openvpn
     fi
     setup_nat
+    # Daily stale-marker purge via cron (no systemd unit needed).
+    echo "0 3 * * * root $AGENT_BIN hook purge-stale >/dev/null 2>&1" > /etc/cron.d/ovnode-purge
+    chmod 644 /etc/cron.d/ovnode-purge
     setup_logrotate
     open_firewall_ports
     render_ok "$(vpn_ports_label)/$VPN_PROTO"
@@ -1727,7 +1671,6 @@ do_repair_unit() {
         has_systemd || die "systemd not found — cannot install the agent unit" "$EX_ERROR"
         write_systemd_unit
         write_openvpn_unit
-        write_cleanup_units
         run "Generating node PKI" "$AGENT_BIN" ca init
         setup_nat
         setup_logrotate
@@ -1752,7 +1695,7 @@ do_uninstall() {
     render_screen
     render_line "  $(printf '%bthis removes%b' "$B" "$NC")"
     render_rule
-    render_kv "services" "$SYSTEMD_SERVICE, $NAT_SERVICE, $OPENVPN_SERVICE, $CLEANUP_TIMER"
+    render_kv "services" "$SYSTEMD_SERVICE, $OPENVPN_SERVICE"
     render_kv "files" "$(dir_size "$APP_DIR")   $APP_DIR"
     if [[ "$PURGE" -eq 1 ]]; then
         render_kv "data" "$(printf '%s%s%s   %s← users, keys, the CA private key' "$RD" "$DATA_BASE" "$NC" "$GY")"
@@ -1768,13 +1711,11 @@ do_uninstall() {
     render_stage "[1/1] Uninstall"
     # Stopping the NAT unit runs its ExecStop cleanup (rules removed).
     systemctl_bounded stop "$SYSTEMD_SERVICE"
-    systemctl_bounded stop "$NAT_SERVICE"
     systemctl_bounded stop "$OPENVPN_SERVICE"
-    systemctl disable --now "$CLEANUP_TIMER" >/dev/null 2>&1 || true
-    systemctl disable "$SYSTEMD_SERVICE" "$NAT_SERVICE" "$OPENVPN_SERVICE" 2>/dev/null || true
-    rm -f "$SYSTEMD_DIR/$SYSTEMD_SERVICE" "$SYSTEMD_DIR/$NAT_SERVICE" \
-          "$SYSTEMD_DIR/$OPENVPN_SERVICE" "$SYSTEMD_DIR/$CLEANUP_SERVICE" \
-          "$SYSTEMD_DIR/$CLEANUP_TIMER"
+    systemctl disable "$SYSTEMD_SERVICE" "$OPENVPN_SERVICE" 2>/dev/null || true
+    rm -f "$SYSTEMD_DIR/$SYSTEMD_SERVICE" \
+          "$SYSTEMD_DIR/$OPENVPN_SERVICE" \
+          /etc/cron.d/ovnode-purge
     systemctl daemon-reload 2>/dev/null || true
 
     if command -v docker >/dev/null 2>&1 && [[ -f "$(compose_file)" ]]; then
@@ -2133,9 +2074,6 @@ main() {
     if [[ -z "${OVN_DATA_BASE:-}" ]]; then DATA_BASE="/var/lib/$INSTANCE_NAME"; fi
     SYSTEMD_SERVICE="${INSTANCE_NAME}.service"
     OPENVPN_SERVICE="${INSTANCE_NAME}-openvpn.service"
-    NAT_SERVICE="${INSTANCE_NAME}-nat.service"
-    CLEANUP_SERVICE="${INSTANCE_NAME}-cleanup.service"
-    CLEANUP_TIMER="${INSTANCE_NAME}-cleanup.timer"
     CLI_NAME="$INSTANCE_NAME"
 
     # Before anything touches $APP_DIR — before load_helpers, which downloads

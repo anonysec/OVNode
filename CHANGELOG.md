@@ -1,5 +1,9 @@
 # Changelog
 
+## 1.4.18 — 2026-11-01
+
+- Chore(services): drop NAT + cleanup systemd units (NAT applied in setup; purge via cron).
+
 ## 1.4.17 — 2026-11-01
 
 - Fix(installer): create /var/lib/ovnode data dirs; write OVNODE_DATA_DIR to .env.
