@@ -26,7 +26,9 @@ jobs:
       - name: Build
         run: |
           SHA="$(git rev-parse --short HEAD)"
-          VER="dev-${SHA}"
+          DATE="$(date -u +%Y%m%d)"
+          COUNT="$(git rev-list --count --since="${DATE:0:4}-${DATE:4:2}-${DATE:6:2}T00:00:00Z" HEAD)"
+          VER="dev-${DATE}.${COUNT}-${SHA}"
           echo "VER=${VER}" >> "$GITHUB_ENV"
           for arch in amd64 arm64; do
             out="ovnode-linux-${arch}"
