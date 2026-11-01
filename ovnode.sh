@@ -10,7 +10,7 @@
 set -Eeuo pipefail
 
 # ── Constants ──────────────────────────────────────────────────────────
-VERSION="1.4.15"
+VERSION="1.4.16"
 _INVOKED_NAME="$(basename "${BASH_SOURCE[0]:-$0}")"
 _INVOKED_NAME="${_INVOKED_NAME%.sh}"
 INSTANCE_NAME="${OVN_INSTANCE:-$_INVOKED_NAME}"
@@ -20,7 +20,7 @@ DATA_BASE="${OVN_DATA_BASE:-/var/lib/$INSTANCE_NAME}"
 OPENVPN_ROOT="/etc/openvpn"
 # Panel pairing record — one panel owns the node; `ovnode auth disconnect` is
 # the release, so the path has to be known to the CLI as well as the agent.
-PAIRING_FILE="$OPENVPN_ROOT/$INSTANCE_NAME/state/pairing.json"
+PAIRING_FILE="${OVN_DATA_DIR:-/var/lib/$INSTANCE_NAME}/state/pairing.json"
 DEFAULT_PORT=2083
 SYSTEMD_SERVICE="${INSTANCE_NAME}.service"
 OPENVPN_SERVICE="${INSTANCE_NAME}-openvpn.service"
@@ -149,7 +149,7 @@ do_status() {
         mode="native"
         [[ -f "$(node_data_dir)/docker-compose.yml" ]] && mode="docker"
 
-        agent_version="$("$OPENVPN_ROOT/ovnode/agent" version 2>/dev/null || true)"
+        agent_version="$("$APP_DIR/agent" version 2>/dev/null || true)"
         : "${agent_version:=$VERSION}"
 
         if [[ "$mode" == "docker" ]]; then

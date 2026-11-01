@@ -106,7 +106,18 @@ func MgmtPassFile() string {
 	return joinRoot("server", "mgmt-pass")
 }
 
-func OVNodeDir() string { return joinRoot("ovnode") }
+func OVNodeDir() string {
+	// Data lives in /var/lib/ovnode by default (consistent with OVManager),
+	// overridable via OVNODE_DATA_DIR / DATA_DIR. The OpenVPN root
+	// (/etc/openvpn) only holds server.conf + PKI.
+	if v := envOr("OVNODE_DATA_DIR", ""); v != "" {
+		return v
+	}
+	if v := envOr("DATA_DIR", ""); v != "" {
+		return v
+	}
+	return "/var/lib/ovnode"
+}
 
 func UsersDir() string {
 	return envOr("OVNODE_USERS_DIR", filepath.Join(OVNodeDir(), "users"))

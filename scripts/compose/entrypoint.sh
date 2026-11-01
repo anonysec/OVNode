@@ -197,7 +197,7 @@ main() {
     setup_forwarding
 
     log "starting OVNode agent"
-    ovnode serve &
+    /opt/ovnode/agent serve &
     AGENT_PID=$!
 
     if [[ "${OVNODE_SKIP_OPENVPN:-0}" != "1" ]]; then

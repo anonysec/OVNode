@@ -1,5 +1,9 @@
 # Changelog
 
+## 1.4.16 — 2026-11-01
+
+- Refactor(paths): node data to /var/lib/ovnode, agent binary to /opt/ovnode/agent; Docker updated.
+
 ## 1.4.15 — 2026-11-01
 
 - Fix(paths): rename agent binary to `agent` (no repeated ovnode in path).

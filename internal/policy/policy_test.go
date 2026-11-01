@@ -12,7 +12,8 @@ import (
 func TestPortsStateRoundTrip(t *testing.T) {
 	dir := t.TempDir()
 	t.Setenv("OVNODE_OPENVPN_ROOT", dir)
-	os.MkdirAll(filepath.Join(dir, "ovnode"), 0o755)
+t.Setenv("OVNODE_DATA_DIR", dir+"/ovnode-data")
+	os.MkdirAll(filepath.Join(dir, "ovnode-data"), 0o755)
 	WritePortsState([]int{8080, 9090})
 	st := ReadPortsState()
 	if !st.Pinned || len(st.Ports) != 2 {
@@ -26,7 +27,8 @@ func TestPortsStateRoundTrip(t *testing.T) {
 func TestDNSEffective(t *testing.T) {
 	dir := t.TempDir()
 	t.Setenv("OVNODE_OPENVPN_ROOT", dir)
-	os.MkdirAll(filepath.Join(dir, "ovnode"), 0o755)
+t.Setenv("OVNODE_DATA_DIR", dir+"/ovnode-data")
+	os.MkdirAll(filepath.Join(dir, "ovnode-data"), 0o755)
 	WriteDNSState("8.8.8.8", "1.1.1.1")
 	got := DNSEffective("9.9.9.9", "9.9.9.9")
 	if got[0] != "8.8.8.8" {
@@ -37,7 +39,8 @@ func TestDNSEffective(t *testing.T) {
 func TestIPv6Effective(t *testing.T) {
 	dir := t.TempDir()
 	t.Setenv("OVNODE_OPENVPN_ROOT", dir)
-	os.MkdirAll(filepath.Join(dir, "ovnode"), 0o755)
+t.Setenv("OVNODE_DATA_DIR", dir+"/ovnode-data")
+	os.MkdirAll(filepath.Join(dir, "ovnode-data"), 0o755)
 	WriteIPv6State(true, "fd00::/64")
 	en, pref := IPv6Effective(false, "fd42::/64")
 	if !en || pref != "fd00::/64" {

@@ -16,9 +16,9 @@ import (
 
 // Defaults for the hook paths. They match the bash hooks and the store.
 const (
-	DefaultUsersDir    = "/etc/openvpn/ovnode/users"
-	DefaultSessionsDir = "/etc/openvpn/ovnode/sessions"
-	DefaultUsageDir    = "/etc/openvpn/ovnode/usage"
+	DefaultUsersDir    = "/var/lib/ovnode/users"
+	DefaultSessionsDir = "/var/lib/ovnode/sessions"
+	DefaultUsageDir    = "/var/lib/ovnode/usage"
 	DefaultOpenVPNRoot = fsx.DefaultOpenVPNRoot
 	DefaultLogDir      = "/var/log/ovnode"
 	DefaultMgmtHost    = "127.0.0.1"

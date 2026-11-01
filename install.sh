@@ -22,7 +22,7 @@
 set -Eeuo pipefail
 
 # ── Configuration ──────────────────────────────────────────────────────────
-VERSION="1.4.15"
+VERSION="1.4.16"
 # Forks: point source downloads (and update pulls) at your own repo.
 REPO="${OVN_REPO:-anonysec/OVNode}"
 # Versioned GitHub Release tarballs only: verified checksum, no git needed.
@@ -34,7 +34,7 @@ INSTANCE_NAME="${OVN_INSTANCE:-}"
 OPENVPN_ROOT="/etc/openvpn"
 # The agent and the OpenVPN hook are the same Go binary. It lives where the
 # server.conf writer points the hooks, so there is exactly one copy of it.
-AGENT_BIN="${OPENVPN_ROOT}/ovnode/agent"
+AGENT_BIN="${APP_DIR}/agent"
 DEFAULT_PORT=2083
 DEFAULT_VPN=1194
 # Unit directory: overridable so a test can install into a tree instead of the

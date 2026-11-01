@@ -26,13 +26,14 @@ func testServer(t *testing.T) *Server {
 	t.Helper()
 	dir := t.TempDir()
 	t.Setenv("OVNODE_OPENVPN_ROOT", dir)
+t.Setenv("OVNODE_DATA_DIR", dir+"/ovnode-data")
 	for _, d := range []string{
 		filepath.Join(dir, "server", "pki", "private"),
 		filepath.Join(dir, "server", "pki", "issued"),
-		filepath.Join(dir, "ovnode", "users"),
-		filepath.Join(dir, "ovnode", "sessions"),
-		filepath.Join(dir, "ovnode", "usage"),
-		filepath.Join(dir, "ovnode", "state"),
+		filepath.Join(dir, "ovnode-data", "users"),
+		filepath.Join(dir, "ovnode-data", "sessions"),
+		filepath.Join(dir, "ovnode-data", "usage"),
+		filepath.Join(dir, "ovnode-data", "state"),
 	} {
 		if err := os.MkdirAll(d, 0o755); err != nil {
 			t.Fatal(err)
@@ -87,7 +88,7 @@ func TestRouteTableRegistersWithoutConflicts(t *testing.T) {
 func TestRoutesAreMethodScoped(t *testing.T) {
 	s := testServer(t)
 	root := os.Getenv("OVNODE_OPENVPN_ROOT")
-	userDir := filepath.Join(root, "ovnode", "users", "limit")
+	userDir := filepath.Join(root, "ovnode-data", "users", "limit")
 	if err := os.MkdirAll(userDir, 0o755); err != nil {
 		t.Fatal(err)
 	}
@@ -219,7 +220,7 @@ func TestStatusCarriesThePanelKeys(t *testing.T) {
 			t.Errorf("the status has no %q key: %s", key, rec.Body.String())
 		}
 	}
-	if data["version"] != "1.4.15" {
+	if data["version"] != "1.4.16" {
 		t.Errorf("version = %v, want the agent version", data["version"])
 	}
 }

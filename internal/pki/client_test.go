@@ -76,6 +76,7 @@ func writeTestCA(t *testing.T, root string) {
 func TestIssueClientCertToTree(t *testing.T) {
 	root := t.TempDir()
 	t.Setenv("OVNODE_OPENVPN_ROOT", root)
+t.Setenv("OVNODE_DATA_DIR", root+"/ovnode-data")
 	writeTestCA(t, root)
 
 	certPEM, keyPEM, err := IssueClientCertToTree("alice")
@@ -131,6 +132,7 @@ func TestIssueClientCertToTree(t *testing.T) {
 func TestRevokeCertByCNIsIdempotent(t *testing.T) {
 	root := t.TempDir()
 	t.Setenv("OVNODE_OPENVPN_ROOT", root)
+t.Setenv("OVNODE_DATA_DIR", root+"/ovnode-data")
 	writeTestCA(t, root)
 	if _, _, err := IssueClientCertToTree("bob"); err != nil {
 		t.Fatal(err)
@@ -148,6 +150,7 @@ func TestRevokeCertByCNIsIdempotent(t *testing.T) {
 func TestIssueClientCertRejectsABadCN(t *testing.T) {
 	root := t.TempDir()
 	t.Setenv("OVNODE_OPENVPN_ROOT", root)
+t.Setenv("OVNODE_DATA_DIR", root+"/ovnode-data")
 	writeTestCA(t, root)
 	for _, cn := range []string{"../escape", "a/b", "", "."} {
 		if _, _, err := IssueClientCertToTree(cn); err == nil {
@@ -164,6 +167,7 @@ func TestIssueClientCertRejectsABadCN(t *testing.T) {
 func TestCertExpiryReadsTheNotAfterDate(t *testing.T) {
 	root := t.TempDir()
 	t.Setenv("OVNODE_OPENVPN_ROOT", root)
+t.Setenv("OVNODE_DATA_DIR", root+"/ovnode-data")
 	writeTestCA(t, root)
 	expiry := CertExpiry(CACert())
 	if expiry == "" {

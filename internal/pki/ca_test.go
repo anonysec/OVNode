@@ -12,6 +12,7 @@ import (
 func TestGenerateCRLAfterInit(t *testing.T) {
 	dir := t.TempDir()
 	t.Setenv("OVNODE_OPENVPN_ROOT", dir)
+t.Setenv("OVNODE_DATA_DIR", dir+"/ovnode-data")
 	os.MkdirAll(filepath.Join(dir, "server", "pki"), 0o755)
 	// init pki via easyrsa won't be available in test env; skip if no ca
 	if _, err := os.Stat(CACert()); err != nil {
