@@ -341,3 +341,6 @@ The production installer consumes verified release archives only, so a source ch
 MIT. See [LICENSE](LICENSE).
 
 Node `1.0.x` pairs with OVManager `1.0.x`, so upgrade both together. The `2.x` line was retired before 1.0.0 — see [CHANGELOG.md](CHANGELOG.md).
+
+## Dev builds
+Install a rolling dev build: `OVN_VERSION=dev bash <(curl -sSL https://raw.githubusercontent.com/anonysec/OVNode/main/install.sh)`. Dev versions look like `dev-YYYYMMDD.N-<sha>`.
