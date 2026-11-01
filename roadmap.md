@@ -7,16 +7,11 @@ Lightweight filter applies. Stdlib only, no new deps, smallest diff wins.
 - **1.1.1** — owner username lock + last-user guard.
 - **1.1.0** — full UX overhaul (dashboard, list pages, settings, shell).
 
-## Next (v1.1.2)
+## Shipped (v1.1.2)
 
-Smallest set. Each item is ≤ 1 day, no new dependencies.
-
-1. **Rate-limit `/api/login`** — in-process token bucket keyed on IP + username,
-   ~30 lines, no middleware.
-2. **`ovmanager update` typed confirmation** — `read -p` + case match in `manager.sh`.
-   Stops the silent self-upgrade foot-gun.
-3. **Last-login IP + timestamp on header** — almost certainly already in
-   `sessions` / `audit_log`, just surface.
+- Rate-limit `/api/login` — already implemented in OVManager auth (token bucket).
+- `ovmanager update` typed confirmation — implemented in Go CLI (`--yes` to skip).
+- Last-login IP + timestamp — surfaced in user detail modal.
 
 ## Later (v1.1.3)
 
