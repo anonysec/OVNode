@@ -22,7 +22,6 @@ Smallest set. Each item is ≤ 1 day, no new dependencies.
 
 4. **`ovmanager doctor` round-trip** — login + node API ping via `curl`. Catches
    JWT-secret drift and node TLS expiry that current checks miss.
-5. **Audit log → CSV export** — stdlib `csv` + one button in `AuditLog.tsx`.
 
 ## Deferred (over-engineered for lightweight)
 
