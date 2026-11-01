@@ -22,8 +22,8 @@ import (
 	"ovnode/internal/hooks"
 	"ovnode/internal/httpapi"
 	"ovnode/internal/installer"
-	"ovnode/internal/ovpn"
 	"ovnode/internal/nat"
+	"ovnode/internal/ovpn"
 	"ovnode/internal/version"
 )
 

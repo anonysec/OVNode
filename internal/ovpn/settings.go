@@ -27,6 +27,7 @@ func envInt(name string, defaultVal int) int {
 func RuntimeUser() string  { return fsx.Env("RUNTIME_USER", "nobody") }
 func RuntimeGroup() string { return fsx.Env("RUNTIME_GROUP", "nogroup") }
 func ManagementPort() int  { return envInt("MANAGEMENT_PORT", 7505) }
+
 // VPNNetwork returns the VPN client subnet base (e.g. "10.8.0.0"). When
 // OVNODE_VPN_NETWORK is not set explicitly, a unique subnet is derived from
 // the data dir + OpenVPN root so multiple instances on one host do not
@@ -49,7 +50,7 @@ func VPNNetwork() string {
 	octet := (h % 253) + 1 // 1..253
 	return "10.66." + strconv.Itoa(octet) + ".0"
 }
-func VPNNetmask() string   { return fsx.Env("VPN_NETMASK", "255.255.255.0") }
+func VPNNetmask() string { return fsx.Env("VPN_NETMASK", "255.255.255.0") }
 
 // VPNSubnet returns the CIDR form used by NAT (e.g. "10.8.0.0/24").
 func VPNSubnet() string {
