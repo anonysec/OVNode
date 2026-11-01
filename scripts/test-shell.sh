@@ -8,7 +8,7 @@ echo "=== duplicate function check ==="
 # Extract function names from lib.sh
 lib_funcs=$(grep -oE '^[a-zA-Z_][a-zA-Z0-9_]*\(\)' lib.sh | tr -d '()' | sort -u)
 dupes=""
-for f in install.sh ovnode.sh doctor.sh; do
+for f in install.sh ovnode.sh; do
     for fn in $lib_funcs; do
         if grep -qE "^${fn}\(\)" "$f"; then
             dupes="$dupes $fn (in $f)"
@@ -23,7 +23,7 @@ echo "OK: no duplicate function definitions"
 
 # bash -n check
 echo "=== bash -n check ==="
-for f in install.sh ovnode.sh lib.sh doctor.sh; do
+for f in install.sh ovnode.sh lib.sh; do
     bash -n "$f" || { echo "FAIL: $f"; exit 1; }
 done
 echo "OK: all shell files pass bash -n"

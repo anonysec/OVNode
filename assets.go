@@ -30,7 +30,7 @@ import (
 //go:embed install.sh
 var Installer []byte
 
-// Operator is the operator CLI: status, logs, doctor, backup, restore, auth,
+// Operator is the operator CLI: status, logs, backup, restore, auth,
 // tls. It is a script and not a subcommand because it is the only thing on a
 // box that still works when the agent binary does not.
 //
@@ -41,11 +41,6 @@ var Operator []byte
 //
 //go:embed lib.sh
 var Lib []byte
-
-// Doctor is the operator CLI's health checks.
-//
-//go:embed doctor.sh
-var Doctor []byte
 
 // Asset is one embedded shell file and the mode it must land with.
 type Asset struct {
@@ -60,7 +55,6 @@ func Assets() []Asset {
 		{Name: "install.sh", Mode: 0o755, Body: Installer},
 		{Name: "ovnode.sh", Mode: 0o755, Body: Operator},
 		{Name: "lib.sh", Mode: 0o644, Body: Lib},
-		{Name: "doctor.sh", Mode: 0o644, Body: Doctor},
 	}
 }
 

@@ -6,7 +6,7 @@ The VPN server half of an [OVManager](https://github.com/anonysec/OVManager) dep
   <img src=".github/assets/banner.svg" alt="OVNode — the VPN server agent for OVManager" width="820">
   <br><br>
 
-  [![Version](https://img.shields.io/badge/version-1.4.22-blue)](CHANGELOG.md)
+  [![Version](https://img.shields.io/badge/version-1.4.23-blue)](CHANGELOG.md)
   [![License: MIT](https://img.shields.io/badge/License-MIT-green.svg)](LICENSE)
   [![CI](https://github.com/anonysec/OVNode/actions/workflows/ci.yml/badge.svg)](https://github.com/anonysec/OVNode/actions/workflows/ci.yml)
   [![Go](https://img.shields.io/badge/go-1.27-00ADD8?logo=go&logoColor=white)](go.mod)
@@ -101,7 +101,6 @@ The project is preparing for a major architectural refactor. Advanced AI-assiste
 - `OVN_NO_NAT=1` skips forwarding, NAT and port redirects when you would rather handle them yourself.
 
 ### 🔧 Operations
-- `ovnode doctor` checks the agent, OpenVPN, disk space, the certificate and recent backups, and applies the safe repairs with `--fix`.
 - `ovnode update` takes a verified snapshot of the identity file, the node data directory, `/etc/openvpn` and the API TLS files, then swaps in the release and restores the snapshot if the new one does not come up healthy.
 - `ovnode rollback` returns to the previous code tree; `ovnode update` cleans up an update interrupted by a reboot or power loss before it starts a new one.
 - `ovnode backup` archives the node data and PKI into root-only tarballs, on demand or through a daily system timer, with retention you set.
@@ -232,7 +231,6 @@ Every install adds one command, `ovnode` (short for `ovnode`). With no argument 
 | --- | --- |
 | `ovnode status` | Agent, health, version and VPN state. `--all` adds node, mode, port and TLS. |
 | `ovnode logs [N\|-f]` | Last N log lines (default 100), or follow live. |
-| `ovnode doctor [--fix]` | Health check across agent, VPN, disk, certificate and backups. Output leads with what is wrong and the command that fixes it. |
 | `ovnode restart` | Restart the node agent. |
 | `ovnode restart core` | Restart the OpenVPN server. |
 | `ovnode enable \| disable` | Automatic start at boot. |

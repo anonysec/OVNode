@@ -1,5 +1,9 @@
 # Changelog
 
+## 1.4.23 — 2026-11-01
+
+- Remove doctor.sh: folded health checks out (doctor command dropped).
+
 ## 1.4.22 — 2026-11-01
 
 - Fix(installer): restore OPENVPN_SERVICE default (fixes install_state_of tests).

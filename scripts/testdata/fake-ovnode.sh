@@ -34,11 +34,11 @@ if [[ "${1:-}" == "assets" && "${2:-}" == "write" ]]; then
         exit 1
     }
     mkdir -p "$dest"
-    for f in install.sh ovnode.sh lib.sh doctor.sh; do
+    for f in install.sh ovnode.sh lib.sh; do
         cp -f "$src/$f" "$dest/$f"
     done
     chmod 0755 "$dest/install.sh" "$dest/ovnode.sh"
-    chmod 0644 "$dest/lib.sh" "$dest/doctor.sh"
+    chmod 0644 "$dest/lib.sh"
     printf 'fake ovnode: wrote the installer assets into %s\n' "$dest" >&2
     exit 0
 fi

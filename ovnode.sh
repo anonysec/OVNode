@@ -10,7 +10,7 @@
 set -Eeuo pipefail
 
 # ── Constants ──────────────────────────────────────────────────────────
-VERSION="1.4.22"
+VERSION="1.4.23"
 _INVOKED_NAME="$(basename "${BASH_SOURCE[0]:-$0}")"
 _INVOKED_NAME="${_INVOKED_NAME%.sh}"
 INSTANCE_NAME="${OVN_INSTANCE:-$_INVOKED_NAME}"
@@ -53,8 +53,8 @@ AUTH_ACTION=""
 NODE_NAME="${OVN_NAME:-}"
 
 # Shared helpers (output, prompts, TLS, menus), all defined in lib.sh and
-# never copied here. doctor.sh holds this CLI's own health checks.
-#
+# never copied here.
+##
 # The copy BESIDE this script wins: sibling files are by definition the same
 # version as each other. The installed copy is the fallback for a script run
 # from outside its tree.
@@ -63,7 +63,7 @@ NODE_NAME="${OVN_NAME:-}"
 # newer ovnode.sh against an older installed lib calls helpers that lib has
 # never heard of and dies with "<name>: command not found".
 _SELF_DIR="$(cd -- "$(dirname -- "${BASH_SOURCE[0]:-$0}")" && pwd)"
-for _lib in lib.sh doctor.sh; do
+for _lib in lib.sh; do
     if [[ -f "$_SELF_DIR/$_lib" ]]; then
         _libdir="$_SELF_DIR"
     elif [[ -f "$APP_DIR/$_lib" ]]; then
@@ -800,7 +800,7 @@ _ovnode_completions() {
     local cur
     COMPREPLY=()
     cur="${COMP_WORDS[COMP_CWORD]}"
-    local cmds="status config info update enable disable restart restart-vpn logs backup restore auto-backup tls doctor rollback recover-update uninstall completion help start stop"
+    local cmds="status config info update enable disable restart restart-vpn logs backup restore auto-backup tls rollback recover-update uninstall completion help start stop"
     local flags="--yes -y --help -h --quiet -q --purge --keep -v --version --fix -a --all"
     if [[ "$cur" == -* ]]; then
         COMPREPLY=( $(compgen -W "$flags" -- "$cur") )
@@ -837,7 +837,6 @@ show_help() {
   USAGE
     ovnode status              Agent, health, version, service address  (--all for paths)
     ovnode logs [N|-f]         Last N lines, or follow live
-    ovnode doctor [--fix]      Health checks; --fix applies the safe ones
     ovnode restart             Restart the node agent
     ovnode restart core        Restart the OpenVPN server
     ovnode enable | disable    Automatic start on or off
@@ -874,8 +873,6 @@ show_help_full() {
     ovnode status              Agent, health, version, service address
     ovnode status --all        Adds node name, mode, port and TLS paths
     ovnode logs [N|-f]         Last N lines (default 100), or follow live
-    ovnode doctor [--all]      Health checks; --all lists every one
-    ovnode doctor --fix        Same checks, plus safe automatic repairs
     ovnode restart             Restart the node agent
     ovnode restart core        Restart the OpenVPN server process
     ovnode enable | disable    Turn automatic start on or off
@@ -907,8 +904,7 @@ show_help_full() {
 
   OPTIONS
     -y, --yes           Never prompt
-    -a, --all           status and doctor: include everything
-    --fix               doctor: apply safe automatic fixes
+    -a, --all           status: include everything
     --keep N            backup: how many backups to keep
     --purge             uninstall: also delete data and PKI
     -v, --version V     update: pin a release, e.g. -v v1.0.15
@@ -973,7 +969,6 @@ parse_args() {
             --time)       eval "$need2"; BACKUP_TIME="$2"; shift 2 ;;
             restore)      ACTION="restore"; shift
                           if [[ $# -ge 1 && "$1" != -* ]]; then RESTORE_NAME="$1"; shift; fi ;;
-            doctor)       ACTION="doctor"; shift ;;
             rollback)     ACTION="rollback"; shift ;;
             completion)   ACTION="completion"; shift ;;
             logs)         ACTION="logs"
@@ -1083,7 +1078,6 @@ main() {
         restore) do_restore "$RESTORE_NAME"; exit "$EX_OK" ;;
         auto-backup) check_root; auto_backup_cli "$AUTO_BACKUP_ACTION"; exit "$EX_OK" ;;
         tls) check_root; node_tls; exit $? ;;
-        doctor) do_doctor || rc=$?; exit "$rc" ;;
         rollback) do_rollback; exit "$EX_OK" ;;
         completion) do_completion; exit "$EX_OK" ;;
         uninstall) delegate_uninstall; exit "$EX_OK" ;;
