@@ -4,6 +4,9 @@
 name: Release assets
 
 on:
+  push:
+    tags:
+      - 'v*'
   release:
     types: [published]
   workflow_dispatch:
@@ -42,6 +45,12 @@ jobs:
         with:
           go-version: "1.27"
 
+      - name: Verify tag matches version constant
+        if: startsWith(github.ref_name, 'v')
+        run: |
+          VER="$(grep -m1 'const Version' internal/version/version.go | cut -d'\"' -f2)"
+          [ "${VER}" = "${GITHUB_REF_NAME#v}" ] || { echo "tag does not match internal/version/version.go"; exit 1; }
+
       # Bare per-platform binaries, each with a .sha256 sidecar. No tarball:
       # the installer downloads the product and its checksum, and the product
       # carries the shell files it needs. A release used to ship the whole
@@ -56,6 +65,14 @@ jobs:
             GOOS=linux GOARCH="${arch}" CGO_ENABLED=0 go build -trimpath -ldflags "-s -w" -o "${out}" ./cmd/ovnode
             sha256sum "${out}" > "${out}.sha256"
           done
+
+      - name: Ensure release exists
+        if: startsWith(github.ref_name, 'v')
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          TAG="${GITHUB_REF_NAME}"
+          gh release view "${TAG}" >/dev/null 2>&1 || gh release create "${TAG}" --title "${TAG}" --generate-notes
 
       - name: Upload assets
         env:
