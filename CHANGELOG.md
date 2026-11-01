@@ -1,5 +1,9 @@
 # Changelog
 
+## 1.4.17 — 2026-11-01
+
+- Fix(installer): create /var/lib/ovnode data dirs; write OVNODE_DATA_DIR to .env.
+
 ## 1.4.16 — 2026-11-01
 
 - Refactor(paths): node data to /var/lib/ovnode, agent binary to /opt/ovnode/agent; Docker updated.

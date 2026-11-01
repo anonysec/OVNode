@@ -220,7 +220,7 @@ func TestStatusCarriesThePanelKeys(t *testing.T) {
 			t.Errorf("the status has no %q key: %s", key, rec.Body.String())
 		}
 	}
-	if data["version"] != "1.4.16" {
+	if data["version"] != "1.4.17" {
 		t.Errorf("version = %v, want the agent version", data["version"])
 	}
 }

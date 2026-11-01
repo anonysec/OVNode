@@ -22,7 +22,7 @@
 set -Eeuo pipefail
 
 # ── Configuration ──────────────────────────────────────────────────────────
-VERSION="1.4.16"
+VERSION="1.4.17"
 # Forks: point source downloads (and update pulls) at your own repo.
 REPO="${OVN_REPO:-anonysec/OVNode}"
 # Versioned GitHub Release tarballs only: verified checksum, no git needed.
@@ -580,6 +580,7 @@ write_env() {
     cat > "$APP_DIR/.env" << EOF
 NODE_NAME=${NODE_NAME}
 DATA_DIR=$(node_data_dir)
+OVNODE_DATA_DIR=$(node_data_dir)
 SERVICE_PORT=${PORT}
 API_KEY=${API_KEY}
 OPENVPN_PORT=${VPN_PORT}
@@ -641,21 +642,8 @@ install_agent_binary() {
 # ── OpenVPN scaffolding ────────────────────────────────────────────────
 ensure_openvpn_dirs() {
     mkdir -p "$OPENVPN_ROOT/server" "$OPENVPN_ROOT/ccd" \
-             "$OPENVPN_ROOT/ovnode/users" "$OPENVPN_ROOT/ovnode/sessions" \
-             "$OPENVPN_ROOT/ovnode" "$OPENVPN_ROOT/ovnode/usage"
-    # Arch lacks the "nogroup" group the generated server.conf references.
-    getent group nogroup >/dev/null 2>&1 || groupadd -r nogroup 2>/dev/null || true
-    if [[ ! -e /dev/net/tun ]]; then
-        mkdir -p /dev/net
-        modprobe tun 2>/dev/null || true
-        mknod /dev/net/tun c 10 200 2>/dev/null || true
-        chmod 600 /dev/net/tun 2>/dev/null || true
-    fi
-    if [[ -e /dev/net/tun ]]; then
-        render_ok "OpenVPN directories ready ($OPENVPN_ROOT), /dev/net/tun present"
-    else
-        render_warn "/dev/net/tun is missing — OpenVPN cannot start (Docker: mount it, bare-metal: modprobe tun)"
-    fi
+             "/var/lib/ovnode/users" "/var/lib/ovnode/sessions" \
+             "/var/lib/ovnode" "/var/lib/ovnode/usage" "/var/lib/ovnode/state"
 }
 
 write_openvpn_unit() {
