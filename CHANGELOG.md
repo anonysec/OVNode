@@ -1,5 +1,9 @@
 # Changelog
 
+## 1.4.24 — 2026-11-01
+
+- Fix(hooks): AgentBin points at the app binary (not data dir); server.conf stale hook lines are replaced on upgrade.
+
 ## 1.4.23 — 2026-11-01
 
 - Remove doctor.sh: folded health checks out (doctor command dropped).

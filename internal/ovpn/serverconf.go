@@ -235,7 +235,16 @@ func EnsureServerConf() bool {
 	if len(toAdd) == 0 {
 		return false
 	}
-	outLines := strings.Split(string(data), "\n")
+	// Drop any stale client-connect/client-disconnect lines so an upgraded
+	// binary (whose path changed) does not leave the old hook in place.
+	outLines := []string{}
+	for _, l := range strings.Split(string(data), "\n") {
+		tl := strings.TrimSpace(l)
+		if strings.HasPrefix(tl, "client-connect ") || strings.HasPrefix(tl, "client-disconnect ") {
+			continue
+		}
+		outLines = append(outLines, l)
+	}
 	outLines = append(outLines, toAdd...)
 	if err := fsx.WriteFileAtomic(fsx.ServerConf(), []byte(strings.Join(outLines, "\n")+"\n"), 0o644); err != nil {
 		return false

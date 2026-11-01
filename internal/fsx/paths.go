@@ -139,7 +139,23 @@ func ScriptsDir() string {
 // in OVNodeDir() (not a nested scripts/ dir) so the path does not repeat
 // the "ovnode" name.
 func AgentBin() string {
-	return filepath.Join(OVNodeDir(), "agent")
+	// The binary lives in the app dir (/opt/ovnode/agent by default), not the
+	// data dir. Prefer the running executable so multi-instance and renamed
+	// installs point at the binary that generated the config; fall back to the
+	// env/default app path.
+	if appDir := envOr("OVN_APP_DIR", ""); appDir != "" {
+		return filepath.Join(appDir, "agent")
+	}
+	if exe, err := os.Executable(); err == nil && exe != "" {
+		base := filepath.Base(exe)
+		if base == "agent" || base == "ovnode" {
+			if resolved, err := filepath.EvalSymlinks(exe); err == nil && resolved != "" {
+				return resolved
+			}
+			return exe
+		}
+	}
+	return "/opt/ovnode/agent"
 }
 
 func RequiredDirs() []string {
