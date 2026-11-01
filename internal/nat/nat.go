@@ -6,6 +6,8 @@ import (
 	"os/exec"
 	"strconv"
 	"strings"
+
+	"ovnode/internal/ovpn"
 )
 
 // Config holds NAT parameters, loaded from /etc/default/ovnode-nat or env.
@@ -17,7 +19,7 @@ type Config struct {
 }
 
 func LoadConfig() Config {
-	cfg := Config{Subnet: "10.8.0.0/24", TunDev: "tun0"}
+	cfg := Config{Subnet: ovpn.VPNSubnet(), TunDev: "tun0"}
 	// env overrides
 	if v := os.Getenv("VPN_PRIMARY_PORT"); v != "" {
 		if n, _ := strconv.Atoi(v); n > 0 {
@@ -57,7 +59,7 @@ func LoadConfig() Config {
 					cfg.ExtraPorts = val
 				}
 			case "VPN_SUBNET":
-				if cfg.Subnet == "10.8.0.0/24" {
+				if cfg.Subnet == ovpn.VPNSubnet() {
 					cfg.Subnet = val
 				}
 			case "VPN_TUN_DEV":

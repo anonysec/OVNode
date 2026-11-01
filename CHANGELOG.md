@@ -1,5 +1,9 @@
 # Changelog
 
+## 1.4.20 — 2026-11-01
+
+- Feat(vpn): auto-derive unique 10.8.x.0/24 subnet per instance (no more collisions).
+
 ## 1.4.19 — 2026-11-01
 
 - Feat(nat): port NAT helper to Go (`ovnode nat apply|cleanup`); drop /usr/local/sbin/ovnode-nat.sh.
