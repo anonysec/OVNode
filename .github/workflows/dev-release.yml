@@ -1,0 +1,44 @@
+name: Dev release
+
+on:
+  push:
+    branches: [main]
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - uses: actions/setup-go@v5
+        with:
+          go-version: "1.27"
+      - name: System dependencies
+        run: |
+          sudo apt-get update -qq
+          sudo apt-get install -y -qq openvpn easy-rsa
+      - name: Lint + tests
+        run: |
+          make lint
+          go test ./...
+      - name: Build
+        run: |
+          SHA="$(git rev-parse --short HEAD)"
+          VER="dev-${SHA}"
+          echo "VER=${VER}" >> "$GITHUB_ENV"
+          for arch in amd64 arm64; do
+            out="ovnode-linux-${arch}"
+            GOOS=linux GOARCH="${arch}" CGO_ENABLED=0 go build -trimpath \
+              -ldflags "-s -w -X ovnode/internal/version.Version=${VER}" \
+              -o "${out}" ./cmd/ovnode
+            sha256sum "${out}" > "${out}.sha256"
+          done
+      - name: Publish dev release
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          gh release view dev >/dev/null 2>&1 || gh release create dev --title "dev" --prerelease --notes "Rolling dev build from main."
+          gh release upload dev ovnode-linux-amd64 ovnode-linux-amd64.sha256 ovnode-linux-arm64 ovnode-linux-arm64.sha256 --clobber
