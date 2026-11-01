@@ -1634,7 +1634,10 @@ do_repair_unit() {
 do_uninstall() {
     # Also reached for the remains of a node (unit files, a data directory)
     # that parse_args already let through: removing those is what this does.
-    [[ -d "$APP_DIR" ]] || node_exists || die "Not installed ($APP_DIR missing)" "$EX_NOTINSTALLED"
+    if [[ ! -d "$APP_DIR" ]] && ! node_exists; then
+        render_fail "not installed" "OVNode is not installed"
+        exit 1
+    fi
     check_root
     operation_begin uninstall
     trap operation_end EXIT
@@ -1687,6 +1690,7 @@ do_uninstall() {
         render_ok "app removed · data kept at $DATA_BASE"
     fi
     render_blank
+    render_ok "OVNode uninstalled successfully"
 }
 
 # Sizes a directory for the uninstall list. Present because "210 MB" and "84 MB"
