@@ -16,7 +16,7 @@ COPY internal/ ./internal/
 # The binary embeds the shell files the installer and the operator CLI are
 # made of, so they have to be in the build context.
 COPY assets.go ./
-COPY install.sh ovnode.sh lib.sh doctor.sh ./
+COPY install.sh ovnode.sh lib.sh ./
 RUN CGO_ENABLED=0 GOOS=$TARGETOS GOARCH=$TARGETARCH go build -trimpath -ldflags "-s -w" -o /out/ovnode ./cmd/ovnode
 
 # ── runtime ────────────────────────────────────────────────────────────
