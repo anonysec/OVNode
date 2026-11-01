@@ -22,7 +22,7 @@
 set -Eeuo pipefail
 
 # ── Configuration ──────────────────────────────────────────────────────────
-VERSION="1.4.18"
+VERSION="1.4.19"
 # Forks: point source downloads (and update pulls) at your own repo.
 REPO="${OVN_REPO:-anonysec/OVNode}"
 # Versioned GitHub Release tarballs only: verified checksum, no git needed.
@@ -41,7 +41,6 @@ DEFAULT_VPN=1194
 # real /etc/systemd/system. Unset it and the path is exactly what it was.
 SYSTEMD_DIR="${OVN_SYSTEMD_DIR:-/etc/systemd/system}"
 SYSTEMD_SERVICE="ovnode.service"
-NAT_SCRIPT="/usr/local/sbin/ovnode-nat.sh"
 NAT_CONF="/etc/default/ovnode-nat"
 SYSCTL_CONF="/etc/sysctl.d/99-ovnode.conf"
 LOGROTATE_CONF="/etc/logrotate.d/ovnode"
@@ -753,76 +752,6 @@ SYSCTL
     render_ok "IP forwarding enabled ($SYSCTL_CONF)"
 }
 
-write_nat_files() {
-    cat > "$NAT_CONF" << CONF
-# OVNode NAT configuration (managed by install.sh)
-VPN_PRIMARY_PORT=${VPN_PORT}
-VPN_EXTRA_PORTS=${EXTRA_PORTS}
-CONF
-
-    cat > "$NAT_SCRIPT" << 'NAT'
-#!/bin/bash
-# OVNode NAT: masquerade VPN client traffic through the default uplink and
-# redirect the extra VPN ports to the OpenVPN listener. Idempotent.
-# Usage: ovnode-nat.sh [apply|cleanup]
-set -u
-CONF="/etc/default/ovnode-nat"
-VPN_PRIMARY_PORT="" VPN_EXTRA_PORTS="" VPN_SUBNET="10.8.0.0/24" VPN_TUN_DEV="tun0"
-# shellcheck disable=SC1090
-[[ -f "$CONF" ]] && . "$CONF"
-
-rule() {  # rule <add|del> <table> <chain> <args...>
-    local op="$1" table="$2" chain="$3"; shift 3
-    if [[ "$op" == "add" ]]; then
-        iptables -t "$table" -C "$chain" "$@" 2>/dev/null || iptables -t "$table" -A "$chain" "$@"
-    else
-        iptables -t "$table" -D "$chain" "$@" 2>/dev/null || true
-    fi
-}
-
-each_redirect() {  # each_redirect <add|del>
-    local op="$1" port proto
-    [[ -n "$VPN_PRIMARY_PORT" && -n "$VPN_EXTRA_PORTS" ]] || return 0
-    for port in ${VPN_EXTRA_PORTS//,/ }; do
-        for proto in tcp udp; do
-            rule "$op" nat PREROUTING -p "$proto" --dport "$port" \
-                -j REDIRECT --to-ports "$VPN_PRIMARY_PORT"
-        done
-    done
-}
-
-IFACE="$(ip route show default 2>/dev/null | awk '{print $5; exit}')"
-
-# Docker and other hardening set FORWARD policy DROP, which kills masqueraded
-# client traffic after POSTROUTING. Accept the VPN subnet through the
-# DOCKER-USER admin hook (evaluated before Docker's own jumps; recreated
-# empty by Docker, so re-added here on every apply).
-forward_rules() {  # forward_rules <add|del>
-    local op="$1"
-    iptables -L DOCKER-USER -n >/dev/null 2>&1 || return 0
-    rule "$op" filter DOCKER-USER -s "$VPN_SUBNET" -i "$VPN_TUN_DEV" -o "$IFACE" -j ACCEPT
-    rule "$op" filter DOCKER-USER -i "$IFACE" -o "$VPN_TUN_DEV" \
-        -m conntrack --ctstate RELATED,ESTABLISHED -j ACCEPT
-}
-
-case "${1:-apply}" in
-    apply)
-        if [[ -z "$IFACE" ]]; then echo "ovnode-nat: no default interface found" >&2; exit 1; fi
-        rule add nat POSTROUTING -o "$IFACE" -j MASQUERADE
-        each_redirect add
-        forward_rules add
-        ;;
-    cleanup)
-        [[ -n "$IFACE" ]] && rule del nat POSTROUTING -o "$IFACE" -j MASQUERADE
-        each_redirect del
-        [[ -n "$IFACE" ]] && forward_rules del
-        ;;
-    *) echo "usage: $0 [apply|cleanup]" >&2; exit 2 ;;
-esac
-NAT
-    chmod +x "$NAT_SCRIPT"
-}
-
 setup_nat() {
     if [[ "$NO_NAT" -eq 1 ]]; then render_line "Skipping NAT setup (--no-nat)"; return 0; fi
     write_sysctl
@@ -833,8 +762,12 @@ setup_nat() {
     if ! command -v iptables >/dev/null 2>&1; then
         pkg_install iptables iproute2
     fi
-    write_nat_files
-    "$NAT_SCRIPT" apply >/dev/null 2>&1 || true
+    cat > /etc/default/ovnode-nat << CONF
+# OVNode NAT configuration (managed by install.sh)
+VPN_PRIMARY_PORT=${VPN_PORT}
+VPN_EXTRA_PORTS=${EXTRA_PORTS}
+CONF
+    "$AGENT_BIN" nat apply >/dev/null 2>&1 || true
 }
 
 # ── Firewall ───────────────────────────────────────────────────────────
@@ -1723,7 +1656,7 @@ do_uninstall() {
         docker rm -f "ovnode-$NODE_NAME" >/dev/null 2>&1 || true
     fi
 
-    rm -f "$NAT_SCRIPT" "$NAT_CONF" "$SYSCTL_CONF" "$LOGROTATE_CONF"
+    rm -f "$NAT_CONF" "$SYSCTL_CONF" "$LOGROTATE_CONF"
     remove_cli
     close_firewall_ports
     rm -rf "$APP_DIR"

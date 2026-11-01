@@ -1,5 +1,10 @@
 # Changelog
 
+## 1.4.19 — 2026-11-01
+
+- Feat(nat): port NAT helper to Go (`ovnode nat apply|cleanup`); drop /usr/local/sbin/ovnode-nat.sh.
+- Feat(backup): daily DB backup moved into panel worker; drop ovmanager-backup unit.
+
 ## 1.4.18 — 2026-11-01
 
 - Chore(services): drop NAT + cleanup systemd units (NAT applied in setup; purge via cron).

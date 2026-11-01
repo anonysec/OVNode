@@ -23,6 +23,7 @@ import (
 	"ovnode/internal/httpapi"
 	"ovnode/internal/installer"
 	"ovnode/internal/ovpn"
+	"ovnode/internal/nat"
 	"ovnode/internal/version"
 )
 
@@ -39,6 +40,8 @@ func main() {
 		runHook()
 	case "ca":
 		runCA()
+	case "nat":
+		runNat()
 	case "serve":
 		if err := httpapi.Run(); err != nil {
 			fmt.Fprintln(os.Stderr, "ovnode serve: "+err.Error())
@@ -332,6 +335,25 @@ func runProbe() {
 		runProbeCheck()
 	default:
 		fmt.Fprintf(os.Stderr, "ovnode probe: unknown %q (contract|check)\n", os.Args[2])
+		os.Exit(2)
+	}
+}
+
+func runNat() {
+	if len(os.Args) < 3 {
+		fmt.Fprintln(os.Stderr, "usage: ovnode nat <apply|cleanup>")
+		os.Exit(2)
+	}
+	switch os.Args[2] {
+	case "apply":
+		if err := nat.Apply(); err != nil {
+			fmt.Fprintln(os.Stderr, "ovnode nat: "+err.Error())
+			os.Exit(1)
+		}
+	case "cleanup":
+		nat.Cleanup()
+	default:
+		fmt.Fprintln(os.Stderr, "usage: ovnode nat <apply|cleanup>")
 		os.Exit(2)
 	}
 }
