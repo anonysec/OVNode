@@ -20,8 +20,6 @@ Smallest set. Each item is ≤ 1 day, no new dependencies.
 
 ## Later (v1.1.3)
 
-4. **`ovmanager doctor` round-trip** — login + node API ping via `curl`. Catches
-   JWT-secret drift and node TLS expiry that current checks miss.
 
 ## Deferred (over-engineered for lightweight)
 
