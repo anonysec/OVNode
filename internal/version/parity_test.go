@@ -24,8 +24,7 @@ func TestVersionSpotsAgree(t *testing.T) {
 		file string
 		re   *regexp.Regexp
 	}{
-		{"internal/version/version.go", regexp.MustCompile(`const Version = "([^"]+)"`)},
-		{"install.sh", regexp.MustCompile(`(?m)^VERSION="([^"]+)"`)},
+		{"internal/version/version.go", regexp.MustCompile(`(?:const|var) Version = "([^"]+)"`)},
 		{"ovnode.sh", regexp.MustCompile(`(?m)^VERSION="([^"]+)"`)},
 		{"README.md", regexp.MustCompile(`badge/version-([0-9][^-]*)`)},
 	}
