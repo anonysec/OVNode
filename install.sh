@@ -22,9 +22,18 @@
 set -Eeuo pipefail
 
 # ── Configuration ──────────────────────────────────────────────────────────
-VERSION="1.4.24"
+VERSION="${OVN_VERSION:-latest}"
 # Forks: point source downloads (and update pulls) at your own repo.
 REPO="${OVN_REPO:-anonysec/OVNode}"
+
+# Resolve "latest" to the newest published release tag so the rest of the
+# installer (fetch, health check, version stamp) sees a concrete version.
+if [[ "$VERSION" == "latest" ]]; then
+    if ! VERSION="$(curl -fsSL "https://api.github.com/repos/$REPO/releases/latest" 2>/dev/null | sed -n 's/.*"tag_name"[[:space:]]*:[[:space:]]*"v\([^"]*\)".*/\1/p' | head -n1)"; then
+        VERSION=""
+    fi
+    [[ -n "$VERSION" ]] || fail "Could not resolve latest release for $REPO"
+fi
 # Versioned GitHub Release tarballs only: verified checksum, no git needed.
 SRC="release"
 # OVN_APP_DIR lets tests run status/uninstall on a box already hosting a node.
