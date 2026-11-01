@@ -34,4 +34,5 @@ func UsersDir() string       { return fsx.UsersDir() }
 func SessionsDir() string    { return fsx.SessionsDir() }
 func UsageDir() string       { return fsx.UsageDir() }
 func ScriptsDir() string     { return fsx.ScriptsDir() }
+func AgentBin() string       { return fsx.AgentBin() }
 func RequiredDirs() []string { return fsx.RequiredDirs() }

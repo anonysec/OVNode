@@ -23,7 +23,7 @@ var ourHookNames = map[string]bool{
 // HookTargets maps the client-connect/client-disconnect directives to the
 // node's own binary.
 func HookTargets() map[string]string {
-	bin := filepath.Join(fsx.ScriptsDir(), "ovnode")
+	bin := fsx.AgentBin()
 	return map[string]string{
 		"client-connect":    bin + " hook connect",
 		"client-disconnect": bin + " hook disconnect",

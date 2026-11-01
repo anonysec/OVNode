@@ -23,7 +23,7 @@ func InitPKI() error {
 		os.MkdirAll(d, 0o755)
 	}
 	// Ensure scripts dir exists
-	os.MkdirAll(pki.ScriptsDir(), 0o755)
+	os.MkdirAll(pki.OVNodeDir(), 0o755)
 
 	// Setup easy-rsa
 	pki.SetupEasyRSA()

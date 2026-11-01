@@ -22,7 +22,7 @@
 set -Eeuo pipefail
 
 # ── Configuration ──────────────────────────────────────────────────────────
-VERSION="1.4.14"
+VERSION="1.4.15"
 # Forks: point source downloads (and update pulls) at your own repo.
 REPO="${OVN_REPO:-anonysec/OVNode}"
 # Versioned GitHub Release tarballs only: verified checksum, no git needed.
@@ -34,7 +34,7 @@ INSTANCE_NAME="${OVN_INSTANCE:-}"
 OPENVPN_ROOT="/etc/openvpn"
 # The agent and the OpenVPN hook are the same Go binary. It lives where the
 # server.conf writer points the hooks, so there is exactly one copy of it.
-AGENT_BIN="${OPENVPN_ROOT}/ovnode/scripts/ovnode"
+AGENT_BIN="${OPENVPN_ROOT}/ovnode/agent"
 DEFAULT_PORT=2083
 DEFAULT_VPN=1194
 # Unit directory: overridable so a test can install into a tree instead of the
@@ -633,7 +633,6 @@ write_install_result() {
 # Docker sees the same file: the OpenVPN root is bind-mounted into the
 # container, so the container calls the binary the host installed.
 install_agent_binary() {
-    mkdir -p "$(dirname "$AGENT_BIN")"
     [[ -x "${APP_DIR}/ovnode" ]] || return 1
     install -m 0755 "${APP_DIR}/ovnode" "$AGENT_BIN" || return 1
     render_ok "agent binary installed ($AGENT_BIN)"
@@ -643,7 +642,7 @@ install_agent_binary() {
 ensure_openvpn_dirs() {
     mkdir -p "$OPENVPN_ROOT/server" "$OPENVPN_ROOT/ccd" \
              "$OPENVPN_ROOT/ovnode/users" "$OPENVPN_ROOT/ovnode/sessions" \
-             "$OPENVPN_ROOT/ovnode/scripts" "$OPENVPN_ROOT/ovnode/usage"
+             "$OPENVPN_ROOT/ovnode" "$OPENVPN_ROOT/ovnode/usage"
     # Arch lacks the "nogroup" group the generated server.conf references.
     getent group nogroup >/dev/null 2>&1 || groupadd -r nogroup 2>/dev/null || true
     if [[ ! -e /dev/net/tun ]]; then

@@ -118,7 +118,17 @@ func UsageDir() string {
 	return envOr("OVNODE_USAGE_DIR", filepath.Join(OVNodeDir(), "usage"))
 }
 func ScriptsDir() string {
-	return filepath.Join(OVNodeDir(), "scripts")
+	// Kept for callers that historically stored the agent under a scripts/
+	// subdir; the agent now lives directly in OVNodeDir() so the path does
+	// not repeat the "ovnode" name.
+	return OVNodeDir()
+}
+
+// AgentBin is the single on-disk location of the node agent binary. It sits
+// in OVNodeDir() (not a nested scripts/ dir) so the path does not repeat
+// the "ovnode" name.
+func AgentBin() string {
+	return filepath.Join(OVNodeDir(), "agent")
 }
 
 func RequiredDirs() []string {

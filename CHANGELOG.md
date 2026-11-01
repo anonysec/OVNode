@@ -1,5 +1,9 @@
 # Changelog
 
+## 1.4.15 — 2026-11-01
+
+- Fix(paths): rename agent binary to `agent` (no repeated ovnode in path).
+
 ## 1.4.14 — 2026-11-01
 
 - Fix(installer): print `ovnode auth key` instead of removed `ovnode credentials`.

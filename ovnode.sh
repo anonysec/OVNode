@@ -10,7 +10,7 @@
 set -Eeuo pipefail
 
 # ── Constants ──────────────────────────────────────────────────────────
-VERSION="1.4.14"
+VERSION="1.4.15"
 _INVOKED_NAME="$(basename "${BASH_SOURCE[0]:-$0}")"
 _INVOKED_NAME="${_INVOKED_NAME%.sh}"
 INSTANCE_NAME="${OVN_INSTANCE:-$_INVOKED_NAME}"
@@ -149,7 +149,7 @@ do_status() {
         mode="native"
         [[ -f "$(node_data_dir)/docker-compose.yml" ]] && mode="docker"
 
-        agent_version="$("$OPENVPN_ROOT/ovnode/scripts/ovnode" version 2>/dev/null || true)"
+        agent_version="$("$OPENVPN_ROOT/ovnode/agent" version 2>/dev/null || true)"
         : "${agent_version:=$VERSION}"
 
         if [[ "$mode" == "docker" ]]; then
