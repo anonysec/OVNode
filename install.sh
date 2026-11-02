@@ -1032,12 +1032,17 @@ write_setup_info() {
     if [[ -z "$cert_file" || ! -f "$cert_file" ]]; then
         cert_file="$(env_get "$APP_DIR/.env" SSL_CERTFILE 2>/dev/null || true)"
     fi
+    local fp=""
+    if [[ -n "$cert_file" && -f "$cert_file" ]]; then
+        fp="$(openssl x509 -noout -fingerprint -sha256 -in "$cert_file" 2>/dev/null | cut -d= -f2 || true)"
+    fi
     {
         printf '# OVNode connection details\n'
         printf 'Address: %s\n' "$host"
         printf 'Port: %s\n' "$PORT"
         printf 'Protocol: %s\n' "$scheme"
         printf 'API Key: %s\n' "$API_KEY"
+        [[ -n "$fp" ]] && printf 'Fingerprint: %s\n' "$fp"
         printf 'Certificate:\n'
         if [[ -n "$cert_file" && -f "$cert_file" ]]; then
             cat "$cert_file"
@@ -1066,6 +1071,11 @@ node_success_card() {
     render_ok "Node     $where"
     render_ok "Key      ${API_KEY}${key_note}"
     render_ok "TLS      $(tls_summary)"
+    if [[ -n "$cert_file" && -f "$cert_file" ]]; then
+        local fp
+        fp="$(openssl x509 -noout -fingerprint -sha256 -in "$cert_file" 2>/dev/null | cut -d= -f2 || true)"
+        [[ -n "$fp" ]] && render_ok "SHA256   $fp"
+    fi
     render_ok "Data     $(node_data_dir)"
     render_ok "Logs     $CLI_NAME logs -f"
     cert_file="$(env_get "$APP_DIR/.env" SSL_CERTFILE 2>/dev/null || true)"
