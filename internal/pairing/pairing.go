@@ -22,11 +22,11 @@ func pairingPath() string {
 // Enforce applies the lease; returns error if refused.
 func Enforce(panelID string) error {
 	path := pairingPath()
-	now := float64(time.Now().Unix())
+	now := time.Now().Unix()
 	data, err := os.ReadFile(path)
 	var rec *struct {
-		PanelID  string  `json:"panel_id"`
-		LastSeen float64 `json:"last_seen"`
+		PanelID  string `json:"panel_id"`
+		LastSeen int64  `json:"last_seen"`
 	}
 	if err != nil {
 		if os.IsNotExist(err) {
@@ -36,8 +36,8 @@ func Enforce(panelID string) error {
 		}
 	} else {
 		var r struct {
-			PanelID  string  `json:"panel_id"`
-			LastSeen float64 `json:"last_seen"`
+			PanelID  string `json:"panel_id"`
+			LastSeen int64  `json:"last_seen"`
 		}
 		if uerr := json.Unmarshal(data, &r); uerr != nil {
 			return fmt.Errorf("pairing file corrupt: %w", uerr)
@@ -65,7 +65,16 @@ func Enforce(panelID string) error {
 	if err != nil {
 		return err
 	}
-	tmp.Write(b)
+	if _, err := tmp.Write(b); err != nil {
+		tmp.Close()
+		os.Remove(tmp.Name())
+		return err
+	}
+	if err := tmp.Sync(); err != nil {
+		tmp.Close()
+		os.Remove(tmp.Name())
+		return err
+	}
 	tmp.Close()
 	os.Chmod(tmp.Name(), 0o600)
 	return os.Rename(tmp.Name(), path)

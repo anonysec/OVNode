@@ -44,26 +44,65 @@ func keyFor(client string) string {
 
 func (l *Limiter) prune(now time.Time) {
 	for k, b := range l.buckets {
-		if len(b.ts) == 0 || now.Sub(b.ts[len(b.ts)-1]) >= window {
+		fresh := make([]time.Time, 0, len(b.ts))
+		for _, t := range b.ts {
+			if now.Sub(t) < window {
+				fresh = append(fresh, t)
+			}
+		}
+		if len(fresh) == 0 {
 			delete(l.buckets, k)
+		} else {
+			b.ts = fresh
 		}
 	}
 	for len(l.buckets) >= maxBuckets {
-		for k := range l.buckets {
-			delete(l.buckets, k)
-			break
+		// evict oldest bucket
+		var oldestKey string
+		var oldest time.Time
+		first := true
+		for k, b := range l.buckets {
+			if len(b.ts) == 0 {
+				oldestKey = k
+				break
+			}
+			if first || b.ts[0].Before(oldest) {
+				oldest = b.ts[0]
+				oldestKey = k
+				first = false
+			}
 		}
+		delete(l.buckets, oldestKey)
 	}
 	for k, b := range l.heavy {
-		if len(b.ts) == 0 || now.Sub(b.ts[len(b.ts)-1]) >= window {
+		fresh := make([]time.Time, 0, len(b.ts))
+		for _, t := range b.ts {
+			if now.Sub(t) < window {
+				fresh = append(fresh, t)
+			}
+		}
+		if len(fresh) == 0 {
 			delete(l.heavy, k)
+		} else {
+			b.ts = fresh
 		}
 	}
 	for len(l.heavy) >= maxBuckets {
-		for k := range l.heavy {
-			delete(l.heavy, k)
-			break
+		var oldestKey string
+		var oldest time.Time
+		first := true
+		for k, b := range l.heavy {
+			if len(b.ts) == 0 {
+				oldestKey = k
+				break
+			}
+			if first || b.ts[0].Before(oldest) {
+				oldest = b.ts[0]
+				oldestKey = k
+				first = false
+			}
 		}
+		delete(l.heavy, oldestKey)
 	}
 }
 
