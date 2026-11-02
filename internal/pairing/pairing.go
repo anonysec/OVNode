@@ -59,23 +59,34 @@ func Enforce(panelID string) error {
 			return os.ErrPermission
 		}
 	}
+	if rec != nil && rec.PanelID == panelID && now-rec.LastSeen < 60 {
+		return nil
+	}
 	os.MkdirAll(filepath.Dir(path), 0o755)
 	b, _ := json.Marshal(map[string]any{"panel_id": panelID, "last_seen": now})
 	tmp, err := os.CreateTemp(filepath.Dir(path), ".pairing-*")
 	if err != nil {
 		return err
 	}
+	tmpPath := tmp.Name()
+	renamed := false
+	defer func() {
+		if !renamed {
+			_ = tmp.Close()
+			_ = os.Remove(tmpPath)
+		}
+	}()
 	if _, err := tmp.Write(b); err != nil {
-		tmp.Close()
-		os.Remove(tmp.Name())
 		return err
 	}
 	if err := tmp.Sync(); err != nil {
-		tmp.Close()
-		os.Remove(tmp.Name())
 		return err
 	}
-	tmp.Close()
-	os.Chmod(tmp.Name(), 0o600)
-	return os.Rename(tmp.Name(), path)
+	_ = tmp.Close()
+	_ = os.Chmod(tmpPath, 0o600)
+	if err := os.Rename(tmpPath, path); err != nil {
+		return err
+	}
+	renamed = true
+	return nil
 }

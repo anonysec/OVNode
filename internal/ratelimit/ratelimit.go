@@ -23,10 +23,11 @@ type bucket struct {
 }
 
 type Limiter struct {
-	mu      sync.Mutex
-	buckets map[string]*bucket
-	global  *bucket
-	heavy   map[string]*bucket
+	mu        sync.Mutex
+	lastPrune time.Time
+	buckets   map[string]*bucket
+	global    *bucket
+	heavy     map[string]*bucket
 }
 
 func New() *Limiter {
@@ -43,6 +44,10 @@ func keyFor(client string) string {
 }
 
 func (l *Limiter) prune(now time.Time) {
+	if !l.lastPrune.IsZero() && now.Sub(l.lastPrune) < 10*time.Second && len(l.buckets) < maxBuckets && len(l.heavy) < maxBuckets {
+		return
+	}
+	l.lastPrune = now
 	for k, b := range l.buckets {
 		fresh := make([]time.Time, 0, len(b.ts))
 		for _, t := range b.ts {
