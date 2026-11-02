@@ -10,7 +10,7 @@
 #
 # Commands: install (default) | update | recover-update | repair-unit |
 #           uninstall | interactive | version-script | help
-# Modes   : host (systemd, default) | --docker (see scripts/compose/entrypoint.sh)
+# Modes   : host (systemd)
 #           | --local (build from a checkout, fetch nothing)
 # Day-to-day ops (status, logs, backup, TLS, completion) live in the operator
 # CLI: ovnode.
@@ -20,6 +20,7 @@
 # 3 already installed · 4 not installed. Everything else is in --help.
 
 set -Eeuo pipefail
+DOCKER=0
 
 # ── Configuration ──────────────────────────────────────────────────────────
 VERSION="${OVN_VERSION:-latest}"
@@ -43,7 +44,7 @@ INSTANCE_NAME="${OVN_INSTANCE:-}"
 OPENVPN_ROOT="/etc/openvpn"
 # The agent and the OpenVPN hook are the same Go binary. It lives where the
 # server.conf writer points the hooks, so there is exactly one copy of it.
-AGENT_BIN="${APP_DIR}/agent"
+AGENT_BIN="${APP_DIR}/ovnode-server"
 DEFAULT_PORT=2083
 DEFAULT_VPN=1194
 # Unit directory: overridable so a test can install into a tree instead of the
@@ -71,7 +72,7 @@ TLS_METHOD="${OVN_TLS:-selfsigned}"
 TLS_DOMAIN="${OVN_TLS_DOMAIN:-}"
 TLS_KEY="${OVN_TLS_KEY:-}"
 TLS_CERT="${OVN_TLS_CERT:-}"
-DOCKER="${OVN_DOCKER:-0}"
+
 IPV6="${OVN_IPV6:-0}"
 NO_NAT="${OVN_NO_NAT:-0}"
 YES="${OVN_YES:-0}"
@@ -92,7 +93,7 @@ AUTO_BACKUP_ACTION="" BACKUP_TIME="" BACKUP_KEEP=""
 # Any OVN_* input present (mirrors CLI flags for early validation / no menu).
 ENV_INPUTS=0
 for _ovn_var in OVN_PORT OVN_KEY OVN_VPN_PORTS OVN_PROTO OVN_NAME OVN_TLS \
-                OVN_TLS_DOMAIN OVN_TLS_KEY OVN_TLS_CERT OVN_DOCKER OVN_IPV6 OVN_NO_NAT; do
+                OVN_TLS_DOMAIN OVN_TLS_KEY OVN_TLS_CERT OVN_IPV6 OVN_NO_NAT; do
     if [[ -n "${!_ovn_var:-}" ]]; then ENV_INPUTS=1; fi
 done
 unset _ovn_var
@@ -338,7 +339,7 @@ check_deps() {
         command -v "$cmd" >/dev/null 2>&1 || missing+=("$cmd")
     done
     [[ ${#missing[@]} -eq 0 ]] || pkg_install "${missing[@]}"
-    if [[ "$DOCKER" -eq 0 ]] && ! command -v openvpn >/dev/null 2>&1; then
+    if ! command -v openvpn >/dev/null 2>&1; then
         render_line "Installing OpenVPN + easy-rsa (for client PKI)..."
         pkg_install openvpn easy-rsa
     fi
@@ -629,7 +630,6 @@ write_install_result() {
         printf 'OVNODE_CERT_FILE=%q\n' "${TLS_CERT:-${SSL_CERTFILE:-$OPENVPN_ROOT/server/pki/issued/server.crt}}"
         printf 'OVNODE_DATA_DIR=%q\n' "$(node_data_dir)"
         printf 'OVNODE_SERVICE=%q\n' "$SYSTEMD_SERVICE"
-        printf 'OVNODE_DOCKER=%q\n' "$DOCKER"
     } > "$path"
     chmod 600 "$path"
     render_ok "install result written to $path"
@@ -647,6 +647,10 @@ write_install_result() {
 install_agent_binary() {
     [[ -x "${APP_DIR}/ovnode" ]] || return 1
     install -m 0755 "${APP_DIR}/ovnode" "$AGENT_BIN" || return 1
+    # Clean up legacy agent binary on upgrade
+    if [[ -f "${APP_DIR}/agent" && "${APP_DIR}/agent" != "$AGENT_BIN" ]]; then
+        rm -f "${APP_DIR}/agent" 2>/dev/null || true
+    fi
     render_ok "agent binary installed ($AGENT_BIN)"
 }
 
@@ -695,35 +699,6 @@ start_openvpn_service() {
         render_warn "No init system detected, start OpenVPN manually: openvpn --config $OPENVPN_ROOT/server/server.conf"
     fi
 }
-
-# Docker mode post-flight: a native daemon holding 1194/7505 on the shared host
-# network namespace crash-loops the container's OpenVPN (mgmt bind EADDRINUSE)
-# while the agent health check stays green.
-check_container_openvpn() {
-    local cid=""
-    cid="$(docker compose -f "$(compose_file)" ps -q 2>/dev/null | head -n 1)"
-    if [[ -n "$cid" ]] && docker exec "$cid" pgrep -x openvpn >/dev/null 2>&1; then
-        render_ok "OpenVPN running in container"
-    else
-        render_warn "OpenVPN not detected in container, check: docker logs ${NODE_NAME}; host stray check: ss -tlnp | grep -E '1194|7505'"
-    fi
-}
-
-stop_native_openvpn() {
-    # Docker mode only: a native daemon holding 1194/7505 crash-loops the
-    # container's OpenVPN on the shared host network namespace. Host installs
-    # are untouched, start_openvpn_service owns that path.
-    if has_systemd; then
-        if systemctl is-active --quiet openvpn-server@server 2>/dev/null; then
-            run "Stopping conflicting native openvpn-server@server (Docker mode)" \
-                systemctl stop openvpn-server@server
-        fi
-        systemctl disable openvpn-server@server >/dev/null 2>&1 || true
-    elif command -v rc-service >/dev/null 2>&1; then
-        rc-service openvpn stop >/dev/null 2>&1 || true
-    fi
-}
-
 # ── Systemd units ──────────────────────────────────────────────────────
 write_systemd_unit() {
     # ExecStart runs the Go binary that also answers the OpenVPN hooks.
@@ -771,10 +746,6 @@ SYSCTL
 setup_nat() {
     if [[ "$NO_NAT" -eq 1 ]]; then render_line "Skipping NAT setup (--no-nat)"; return 0; fi
     write_sysctl
-    if [[ "$DOCKER" -eq 1 ]]; then
-        render_line "Docker mode: NAT/redirect rules are applied inside the container (CAP_NET_ADMIN)"
-        return 0
-    fi
     if ! command -v iptables >/dev/null 2>&1; then
         pkg_install iptables iproute2
     fi
@@ -850,19 +821,7 @@ setup_logrotate() {
             return 0
         fi
     fi
-    if [[ "${DOCKER:-0}" -eq 1 ]]; then
-        cat > "$LOGROTATE_CONF" << ROTATE
-${OPENVPN_ROOT}/server/openvpn.log {
-    size 10M
-    rotate 3
-    compress
-    missingok
-    notifempty
-    copytruncate
-}
-ROTATE
-    else
-        cat > "$LOGROTATE_CONF" << ROTATE
+    cat > "$LOGROTATE_CONF" << ROTATE
 ${OPENVPN_ROOT}/server/openvpn.log {
     size 10M
     rotate 3
@@ -874,7 +833,6 @@ ${OPENVPN_ROOT}/server/openvpn.log {
     endscript
 }
 ROTATE
-    fi
     cat >> "$LOGROTATE_CONF" << 'ROTATE'
 
 /var/log/ovnode/hook-events.log {
@@ -973,99 +931,6 @@ load_helpers() {
     return 0
 }
 
-# ── Docker ─────────────────────────────────────────────────────────────
-
-ensure_docker() {
-    if ! command -v docker >/dev/null 2>&1; then
-        render_line "Installing Docker Engine..."
-        if [[ "$PKG_INSTALL" == apt* ]]; then
-            $PKG_UPDATE >/dev/null 2>&1 || true
-            $PKG_INSTALL docker.io >/dev/null 2>&1 \
-                || $PKG_INSTALL docker-ce >/dev/null 2>&1 \
-                || die "Could not install Docker via apt. Install manually: https://docs.docker.com/engine/install/"
-        else
-            pkg_install docker docker-compose-plugin >/dev/null 2>&1 || pkg_install docker
-        fi
-        command -v docker >/dev/null 2>&1 || die "Docker binary not found"
-    fi
-    docker compose version >/dev/null 2>&1 || command -v docker-compose >/dev/null 2>&1 \
-        || die "Docker Compose v2 is required (docker compose plugin)"
-    render_ok "Docker present"
-}
-
-setup_docker() {
-    ensure_docker
-
-    # The image's entrypoint runs OpenVPN; the host needs only tun present.
-    modprobe tun >/dev/null 2>&1 || true
-    if [[ ! -c /dev/net/tun ]]; then
-        mkdir -p /dev/net && mknod /dev/net/tun c 10 200 2>/dev/null || true
-    fi
-    [[ -c /dev/net/tun ]] || render_warn "/dev/net/tun missing, the VPN cannot start until the tun module is available"
-
-    write_compose_file
-
-    run "Pulling published OVNode image" \
-        docker pull "${IMAGE_REPO}:${IMAGE_TAG:-$VERSION}"
-    run "Starting container" \
-        docker compose -f "$(compose_file)" up -d
-}
-
-# IMAGE_TAG overrides VERSION so updates and failovers can pin a release.
-# Never builds locally: Docker installs consume published images only.
-write_compose_file() {
-    local compose tag
-    compose="$(compose_file)"
-    tag="${IMAGE_TAG:-$VERSION}"
-    mkdir -p "$(node_data_dir)"
-
-    # TLS material lives on host paths; mount read-only or the agent cannot
-    # serve HTTPS. Let's Encrypt needs the whole tree: live/ symlinks archive/.
-    local tls_mounts="" d f
-    for f in "$TLS_KEY" "$TLS_CERT"; do
-        [[ -n "$f" ]] || continue
-        case "$f" in
-            /etc/letsencrypt/*) d="/etc/letsencrypt" ;;
-            *) d="$(dirname "$f")" ;;
-        esac
-        [[ "$tls_mounts" == *"- ${d}:${d}:ro"* ]] || tls_mounts+="      - ${d}:${d}:ro"$'\n'
-    done
-
-    cat > "$compose" << COMPOSE
-services:
-  ovnode:
-    image: ${IMAGE_REPO}:${tag}
-    container_name: ovnode-${NODE_NAME}
-    restart: unless-stopped
-    network_mode: host
-    environment:
-      SERVICE_PORT: ${PORT}
-      API_KEY: ${API_KEY}
-      DATA_DIR: /app/data
-      OPENVPN_PORT: ${VPN_PORT}
-      TLS_METHOD: ${TLS_METHOD}
-      OVNODE_OPENVPN_ROOT: /etc/openvpn
-$( if [[ -n "$EXTRA_PORTS" ]]; then echo "      OVNODE_EXTRA_PORTS: \"${EXTRA_PORTS}\""; fi )
-$( if [[ "$IPV6" -eq 1 ]]; then echo "      OVNODE_ENABLE_IPV6: 1"; fi )
-$( [[ -n "$TLS_KEY" ]] && echo "      SSL_KEYFILE: ${TLS_KEY}" )
-$( [[ -n "$TLS_CERT" ]] && echo "      SSL_CERTFILE: ${TLS_CERT}" )
-    volumes:
-      - ${OPENVPN_ROOT}:/etc/openvpn
-      - $(node_data_dir):/app/data
-      - /dev/net/tun:/dev/net/tun
-$( [[ -n "$tls_mounts" ]] && printf '%s' "$tls_mounts" )
-    cap_add:
-      - NET_ADMIN
-    logging:
-      options:
-        max-size: "5m"
-        max-file: "3"
-COMPOSE
-    # The compose file embeds the API key, keep it root-only, like .env.
-    chmod 600 "$compose"
-    render_ok "Compose file written: $compose (image ${IMAGE_REPO}:${tag})"
-}
-
 # ── Main install ───────────────────────────────────────────────────────
 do_install() {
     render_stage "[1/7] Preflight"
@@ -1081,10 +946,8 @@ do_install() {
     fi
 
     render_stage "[3/7] Certificate"
-    if [[ "$DOCKER" -eq 0 ]]; then
-        cd "$APP_DIR"
-        render_note "$(tls_summary)"
-    fi
+    cd "$APP_DIR"
+    render_note "$(tls_summary)"
     setup_tls
     write_env
     render_ok "$(tls_summary)"
@@ -1103,11 +966,7 @@ do_install() {
     run "Generating node PKI" "$AGENT_BIN" ca init
 
     render_stage "[4/7] Runtime"
-    if [[ "$DOCKER" -eq 1 ]]; then
-        setup_docker
-        render_ok "container"
-    else
-        if ! has_systemd; then
+    if ! has_systemd; then
             render_ok "no systemd, start the agent by hand"
             render_warn "systemd not found, start the agent manually: $AGENT_BIN serve"
         else
@@ -1117,7 +976,6 @@ do_install() {
                 || die "Could not start $SYSTEMD_SERVICE"
             render_ok "active"
         fi
-    fi
 
     # First boot generates the PKI + server.conf, so wait for /sync/health
     # before bringing up OpenVPN.
@@ -1128,16 +986,11 @@ do_install() {
         return 1
     fi
     render_ok "200"
-    [[ "$DOCKER" -eq 1 ]] && check_container_openvpn
 
     render_stage "[6/7] VPN"
     # Docker runs the daemon inside the container (entrypoint-supervised) and
     # evicts any host daemon holding the VPN/management ports.
-    if [[ "$DOCKER" -eq 0 ]]; then
-        start_openvpn_service
-    else
-        stop_native_openvpn
-    fi
+    start_openvpn_service
     setup_nat
     # Daily stale-marker purge via cron (no systemd unit needed).
     echo "0 3 * * * root $AGENT_BIN hook purge-stale >/dev/null 2>&1" > /etc/cron.d/ovnode-purge
@@ -1246,6 +1099,9 @@ do_update() {
     [[ -d "$APP_DIR" ]] || die "Not installed ($APP_DIR missing)" "$EX_NOTINSTALLED"
     # The journal, the identity hash and the state bundle all run through the
     # installed binary; without it there is nothing to update.
+    if [[ ! -x "$AGENT_BIN" && -x "${APP_DIR}/agent" ]]; then
+        AGENT_BIN="${APP_DIR}/agent"
+    fi
     [[ -x "$AGENT_BIN" ]] || die "The node agent binary is missing ($AGENT_BIN), reinstall instead of updating" "$EX_ERROR"
     check_root
     operation_begin update
@@ -1307,12 +1163,7 @@ do_update() {
 
     render_line ""; render_line "Updating OVNode to v${VERSION}…"
     detect_os
-    # A compose file means the install was --docker, even when `update` is
-    # called without the flag.
-    if [[ -f "$(compose_file)" ]]; then
-        DOCKER=1
-        render_line "Detected Docker deployment (compose file present)"
-    fi
+    DOCKER=0
     local from_version safety snapshot scheme activated=0 identity
     from_version="$("$AGENT_BIN" version 2>/dev/null || true)"
     : "${from_version:=unknown}"
@@ -1422,10 +1273,8 @@ do_update() {
 
     render_stage "[6/6] Commit"
     rm -f "$(update_marker)"
-    if [[ "$DOCKER" -eq 0 ]]; then
-        setup_nat
-        setup_logrotate
-    fi
+    setup_nat
+    setup_logrotate
     if ! wait_health "${scheme}://127.0.0.1:${PORT}/sync/health" 60; then
         : > "$(update_marker)"; chmod 600 "$(update_marker)"
         update_state recovery_required "$from_version" "$VERSION" "$safety" "$identity"
@@ -1515,7 +1364,7 @@ do_recover_update() {
         chmod 600 "$(update_marker)"
         render_warn "Re-created the missing update maintenance marker"
     fi
-    [[ -f "$(compose_file)" ]] && DOCKER=1 || DOCKER=0
+    DOCKER=0
     local env_get; env_get() { grep -E "^$1=" "$APP_DIR/.env" 2>/dev/null | head -1 | cut -d= -f2- | tr -d '"' || true; }
     [[ -n "$NODE_NAME" ]] || NODE_NAME="$(env_get NODE_NAME)"
     : "${NODE_NAME:=ovnode}"
@@ -1612,20 +1461,13 @@ do_repair_unit() {
     TLS_KEY="$(env_get SSL_KEYFILE)"; TLS_CERT="$(env_get SSL_CERTFILE)"
     [[ "$(env_get OVNODE_ENABLE_IPV6)" == "1" ]] && IPV6=1 || IPV6=0
     detect_os
-    if [[ -f "$(compose_file)" ]]; then
-        DOCKER=1
-        ensure_docker
-        write_compose_file
-        render_ok "Compose file regenerated (image ${IMAGE_REPO}:${IMAGE_TAG:-$VERSION})"
-    else
-        DOCKER=0
-        has_systemd || die "systemd not found, cannot install the agent unit" "$EX_ERROR"
-        write_systemd_unit
-        write_openvpn_unit
-        run "Generating node PKI" "$AGENT_BIN" ca init
-        setup_nat
-        setup_logrotate
-    fi
+    DOCKER=0
+    has_systemd || die "systemd not found, cannot install the agent unit" "$EX_ERROR"
+    write_systemd_unit
+    write_openvpn_unit
+    run "Generating node PKI" "$AGENT_BIN" ca init
+    setup_nat
+    setup_logrotate
     operation_end
     render_ok "Host integration repaired, restart the agent if it is stopped: ovnode restart"
 }
@@ -1670,11 +1512,6 @@ do_uninstall() {
           "$SYSTEMD_DIR/$OPENVPN_SERVICE" \
           /etc/cron.d/ovnode-purge
     systemctl daemon-reload 2>/dev/null || true
-
-    if command -v docker >/dev/null 2>&1 && [[ -f "$(compose_file)" ]]; then
-        ( cd "$APP_DIR" && docker compose -f "$(compose_file)" down ) >/dev/null 2>&1 || true
-        docker rm -f "ovnode-$NODE_NAME" >/dev/null 2>&1 || true
-    fi
 
     rm -f "$NAT_CONF" "$SYSCTL_CONF" "$LOGROTATE_CONF"
     remove_cli
@@ -1798,16 +1635,7 @@ apply_express_defaults() {
 # wizard used to ask it again as "Step 3/4", so the answer could be given twice
 # and the two did not always agree.
 start_menu() {
-    local tag
-    tag="$(render_menu "" \
-        host   "install  ·  systemd on this box" \
-        docker "install  ·  agent + openvpn in a container" \
-        quit   "exit")"
-    case "$tag" in
-        host)   apply_express_defaults ;;
-        docker) DOCKER=1; apply_express_defaults ;;
-        *)      render_line "  cancelled, nothing was changed"; exit "$EX_OK" ;;
-    esac
+    apply_express_defaults
 }
 
 
@@ -1877,13 +1705,12 @@ print_script_version() {
 
 show_help() {
     cat << EOF >&2
-  OVNode installer, host (systemd) or Docker. Interactive unless you pass -y.
+  OVNode installer, host (systemd). Interactive unless you pass -y.
 
   Usage:
     bash <(curl -Ls URL) [command] [flags]
 
   No command? Zero-question install with safe generated values.
-  The start menu offers Install (host service) or Install with Docker.
   The \`interactive\` command opens the numbered wizard instead.
   Installs use safe defaults (ovnode, UDP, self-signed TLS,
   generated API key). Plain HTTP is not offered.
@@ -1904,8 +1731,6 @@ show_help() {
 
   Options (every option has an OVN_* env equivalent; CLI wins):
     -y, --yes             Never prompt, accept defaults       [OVN_YES=1]
-    --docker              Deploy in Docker (container runs agent + OpenVPN,
-                          host networking)                    [OVN_DOCKER=1]
     --local [DIR]         Install from a checkout (default: this directory):
                            rsync + go build + the same install the release
                            path runs. Fetches nothing.       [OVN_LOCAL=1]
@@ -1979,7 +1804,6 @@ parse_args() {
             --tls-domain) eval "$need2"; deprecated "--tls-domain" "set OVN_TLS_DOMAIN instead"; TLS_DOMAIN="$2"; CLI_FLAGS=1; shift 2 ;;
             --tls-key)    eval "$need2"; deprecated "--tls-key" "set OVN_TLS_KEY instead"; TLS_KEY="$2"; CLI_FLAGS=1; shift 2 ;;
             --tls-cert)   eval "$need2"; deprecated "--tls-cert" "set OVN_TLS_CERT instead"; TLS_CERT="$2"; CLI_FLAGS=1; shift 2 ;;
-            --docker)     DOCKER=1; CLI_FLAGS=1; shift ;;
             --local)      LOCAL=1; CLI_FLAGS=1; shift
                            if [[ $# -ge 1 && "$1" != -* ]]; then SRC_DIR="$1"; shift; fi ;;
             --src)        [[ $# -ge 2 ]] || fail "--src needs a value" "$EX_USAGE"; SRC_DIR="$2"; shift 2 ;;

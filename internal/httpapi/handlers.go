@@ -17,8 +17,7 @@ import (
 	"ovnode/internal/version"
 )
 
-// handleHealth is the Docker healthcheck probe: no auth, so the container
-// can poll it.
+// handleHealth is the health probe: no auth.
 func (s *Server) handleHealth(w http.ResponseWriter, r *http.Request) {
 	writeOK(w, "ok", map[string]any{"status": "ok"})
 }

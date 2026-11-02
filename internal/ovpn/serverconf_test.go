@@ -22,7 +22,8 @@ func TestHookTargetsPointAtTheGoBinary(t *testing.T) {
 	targets := HookTargets()
 	for _, directive := range []string{"client-connect", "client-disconnect"} {
 		target := targets[directive]
-		if !strings.HasSuffix(target, "agent hook "+directive[len("client-"):]) {
+		if !strings.HasSuffix(target, "ovnode-server hook "+directive[len("client-"):]) &&
+			!strings.HasSuffix(target, "agent hook "+directive[len("client-"):]) {
 			t.Fatalf("%s points at %q, want the go binary", directive, target)
 		}
 		if strings.Contains(target, ".sh") {

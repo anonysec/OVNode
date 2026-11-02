@@ -107,11 +107,7 @@ func Apply() error {
 			}
 		}
 	}
-	// forward rules via DOCKER-USER
-	if out, _ := exec.Command("iptables", "-L", "DOCKER-USER", "-n").Output(); len(out) > 0 {
-		rule("add", "filter", "DOCKER-USER", "-s", cfg.Subnet, "-i", cfg.TunDev, "-o", iface, "-j", "ACCEPT")
-		rule("add", "filter", "DOCKER-USER", "-i", iface, "-o", cfg.TunDev, "-m", "conntrack", "--ctstate", "RELATED,ESTABLISHED", "-j", "ACCEPT")
-	}
+
 	return nil
 }
 
@@ -128,8 +124,5 @@ func Cleanup() {
 			}
 		}
 	}
-	if iface != "" {
-		rule("del", "filter", "DOCKER-USER", "-s", cfg.Subnet, "-i", cfg.TunDev, "-o", iface, "-j", "ACCEPT")
-		rule("del", "filter", "DOCKER-USER", "-i", iface, "-o", cfg.TunDev, "-m", "conntrack", "--ctstate", "RELATED,ESTABLISHED", "-j", "ACCEPT")
-	}
+
 }

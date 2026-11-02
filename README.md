@@ -10,7 +10,7 @@ The VPN server half of an [OVManager](https://github.com/anonysec/OVManager) dep
   [![License: MIT](https://img.shields.io/badge/License-MIT-green.svg)](LICENSE)
   [![CI](https://github.com/anonysec/OVNode/actions/workflows/ci.yml/badge.svg)](https://github.com/anonysec/OVNode/actions/workflows/ci.yml)
   [![Go](https://img.shields.io/badge/go-1.27-00ADD8?logo=go&logoColor=white)](go.mod)
-  [![Runtime](https://img.shields.io/badge/runtime-systemd%20%7C%20docker-555555)](#-install)
+  [![Runtime](https://img.shields.io/badge/runtime-systemd-555555)](#-install)
 </div>
 
 
@@ -51,7 +51,7 @@ The project is preparing for a major architectural refactor. Advanced AI-assiste
 - [After it finishes](#-after-it-finishes)
 - [Sync API](#-sync-api)
 - [Day-to-day commands](#-day-to-day-commands)
-- [Docker](#-docker)
+
 - [Docs](#-docs)
 - [License](#-license)
 
@@ -112,7 +112,7 @@ The project is preparing for a major architectural refactor. Advanced AI-assiste
 
 - A Linux server — Debian or Ubuntu recommended. The panel's own server is fine; one node and one panel can share a host.
 - Root, or an account with `sudo`.
-- A host with systemd for the default install. In a container without systemd, or if you prefer containers, use Docker mode.
+- A host with systemd for the install.
 - `1194/udp` reachable by your users, and `2083/tcp` reachable from the panel.
 
 ```bash
@@ -124,15 +124,13 @@ The menu asks one question, and the recommended choice asks nothing else:
 | Choice | What it does |
 | --- | --- |
 | **1. Install** | Host service. Node `ovnode`, sync API on `2083`, OpenVPN on `1194/udp`, self-signed TLS, generated API key. |
-| **2. Install with Docker** | Agent and OpenVPN in one container with host networking, which needs `/dev/net/tun` (the installer sets it up). |
-
 To answer every setting yourself, run the wizard instead:
 
 ```bash
 bash <(curl -sSL https://raw.githubusercontent.com/anonysec/OVNode/main/install.sh) interactive
 ```
 
-**With no terminal** — a run without one cannot ask, so it needs `-y` to say that is intended. The three flags are `-y/--yes`, `--docker` and `-h/--help`, and everything else is an `OVN_*` variable:
+**With no terminal** — a run without one cannot ask, so it needs `-y` to say that is intended. The two flags are `-y/--yes` and `-h/--help`, and everything else is an `OVN_*` variable:
 
 ```bash
 curl -fsSL https://raw.githubusercontent.com/anonysec/OVNode/main/install.sh -o install.sh
@@ -196,7 +194,7 @@ All traffic is panel → node, authenticated with the node's API key in a `key` 
 
 | Endpoint | Panel method | Notes |
 |---|---|---|
-| `GET /sync/health` | Docker healthcheck | No auth |
+| `GET /sync/health` | Health probe | No auth |
 | `GET /sync/status` | `check_node` / `get_node_info` | `cpu_usage`, `memory_usage`, `version`, `cert_expiry` |
 | `GET /sync/usage` | `get_usage` | `users` keyed by username (traffic collector), `sessions` carries CN + username keys (panel-side mlogin registry + per-session deltas) |
 | `GET /sync/sessions` | `get_sessions` | `live_sessions`, `sessions` (frontend), `stale_markers`, counters, `auth_errors_by_cn` |
@@ -259,7 +257,7 @@ OVN_INSTANCE=node2 bash install.sh   # or: bash install.sh --instance node2
 node2 status
 ```
 
-Native installs use less memory and CPU on small servers; Docker remains available for portability.
+Native installs use less memory and CPU on small servers.
 
 ### Retired names
 
@@ -290,21 +288,6 @@ The API key lives in `.env`, not in the panel. It is printed by the installer an
 `ovnode restore` takes a safety copy before it replaces anything, and refuses to continue if it cannot. `ovnode update` and `ovnode uninstall` delegate to the installer, so each exists in exactly one place.
 
 `ovnode backup` archives `/var/lib/ovnode` and the OpenVPN PKI (`/etc/openvpn/server/pki`) into root-only tarballs in `/var/backups`, keeping the newest 14 (`--keep N` changes that). `ovnode update` is stricter still: it snapshots the identity file, the node data directory, `/etc/openvpn` and the API TLS files before it touches anything, and rolls back if the new release does not come up.
-
-## 🐳 Docker
-
-One container runs both the agent and the OpenVPN daemon. Host networking is used on purpose — no double NAT, honest client IPs, and multi-port without port-mapping edits. The entrypoint enables forwarding and sets up MASQUERADE and the port redirects itself, which is what it needs `CAP_NET_ADMIN` for.
-
-The installer generates a per-node compose file with `--docker`, or you can use the bundled one:
-
-```bash
-cp .env.example .env   # set API_KEY at minimum
-docker compose -f scripts/compose/docker-compose.yml up -d
-```
-
-All state lives in the `/etc/openvpn` volume, so the container itself is replaceable. `OVNODE_SKIP_OPENVPN=1` runs the agent alone, for debugging.
-
-Native installs are the lighter option for small or low-resource servers; Docker is provided for portability and reproducible deployments. The compose file and entrypoint are validated by `scripts/test-compose.sh`.
 
 ## 📚 Docs
 

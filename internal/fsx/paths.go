@@ -144,18 +144,18 @@ func AgentBin() string {
 	// installs point at the binary that generated the config; fall back to the
 	// env/default app path.
 	if appDir := envOr("OVN_APP_DIR", ""); appDir != "" {
-		return filepath.Join(appDir, "agent")
+		return filepath.Join(appDir, "ovnode-server")
 	}
 	if exe, err := os.Executable(); err == nil && exe != "" {
 		base := filepath.Base(exe)
-		if base == "agent" || base == "ovnode" {
+		if base == "ovnode-server" || base == "agent" || base == "ovnode" {
 			if resolved, err := filepath.EvalSymlinks(exe); err == nil && resolved != "" {
 				return resolved
 			}
 			return exe
 		}
 	}
-	return "/opt/ovnode/agent"
+	return "/opt/ovnode/ovnode-server"
 }
 
 func RequiredDirs() []string {

@@ -31,9 +31,9 @@ echo "OK: all shell files pass bash -n"
 
 # Version parity
 echo "=== version parity ==="
-v_install=$(grep -m1 '^VERSION=' install.sh | cut -d= -f2 | tr -d '"')
-v_ovnode=$(grep -m1 '^VERSION=' ovnode.sh | cut -d= -f2 | tr -d '"')
-v_binary=$(go run ./cmd/ovnode version 2>/dev/null || echo "unknown")
+v_install=$(OVN_VERSION="$("${ROOT_DIR}/cmd/ovnode/main.go" 2>/dev/null || echo "")" bash -c '. "'"${ROOT_DIR}"'/install.sh"; echo "$VERSION"' 2>/dev/null || grep -m1 '^VERSION=' "${ROOT_DIR}/ovnode.sh" | cut -d= -f2 | tr -d '"')
+v_ovnode=$(grep -m1 '^VERSION=' "${ROOT_DIR}/ovnode.sh" | cut -d= -f2 | tr -d '"')
+v_binary=$(go run "${ROOT_DIR}/cmd/ovnode" version 2>/dev/null || echo "unknown")
 echo "install.sh: $v_install"
 echo "ovnode.sh:  $v_ovnode"
 echo "binary:     $v_binary"
@@ -68,19 +68,6 @@ APP_DIR="$WORK/app" TLS_REGENERATE=1 bash -c '. "'"$ROOT_DIR"'/lib.sh"; generate
 openssl x509 -in "$WORK/tls/fullchain.pem" -noout -text | grep -q "IP Address:" || { echo "FAIL: no IP SAN"; exit 1; }
 echo "ok: self-signed cert includes IP SAN"
 rm -rf "$WORK"
-
-# ── compose syntax ─────────────────────────────────────────────────────
-echo "=== compose ==="
-bash -n "$ROOT_DIR/scripts/compose/entrypoint.sh" || { echo "FAIL: entrypoint"; exit 1; }
-echo "ok: entrypoint passes bash -n"
-if command -v docker >/dev/null 2>&1; then
-    tmpenv="$ROOT_DIR/.env"; touch "$tmpenv"
-    docker compose -f "$ROOT_DIR/scripts/compose/docker-compose.yml" config >/dev/null
-    rm -f "$tmpenv"
-    echo "ok: compose config valid"
-else
-    echo "skip: docker not installed"
-fi
 
 # ── credentials output ─────────────────────────────────────────────────
 echo "=== credentials ==="

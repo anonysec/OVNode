@@ -9,19 +9,8 @@ import (
 	"path/filepath"
 )
 
-// IsDocker reports whether running in a container.
-func IsDocker() bool {
-	if _, err := os.Stat("/.dockerenv"); err == nil {
-		return true
-	}
-	return false
-}
-
-// TriggerUpdate runs install.sh update detached. Returns error if refused.
+// TriggerUpdate runs install.sh update detached.
 func TriggerUpdate(appDir string) error {
-	if IsDocker() {
-		return os.ErrPermission
-	}
 	installer := filepath.Join(appDir, "install.sh")
 	if _, err := os.Stat(installer); err != nil {
 		return err

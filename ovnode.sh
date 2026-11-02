@@ -147,24 +147,13 @@ do_status() {
         port="$(env_get "$APP_DIR/.env" SERVICE_PORT)"; : "${port:=$DEFAULT_PORT}"
         tls="$(env_get "$APP_DIR/.env" TLS_METHOD)"; : "${tls:=selfsigned}"
         mode="native"
-        [[ -f "$(node_data_dir)/docker-compose.yml" ]] && mode="docker"
 
-        agent_version="$("$APP_DIR/agent" version 2>/dev/null || true)"
+        agent_version="$("$APP_DIR/ovnode-server" version 2>/dev/null || "$APP_DIR/agent" version 2>/dev/null || true)"
         : "${agent_version:=$VERSION}"
 
-        if [[ "$mode" == "docker" ]]; then
-            if command -v docker >/dev/null 2>&1 \
-                && docker ps --format '{{.Names}}' 2>/dev/null | grep -qx "ovnode-$node"; then
-                agent="running"
-            else
-                agent="stopped"
-            fi
-            openvpn="in-container"
-        else
-            if has_systemd; then
-                agent="$(systemctl is-active "$SYSTEMD_SERVICE" 2>/dev/null || true)"
-                openvpn="$(systemctl is-active $OPENVPN_SERVICE 2>/dev/null || true)"
-            fi
+        if has_systemd; then
+            agent="$(systemctl is-active "$SYSTEMD_SERVICE" 2>/dev/null || true)"
+            openvpn="$(systemctl is-active $OPENVPN_SERVICE 2>/dev/null || true)"
         fi
 
         local scheme="http"
@@ -207,21 +196,12 @@ do_status() {
 STOP_TIMEOUT="${OVN_STOP_TIMEOUT:-20}"
 
 node_service_action() {  # start|stop|restart
-    if is_docker_node; then
-        command -v docker >/dev/null 2>&1 || die "Docker not found on this host"
-        ( cd "$APP_DIR" && docker compose -f "$(compose_file)" "$1" ) || die "docker compose $1 failed"
-    else
-        systemctl "$1" "$SYSTEMD_SERVICE" || die "systemctl $1 $SYSTEMD_SERVICE failed"
-    fi
+    systemctl "$1" "$SYSTEMD_SERVICE" || die "systemctl $1 $SYSTEMD_SERVICE failed"
     render_ok "Node agent $1: done"
 }
 
-# Autostart is a systemd-only concept: a compose container is restarted by the
-# daemon whenever docker starts, so there is nothing to enable and pretending
-# otherwise would leave the operator believing a box comes back after a reboot
-# when it does not.
+# Autostart is a systemd concept.
 node_autostart() {  # enable|disable
-    is_docker_node && die "A container node starts with docker — nothing to enable." "$EX_USAGE"
     systemctl "$1" "$SYSTEMD_SERVICE" || die "systemctl $1 $SYSTEMD_SERVICE failed"
     case "$1" in
         enable)  render_ok "node agent starts on boot" ;;
@@ -250,10 +230,7 @@ restart_vpn() {
 do_node_logs() {
     local arg="${1:-100}" name
     name="$(node_name_from_env)"
-    if is_docker_node; then
-        if [[ "$arg" == "-f" ]]; then docker logs -f --tail 100 "ovnode-$name"; else docker logs --tail "$arg" "ovnode-$name"; fi \
-            || render_warn "Could not read container logs"
-    elif [[ "$arg" == "-f" ]]; then
+    if [[ "$arg" == "-f" ]]; then
         journalctl -u "$SYSTEMD_SERVICE" -n 100 -f || render_warn "Could not read logs"
     else
         journalctl -u "$SYSTEMD_SERVICE" -n "$arg" --no-pager || render_warn "Could not read logs"
@@ -380,16 +357,12 @@ do_restore() {
     for f in "${safety[@]}"; do render_kv "Safety copy" "$(basename "$f")"; done
 
     # Point of no return: nothing may write while the tree is replaced.
-    if is_docker_node; then
-        node_service_action stop
-    else
-        systemctl_bounded stop "$SYSTEMD_SERVICE" >/dev/null 2>&1 || true
-        systemctl_bounded stop "$OPENVPN_SERVICE" >/dev/null 2>&1 || true
-    fi
+    systemctl_bounded stop "$SYSTEMD_SERVICE" >/dev/null 2>&1 || true
+    systemctl_bounded stop "$OPENVPN_SERVICE" >/dev/null 2>&1 || true
     tar -xzf "$src" -C "$(restore_target_dir "$src")" \
         || die "Restore failed — $name was not fully unpacked; the safety copies above hold the previous state" "$EX_ERROR"
     node_service_action restart
-    if ! is_docker_node; then restart_vpn; fi
+    restart_vpn
 
     render_kv "Restored" "$name"
     for f in "${safety[@]}"; do render_kv "Safety copy" "$(basename "$f")"; done

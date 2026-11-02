@@ -150,7 +150,7 @@ backup_dir() {
     local stamp; stamp="$(date +%Y%m%d-%H%M%S)"
     local base; base="$(basename "$src")"
     local file="$root/${label}-${base}-${stamp}.tar.gz"
-    # Contains the PKI (CA private key) and, in Docker mode, the compose file
+    # Contains the PKI (CA private key).
     # with the API key: root-only from the start, not the caller's umask.
     local old_umask; old_umask="$(umask)"
     umask 077
@@ -301,7 +301,7 @@ migrate_flat_data_dir() {
 
 systemctl_bounded() {  # systemctl_bounded stop|restart <unit>
     local action="$1" unit="$2"
-    # Not loaded (Docker install, or NAT unit absent): nothing to do.
+    # Not loaded (NAT unit absent): nothing to do.
     if [[ "$(systemctl show -p LoadState --value "$unit" 2>/dev/null)" != "loaded" ]]; then
         return 0
     fi
@@ -368,37 +368,83 @@ generate_selfsigned() {
         render_ok "self-signed certificate already present, reusing it"
         return 0
     fi
-    local cn san extra; cn="$(primary_ip)"
-    san="DNS:localhost"
-    if [[ "$cn" =~ ^[0-9]+\.[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
-        san="IP:${cn},DNS:localhost"
+
+    # Auto-detect all IP addresses (local, public, loopback) for SAN
+    local san_list=("DNS:localhost" "IP:127.0.0.1")
+    local ip
+    for ip in $(hostname -I 2>/dev/null); do
+        [[ "$ip" =~ ^[0-9]+\.[0-9]+\.[0-9]+\.[0-9]+$ ]] && san_list+=("IP:$ip")
+    done
+    local pub; pub="$(public_ip 2>/dev/null || true)"
+    if [[ -n "$pub" && "$pub" =~ ^[0-9]+\.[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
+        san_list+=("IP:$pub")
     fi
+
     if [[ -n "${OVN_SAN:-}" ]]; then
         local entries=()
         IFS=',' read -ra entries <<< "$OVN_SAN"
         for extra in "${entries[@]}"; do
             extra="${extra// /}"
             [[ -z "$extra" ]] && continue
-            if [[ "$extra" =~ ^[0-9]+\.[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
-                san+=",IP:${extra}"
+            if [[ "$extra" =~ ^[0-9]+\.[0-9]+\.[0-9]+\.[0-9]+$ || "$extra" == *:* ]]; then
+                san_list+=("IP:${extra}")
             else
-                san+=",DNS:${extra}"
+                san_list+=("DNS:${extra}")
             fi
         done
     fi
-    openssl req -x509 -nodes -days 3650 -newkey rsa:2048 \
-        -keyout "$key" \
-        -out "$cert" \
-        -subj "/C=US/ST=Local/L=Local/O=OVNode/CN=${cn:-ovnode}" \
-        -addext "subjectAltName=${san}" >/dev/null 2>&1
-    # The sync API TLS key is a secret, so it is owner-only, but only ever at a
-    # path this node owns. The 600 used to be applied to whatever sat in the
-    # shared directory, which is what took the panel down.
+
+    # Deduplicate SAN entries
+    local san_dedup=()
+    while IFS= read -r line; do
+        [[ -n "$line" ]] && san_dedup+=("$line")
+    done < <(printf '%s\n' "${san_list[@]}" | sort -u)
+
+    local san; san="$(IFS=','; echo "${san_dedup[*]}")"
+    local cn; cn="$(primary_ip)"
+
+    # Generate EC P-256 certificate (PasarGuard style)
+    local generated=0
+    if openssl req -help 2>&1 | grep -q -- '-addext'; then
+        if openssl req -x509 -newkey ec -pkeyopt ec_paramgen_curve:P-256 \
+            -days 3650 -nodes \
+            -keyout "$key" -out "$cert" \
+            -subj "/C=US/ST=Local/L=Local/O=OVNode/CN=${cn:-ovnode}" \
+            -addext "subjectAltName = ${san}" >/dev/null 2>&1; then
+            generated=1
+        fi
+    fi
+
+    if [[ "$generated" -eq 0 ]]; then
+        local cnf; cnf="$(mktemp "${TMPDIR:-/tmp}/ovnode-ssl.XXXXXX.cnf")"
+        cat > "$cnf" << CNF
+[req]
+distinguished_name = req_distinguished_name
+x509_extensions = v3_req
+prompt = no
+
+[req_distinguished_name]
+CN = ${cn:-ovnode}
+
+[v3_req]
+subjectAltName = ${san}
+CNF
+        if openssl req -x509 -newkey ec -pkeyopt ec_paramgen_curve:P-256 \
+            -days 3650 -nodes \
+            -keyout "$key" -out "$cert" \
+            -config "$cnf" -extensions v3_req >/dev/null 2>&1; then
+            generated=1
+        fi
+        rm -f "$cnf"
+    fi
+
+    [[ "$generated" -eq 1 ]] || die "Failed to generate self-signed EC certificate" "$EX_ERROR"
+
     chmod 600 "$key"
     chmod 644 "$cert"
     TLS_KEY="$key"
     TLS_CERT="$cert"
-    render_ok "self-signed certificate generated at $cert"
+    render_ok "self-signed EC certificate (P-256) generated at $cert"
 }
 
 ensure_acme() {
@@ -545,8 +591,6 @@ latest_snapshot() {  # latest_snapshot <label> → prints newest code snapshot o
 # ── Host / install-mode probes ─────────────────────────────────────────
 check_root() { [[ "$EUID" -eq 0 ]] || die "Must run as root."; }
 has_systemd() { command -v systemctl >/dev/null 2>&1 && [[ -d /run/systemd/system ]]; }
-compose_file() { echo "$(node_data_dir)/docker-compose.yml"; }
-is_docker_node() { [[ -f "$(compose_file)" ]]; }
 
 # ── Capability detection ───────────────────────────────────────────────
 # One decision, made once, read everywhere. Resolved at source time so the
