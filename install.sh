@@ -27,9 +27,9 @@ DOCKER=0
 VERSION="${OVN_VERSION:-${OVM_VERSION:-latest}}"
 # Forks: point source downloads (and update pulls) at your own repo.
 REPO="${OVN_REPO:-anonysec/OVNode}"
-# Minisign public key embedded in the installer; override with OVN_MINISIGN_PUBKEY
-# (a key string or a path to a public key file) for forks and tests.
-MINISIGN_PUBKEY="${OVN_MINISIGN_PUBKEY:-${OVN_PUBKEY:-RWTIVa8XHODmty08erTWsJiXrVdFHvUuAwMPR0U9tpRtDGCcBeJ1EghI}}"
+# Minisign public key embedded in the installer. An override via OVN_MINISIGN_PUBKEY or OVN_PUBKEY is honored ONLY when OVN_ALLOW_KEY_OVERRIDE=1 (forks and tests).
+MINISIGN_PUBKEY_DEFAULT="RWTIVa8XHODmty08erTWsJiXrVdFHvUuAwMPR0U9tpRtDGCcBeJ1EghI"
+MINISIGN_PUBKEY="$MINISIGN_PUBKEY_DEFAULT"
 
 # Versioned GitHub Release tarballs only: verified checksum, no git needed.
 SRC="release"
@@ -115,6 +115,7 @@ YL=$'\033[33m'; CY=$'\033[36m'; GY=$'\033[90m'
 # Until then the installer has exactly one helper of its own. `die` arrives
 # with lib.sh; `fail` is the same error path for the window before it.
 fail() { printf '\n  %bError:%b %s\n\n' "${RD:-}" "${NC:-}" "$1" >&2; exit "${2:-$EX_ERROR}"; }
+render_warn() { printf '  %b%s%b\n' "${YL:-}" "$1" "${NC:-}" >&2; }
 
 # ── Installation state, captured before anything is fetched ────────────
 # load_helpers has to download the binary *into* $APP_DIR, so by the time it
@@ -539,6 +540,15 @@ fetch_release_binary() {
         || { rm -rf "$work"; trap - EXIT; fail "Release checksum file is missing for v$VERSION"; }
     ( cd "$work" && sha256sum -c "$asset.sha256" >/dev/null ) \
         || { rm -rf "$work"; trap - EXIT; fail "Release checksum mismatch for v$VERSION, possible tampering or incomplete download"; }
+    if [[ -n "${OVN_MINISIGN_PUBKEY:-}${OVN_PUBKEY:-}" ]]; then
+        if [[ "${OVN_ALLOW_KEY_OVERRIDE:-0}" == "1" ]]; then
+            MINISIGN_PUBKEY="${OVN_MINISIGN_PUBKEY:-$OVN_PUBKEY}"
+            render_warn "OVN_ALLOW_KEY_OVERRIDE=1: using a non-default minisign public key"
+        else
+            rm -rf "$work"; trap - EXIT
+            fail "OVN_MINISIGN_PUBKEY/OVN_PUBKEY is set but OVN_ALLOW_KEY_OVERRIDE=1 is not; refusing to change the trusted signing key"
+        fi
+    fi
     # Authenticity: a checksum from the same release only proves integrity.
     # Fail closed unless the operator explicitly opts into unsigned code.
     if [[ "${OVN_ALLOW_UNSIGNED:-0}" == "1" ]]; then

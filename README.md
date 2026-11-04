@@ -154,6 +154,8 @@ OVN_NAME=eu-1 OVN_VPN_PORTS=1194,443,8443 OVN_IPV6=1 bash install.sh -y
 | `OVN_QUIET` | off | `1` suppresses progress logs |
 | `OVN_REPO` | `anonysec/OVNode` | Pull releases from a fork |
 
+Forks may set `OVN_MINISIGN_PUBKEY` together with `OVN_ALLOW_KEY_OVERRIDE=1`.
+
 A run with `-y` never prompts and reports its outcome as an exit code, so a script branches on `$?` instead of parsing output. A run *without* `-y` and without a terminal stops and says so, rather than picking answers for you:
 
 ```text

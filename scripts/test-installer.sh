@@ -170,6 +170,7 @@ run_installer() {
         "NO_COLOR=1"
         "OVN_VERSION=2.0.0"
         "OVN_MINISIGN_PUBKEY=$TEST_MINISIGN_PUB"
+        "OVN_ALLOW_KEY_OVERRIDE=1"
     )
     local driver="${RUN_DRIVER:-$DRIVER}"
     if [[ -n "$tty_answer" ]]; then
@@ -440,6 +441,21 @@ expect_eq unit-only "$(state_of "$probe/unitonly" "$probe/units")" "an OVNode un
 expect_eq bootstrap "$(state_of "$probe/truncated")"      "a truncated, non-executable binary is bootstrap debris"
 expect_eq node-data "$(state_of "$probe/withdata")"       "node data with no node is node-data"
 expect_eq not-a-directory "$(state_of "$probe/afile")"    "a file at APP_DIR is not an install"
+
+# ── Minisign key override requires OVN_ALLOW_KEY_OVERRIDE ──────────────
+section "minisign key override without OVN_ALLOW_KEY_OVERRIDE"
+OVERRIDE_APP="$WORK/override/app"
+rm -rf "$WORK/override"; mkdir -p "$WORK/override" "$WORK/override-units"
+: > "$CURL_LOG"
+env "PATH=$SHIM_DIR:$PATH" "INSTALL_SH=$INSTALL_SH" \
+    "OVN_APP_DIR=$OVERRIDE_APP" "OVN_BIN_DIR=$WORK/bin" \
+    "OVN_SYSTEMD_DIR=$WORK/override-units" "FAKE_RELEASE_DIR=$RELEASE_DIR" \
+    "FAKE_OVNODE_ASSETS=$ROOT_DIR" "CURL_LOG=$CURL_LOG" "NO_COLOR=1" \
+    "OVN_VERSION=2.0.0" "OVN_MINISIGN_PUBKEY=$TEST_MINISIGN_PUB" \
+    bash "$DRIVER" -y > "$WORK/override.log" 2>&1
+RC=$?
+expect_status 1 "$RC" "override without OVN_ALLOW_KEY_OVERRIDE exits non-zero"
+expect_in "$WORK/override.log" "refusing to change the trusted signing key" "it refuses to change the trusted signing key"
 
 # ── Summary ────────────────────────────────────────────────────────────
 printf '\n%s passed, %s failed\n' "$PASS" "$FAIL"
