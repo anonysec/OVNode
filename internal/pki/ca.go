@@ -123,12 +123,10 @@ func appendIndex(cn string, serial *big.Int, notBefore, notAfter time.Time, revo
 	status := "V"
 	expiry := notAfter.UTC().Format("060102150405Z")
 	line := status + "\t" + expiry + "\t\t" + fmt.Sprintf("%X", serial) + "\tunknown\t/CN=" + cn + "\n"
-	f, err := os.OpenFile(filepath.Join(PKIDir(), "index.txt"), os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0o644)
-	if err != nil {
-		return
-	}
-	defer f.Close()
-	f.WriteString(line)
+	path := filepath.Join(PKIDir(), "index.txt")
+	data, _ := os.ReadFile(path)
+	data = append(data, []byte(line)...)
+	_ = fsx.WriteFileAtomic(path, data, 0o644)
 }
 
 // RevokeCert marks a cert revoked and regenerates CRL.
@@ -282,10 +280,11 @@ func RenewServerCertificateNative() error {
 	}
 	os.MkdirAll(filepath.Dir(ServerCert()), 0o700)
 	os.MkdirAll(filepath.Dir(ServerKey()), 0o700)
-	if err := fsx.WriteFileAtomic(ServerCert(), certPEM, 0o644); err != nil {
+	// Write the key first, then the cert.
+	if err := fsx.WriteFileAtomic(ServerKey(), keyPEM, 0o600); err != nil {
 		return err
 	}
-	if err := fsx.WriteFileAtomic(ServerKey(), keyPEM, 0o600); err != nil {
+	if err := fsx.WriteFileAtomic(ServerCert(), certPEM, 0o644); err != nil {
 		return err
 	}
 	appendIndex("server", serial, now, tmpl.NotAfter, false)

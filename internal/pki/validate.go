@@ -34,6 +34,26 @@ func CleanPEM(s string) (string, error) {
 	return string(pem.EncodeToMemory(block)), nil
 }
 
+
+// ensureSinglePEM verifies a PEM block has no trailing garbage.
+func ensureSinglePEM(s string) error {
+	s = strings.TrimSpace(s)
+	if s == "" {
+		return fmt.Errorf("empty PEM")
+	}
+	if len(s) > maxPEMField {
+		return fmt.Errorf("PEM exceeds %d bytes", maxPEMField)
+	}
+	block, rest := pem.Decode([]byte(s))
+	if block == nil {
+		return fmt.Errorf("invalid PEM")
+	}
+	if strings.TrimSpace(string(rest)) != "" {
+		return fmt.Errorf("trailing garbage in PEM")
+	}
+	return nil
+}
+
 func parseCert(s string) (*x509.Certificate, error) {
 	s = strings.TrimSpace(s)
 	if s == "" {
@@ -87,6 +107,9 @@ func ValidateServerCert(caPEM, certPEM, keyPEM string) error {
 	if err != nil {
 		return err
 	}
+	if err := ensureSinglePEM(keyPEM); err != nil {
+		return err
+	}
 	// key matches cert
 	if _, err := tls.X509KeyPair([]byte(certPEM), []byte(keyPEM)); err != nil {
 		return fmt.Errorf("key does not match certificate: %w", err)
@@ -107,6 +130,9 @@ func ValidateClientCert(cn, certPEM, keyPEM, caPEM string) error {
 	}
 	cert, err := parseCert(certPEM)
 	if err != nil {
+		return err
+	}
+	if err := ensureSinglePEM(keyPEM); err != nil {
 		return err
 	}
 	if cert.Subject.CommonName != cn {

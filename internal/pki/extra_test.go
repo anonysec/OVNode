@@ -27,3 +27,20 @@ func TestEnsureSecretPerms(t *testing.T) {
 		t.Fatalf("user dir mode = %v, want 0700", ui.Mode().Perm())
 	}
 }
+
+func TestValidatePushedKeyTrailingGarbage(t *testing.T) {
+	// minimal CA
+	root := t.TempDir()
+	t.Setenv("OVNODE_OPENVPN_ROOT", root)
+	t.Setenv("OVNODE_DATA_DIR", root+"/ovnode-data")
+	// use writeTestCA? unexported in same package
+	writeTestCA(t, root)
+	caPEM, _ := os.ReadFile(filepath.Join(root, "server", "pki", "ca.crt"))
+	key, _ := os.ReadFile(filepath.Join(root, "server", "pki", "private", "ca.key"))
+	// generate a server cert signed by CA? skip; test only trailing garbage detection on key
+	badKey := string(key) + "\nfoo"
+	if err := ensureSinglePEM(badKey); err == nil {
+		t.Fatal("expected trailing garbage error")
+	}
+	_ = caPEM
+}
