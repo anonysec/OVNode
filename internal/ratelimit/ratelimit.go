@@ -76,7 +76,9 @@ func (l *Limiter) prune(now time.Time) {
 			}
 		}
 		if len(m) >= maxBuckets {
-			// LRU eviction: sort by last use, drop oldest.
+			// Evict the oldest 10% in one pass, so the map stays below
+			// maxBuckets and the next inserts do not sort again.
+			target := maxBuckets - maxBuckets/10
 			type kv struct {
 				k    string
 				last time.Time
@@ -86,8 +88,7 @@ func (l *Limiter) prune(now time.Time) {
 				keys = append(keys, kv{k, b.last})
 			}
 			sort.Slice(keys, func(i, j int) bool { return keys[i].last.Before(keys[j].last) })
-			excess := len(m) - maxBuckets + 1
-			for i := 0; i < excess && i < len(keys); i++ {
+			for i := 0; i < len(m)-target && i < len(keys); i++ {
 				delete(m, keys[i].k)
 			}
 		}

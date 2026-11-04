@@ -1,6 +1,7 @@
 package ratelimit
 
 import (
+	"fmt"
 	"testing"
 	"time"
 )
@@ -59,4 +60,18 @@ func itoa(i int) string {
 		i /= 10
 	}
 	return string(b)
+}
+
+func TestPruneEvictsTenPercentAtOnce(t *testing.T) {
+	l := New()
+	start := time.Now()
+	for i := 0; i < 12000; i++ {
+		l.Allow(fmt.Sprintf("c%d", i))
+	}
+	if elapsed := time.Since(start); elapsed >= 2*time.Second {
+		t.Fatalf("loop took %v, want under 2s", elapsed)
+	}
+	if len(l.buckets) > maxBuckets {
+		t.Fatalf("buckets len = %d, want <= %d", len(l.buckets), maxBuckets)
+	}
 }
