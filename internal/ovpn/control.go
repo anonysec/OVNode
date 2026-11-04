@@ -114,6 +114,9 @@ func ChangeConfig(req ChangeConfigRequest, classification *ChangeConfigResult) b
 	if ovpnPort < 1 || ovpnPort > 65535 {
 		return false
 	}
+	if policy.IsReservedPrimaryPort(ovpnPort) {
+		return false
+	}
 
 	// protocol
 	proto, ok := normalizeProto(req.Protocol)

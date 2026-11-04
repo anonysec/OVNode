@@ -438,6 +438,21 @@ func RewritePushDNS(conf string, servers []string) string {
 var _ = sort.Strings
 var _ = regexp.MustCompile
 
+// IsReservedPrimaryPort reports whether p may not be used as the primary
+// OpenVPN port. 80 and 443 remain legal as the primary port.
+func IsReservedPrimaryPort(p int) bool {
+	if p == 22 || p == 2083 || p == 7505 {
+		return true
+	}
+	if mp := envInt("MANAGEMENT_PORT", 7505); mp > 0 && p == mp {
+		return true
+	}
+	if sp := envInt("SERVICE_PORT", 2083); sp > 0 && p == sp {
+		return true
+	}
+	return false
+}
+
 func joinInts(ns []int) string {
 	parts := make([]string, len(ns))
 	for i, n := range ns {

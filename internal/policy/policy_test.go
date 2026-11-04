@@ -75,3 +75,22 @@ func TestValidateIPAndPrefix(t *testing.T) {
 		t.Errorf("ValidatePrefix without mask = %q, want empty", got)
 	}
 }
+
+func TestIsReservedPrimaryPort(t *testing.T) {
+	cases := []struct {
+		port int
+		want bool
+	}{
+		{22, true},
+		{2083, true},
+		{7505, true},
+		{1194, false},
+		{443, false},
+		{80, false},
+	}
+	for _, tc := range cases {
+		if got := IsReservedPrimaryPort(tc.port); got != tc.want {
+			t.Errorf("IsReservedPrimaryPort(%d) = %v, want %v", tc.port, got, tc.want)
+		}
+	}
+}
