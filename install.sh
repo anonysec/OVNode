@@ -115,7 +115,11 @@ YL=$'\033[33m'; CY=$'\033[36m'; GY=$'\033[90m'
 # Until then the installer has exactly one helper of its own. `die` arrives
 # with lib.sh; `fail` is the same error path for the window before it.
 fail() { printf '\n  %bError:%b %s\n\n' "${RD:-}" "${NC:-}" "$1" >&2; exit "${2:-$EX_ERROR}"; }
-render_warn() { printf '  %b%s%b\n' "${YL:-}" "$1" "${NC:-}" >&2; }
+# render_warn is normally provided by lib.sh (sourced later); define a minimal
+# fallback for the bootstrap window before helpers are available.
+if ! type render_warn >/dev/null 2>&1; then
+    render_warn() { printf '  %b%s%b\n' "${YL:-}" "$1" "${NC:-}" >&2; }
+fi
 
 # ── Installation state, captured before anything is fetched ────────────
 # load_helpers has to download the binary *into* $APP_DIR, so by the time it
