@@ -1,4 +1,5 @@
 #!/usr/bin/env bash
+# shellcheck disable=SC2034,SC2012,SC2015,SC2016,SC1091
 # Copyright (c) 2026 anonysec
 # SPDX-License-Identifier: MIT
 #
@@ -23,20 +24,17 @@ set -Eeuo pipefail
 DOCKER=0
 
 # ── Configuration ──────────────────────────────────────────────────────────
-VERSION="${OVN_VERSION:-latest}"
+VERSION="${OVN_VERSION:-${OVM_VERSION:-latest}}"
 # Forks: point source downloads (and update pulls) at your own repo.
 REPO="${OVN_REPO:-anonysec/OVNode}"
+# Minisign public key embedded in the installer; override with OVN_MINISIGN_PUBKEY
+# (a key string or a path to a public key file) for forks and tests.
+MINISIGN_PUBKEY="${OVN_MINISIGN_PUBKEY:-${OVN_PUBKEY:-RWTIVa8XHODmty08erTWsJiXrVdFHvUuAwMPR0U9tpRtDGCcBeJ1EghI}}"
 
-# Resolve "latest" to the newest published release tag so the rest of the
-# installer (fetch, health check, version stamp) sees a concrete version.
-if [[ "$VERSION" == "latest" ]]; then
-    if ! VERSION="$(curl -fsSL "https://api.github.com/repos/$REPO/releases/latest" 2>/dev/null | sed -n 's/.*"tag_name"[[:space:]]*:[[:space:]]*"v\([^"]*\)".*/\1/p' | head -n1)"; then
-        VERSION=""
-    fi
-    [[ -n "$VERSION" ]] || fail "Could not resolve latest release for $REPO"
-fi
 # Versioned GitHub Release tarballs only: verified checksum, no git needed.
 SRC="release"
+# Honor either spelling of the version pin.
+VERSION="${OVN_VERSION:-${OVM_VERSION:-$VERSION}}"
 # OVN_APP_DIR lets tests run status/uninstall on a box already hosting a node.
 APP_DIR="${OVN_APP_DIR:-/opt/ovnode}"
 DATA_BASE="${OVN_DATA_BASE:-/var/lib/ovnode}"
@@ -455,6 +453,7 @@ release_url() {
 }
 
 release_checksum_url() { printf '%s.sha256' "$(release_url)"; }
+release_signature_url() { printf '%s.minisig' "$(release_url)"; }
 
 IMAGE_REPO="ghcr.io/${REPO,,}"
 
@@ -540,6 +539,22 @@ fetch_release_binary() {
         || { rm -rf "$work"; trap - EXIT; fail "Release checksum file is missing for v$VERSION"; }
     ( cd "$work" && sha256sum -c "$asset.sha256" >/dev/null ) \
         || { rm -rf "$work"; trap - EXIT; fail "Release checksum mismatch for v$VERSION, possible tampering or incomplete download"; }
+    # Authenticity: a checksum from the same release only proves integrity.
+    # Fail closed unless the operator explicitly opts into unsigned code.
+    if [[ "${OVN_ALLOW_UNSIGNED:-0}" == "1" ]]; then
+        render_warn "OVN_ALLOW_UNSIGNED=1: minisign verification skipped; binary authenticity is NOT verified"
+    else
+        command -v minisign >/dev/null 2>&1 || { rm -rf "$work"; trap - EXIT; fail "minisign is required to verify the release"; }
+        curl -fsSL --max-time 30 --retry 2 -o "$work/$asset.minisig" "$(release_signature_url)" \
+            || { rm -rf "$work"; trap - EXIT; fail "Release signature is missing for v$VERSION"; }
+        if [[ -f "$MINISIGN_PUBKEY" ]]; then
+            minisign -Vm "$work/$asset" -p "$MINISIGN_PUBKEY" -x "$work/$asset.minisig" >/dev/null 2>&1 \
+                || { rm -rf "$work"; trap - EXIT; fail "Release signature verification failed for v$VERSION"; }
+        else
+            minisign -Vm "$work/$asset" -P "$MINISIGN_PUBKEY" -x "$work/$asset.minisig" >/dev/null 2>&1 \
+                || { rm -rf "$work"; trap - EXIT; fail "Release signature verification failed for v$VERSION"; }
+        fi
+    fi
     mkdir -p "$dest"
     install -m 0755 "$work/$asset" "$dest/ovnode"
     rm -rf "$work"
@@ -1795,7 +1810,7 @@ parse_args() {
             version-script|script-version) print_script_version ;;
             help|--help|-h) show_help ;;
             --port)       eval "$need2"; deprecated "--port" "set OVN_PORT instead"; PORT="$2"; CLI_FLAGS=1; shift 2 ;;
-            -p|--key)       eval "$need2"; deprecated "$1" "set OVN_KEY instead"; API_KEY="$2"; CLI_FLAGS=1; shift 2 ;;
+            -p|--key)       eval "$need2"; deprecated "$1" "set OVN_KEY instead"; printf '  warning: API key on the command line is visible to other users (ps); prefer OVN_KEY=...\n' >&2; API_KEY="$2"; CLI_FLAGS=1; shift 2 ;;
             -v|--version)   eval "$need2"; PIN="$2"; CLI_FLAGS=1; shift 2 ;;
             -i)             ACTION="interactive"; CMD_GIVEN=1; shift ;;
             --vpn-ports|--vpn-port) eval "$need2"; deprecated "$1" "set OVN_VPN_PORTS instead"; VPN_PORTS="$2"; CLI_FLAGS=1; shift 2 ;;
@@ -1859,6 +1874,14 @@ parse_args() {
 # ── Main ───────────────────────────────────────────────────────────────
 main() {
     parse_args "$@"
+    # Resolve "latest" to the newest published release tag so the rest of the
+    # installer (fetch, health check, version stamp) sees a concrete version.
+    if [[ "$VERSION" == "latest" ]]; then
+        if ! VERSION="$(curl -fsSL "https://api.github.com/repos/$REPO/releases/latest" 2>/dev/null | sed -n 's/.*"tag_name"[[:space:]]*:[[:space:]]*"v\([^"]*\)".*/\1/p' | head -n1)"; then
+            VERSION=""
+        fi
+        [[ -n "$VERSION" ]] || fail "Could not resolve latest release for $REPO"
+    fi
     if [[ -n "$PIN" ]]; then
         valid_release_version "$PIN" \
             || fail "Bad --version '$PIN' (use 1.2.3, v1.2.3, 1.2.3-rc1)" "$EX_USAGE"

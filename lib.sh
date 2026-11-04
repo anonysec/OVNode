@@ -1,4 +1,5 @@
 #!/usr/bin/env bash
+# shellcheck disable=SC2034,SC2012
 # Copyright (c) 2026 anonysec
 # SPDX-License-Identifier: MIT
 #
@@ -87,7 +88,7 @@ ask() {
         if [[ "$hidden" == "h" ]]; then
             val="$(_masked_read)"
         else
-            read -r val
+            read -r val || true
         fi
     fi
     echo "${val:-$default}"
@@ -456,7 +457,8 @@ ensure_acme() {
 issue_letsencrypt() {
     local domain="$1" is_ip="$2"
     ensure_acme
-    local email="acme-$(openssl rand -hex 4)@example.com"
+    local email
+    email="acme-$(openssl rand -hex 4)@example.com"
     local outdir="/etc/letsencrypt/$domain"
     mkdir -p "$outdir"
 
