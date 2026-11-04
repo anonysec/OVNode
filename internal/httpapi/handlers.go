@@ -10,8 +10,8 @@ import (
 	"strconv"
 	"time"
 
-	"ovnode/internal/logging"
 	"ovnode/internal/fsx"
+	"ovnode/internal/logging"
 	"ovnode/internal/ovpn"
 	"ovnode/internal/pki"
 	"ovnode/internal/updater"
@@ -56,6 +56,7 @@ func (s *Server) handleStatus(w http.ResponseWriter, r *http.Request) {
 		"errors_1h":     errors1h,
 		"warnings_1h":   warnings1h,
 		"last_error":    lastError,
+		"update_status": updater.UpdateStatus(s.appDir()),
 	})
 }
 
@@ -178,11 +179,8 @@ func (s *Server) handleRenewCert(w http.ResponseWriter, r *http.Request) {
 		map[string]any{"server_expiry": pki.CertExpiry(pki.ServerCert())})
 }
 
-// handleUpdate triggers the node's self-update.
-func (s *Server) handleUpdate(w http.ResponseWriter, r *http.Request) {
-	if !s.authorize(w, r, true) {
-		return
-	}
+// appDir resolves the installed application directory.
+func (s *Server) appDir() string {
 	appDir := fsx.EnvOr("APP_DIR", "")
 	if appDir == "" {
 		for _, c := range []string{"/opt/ovnode", "/usr/local/ovnode"} {
@@ -195,9 +193,31 @@ func (s *Server) handleUpdate(w http.ResponseWriter, r *http.Request) {
 	if appDir == "" {
 		appDir = "/opt/ovnode"
 	}
-	if err := updater.TriggerUpdate(appDir); err != nil {
+	return appDir
+}
+
+// handleUpdate triggers the node's self-update.
+func (s *Server) handleUpdate(w http.ResponseWriter, r *http.Request) {
+	if !s.authorize(w, r, true) {
+		return
+	}
+	var body struct {
+		Version string `json:"version"`
+	}
+	if r.Body != nil && r.ContentLength != 0 {
+		if err := decodeBody(w, r, &body); err != nil {
+			writeFail(w, "Invalid update payload")
+			return
+		}
+	}
+	if body.Version != "" && !updater.ValidVersion(body.Version) {
+		writeFail(w, "Invalid target version")
+		return
+	}
+	appDir := s.appDir()
+	if err := updater.TriggerUpdate(appDir, body.Version); err != nil {
 		writeFail(w, err.Error())
 		return
 	}
-	writeOK(w, "Update started", nil)
+	writeOK(w, "Update started", map[string]any{"update_status": "running"})
 }

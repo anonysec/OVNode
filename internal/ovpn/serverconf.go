@@ -76,7 +76,7 @@ func MgmtLine() string {
 func HardeningDirectives() []string {
 	EnsureMgmtPassword()
 	return []string{
-		"tls-version-min 1.2",
+		"tls-version-min 1.3",
 		"remote-cert-tls client",
 		MgmtLine(),
 		"writepid " + fsx.PIDFile(),
