@@ -5,6 +5,7 @@ package store
 
 import (
 	"encoding/json"
+	"fmt"
 	"os"
 	"path/filepath"
 
@@ -105,11 +106,16 @@ func ReadName(usersDir, cn string) string {
 
 // WriteName writes the panel username.
 func WriteName(usersDir, cn, name string) error {
+	for _, r := range name {
+		if r < 0x20 || r == 0x7f {
+			return fmt.Errorf("name contains control characters")
+		}
+	}
 	dir, err := UserDir(usersDir, cn)
 	if err != nil {
 		return err
 	}
-	os.MkdirAll(dir, 0o755)
+	os.MkdirAll(dir, 0o700)
 	return fsx.WriteFileAtomic(filepath.Join(dir, "name"), []byte(name+"\n"), 0o600)
 }
 
@@ -140,6 +146,28 @@ func EnsureLayout(openvpnRoot string) {
 // FixRuntimePermissions fixes permissions for runtime user.
 func FixRuntimePermissions(openvpnRoot string) {
 	EnsureLayout(openvpnRoot)
+	// private dirs and secret files
+	ovnodeDir := filepath.Join(openvpnRoot, "ovnode")
+	usersDir := filepath.Join(ovnodeDir, "users")
+	_ = os.Chmod(filepath.Join(openvpnRoot, "server", "pki", "private"), 0o700)
+	_ = filepath.Walk(filepath.Join(openvpnRoot, "server", "pki"), func(path string, info os.FileInfo, err error) error {
+		if err != nil || info == nil || info.IsDir() {
+			return nil
+		}
+		if info.Name() == "ca.key" || filepath.Ext(path) == ".key" {
+			_ = os.Chmod(path, 0o600)
+		}
+		if info.Name() == "tls.key" {
+			_ = os.Chmod(path, 0o600)
+		}
+		return nil
+	})
+	entries, _ := os.ReadDir(usersDir)
+	for _, e := range entries {
+		if e.IsDir() {
+			_ = os.Chmod(filepath.Join(usersDir, e.Name()), 0o700)
+		}
+	}
 }
 
 // MigrateLegacy moves pre-store state into the ovnode tree (files moved, never copied).

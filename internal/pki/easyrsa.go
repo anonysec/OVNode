@@ -94,7 +94,11 @@ func EnsureDirTree() {
 		"revoked/issued",
 	}
 	for _, sd := range subdirs {
-		os.MkdirAll(filepath.Join(PKIDir(), sd), 0o755)
+		perm := os.FileMode(0o755)
+		if sd == "private" || sd == "inline/private" || sd == "revoked/private" {
+			perm = 0o700
+		}
+		os.MkdirAll(filepath.Join(PKIDir(), sd), perm)
 	}
 	for _, fname := range []string{"index.txt", "index.txt.attr", "serial", "serial.old", "crlnumber", "crlnumber.old"} {
 		path := filepath.Join(PKIDir(), fname)
@@ -108,6 +112,35 @@ func EnsureDirTree() {
 			}
 		}
 	}
+}
+
+
+// EnsureSecretPerms repairs permissions on secret material.
+func EnsureSecretPerms() {
+	os.Chmod(filepath.Join(PKIDir(), "private"), 0o700)
+	os.MkdirAll(filepath.Join(PKIDir(), "private"), 0o700)
+	_ = filepath.Walk(PKIDir(), func(path string, info os.FileInfo, err error) error {
+		if err != nil || info == nil || info.IsDir() {
+			return nil
+		}
+		if info.Name() == "ca.key" || filepath.Ext(path) == ".key" {
+			_ = os.Chmod(path, 0o600)
+		}
+		if info.Name() == "tls.key" {
+			_ = os.Chmod(path, 0o600)
+		}
+		return nil
+	})
+	// per-user dirs
+	if ud := UsersDir(); ud != "" {
+		entries, _ := os.ReadDir(ud)
+		for _, e := range entries {
+			if e.IsDir() {
+				_ = os.Chmod(filepath.Join(ud, e.Name()), 0o700)
+			}
+		}
+	}
+	_ = os.Chmod(TLSKey(), 0o600)
 }
 
 func homeDir() string {
@@ -132,5 +165,5 @@ func GenTLSKey() error {
 			return err2
 		}
 	}
-	return os.Chmod(path, 0o644)
+	return os.Chmod(path, 0o600)
 }

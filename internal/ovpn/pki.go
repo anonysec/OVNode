@@ -144,5 +144,6 @@ func InitPKI() error {
 	pki.GenTLSKey()
 	EnsureServerConf()
 	EnsureClientTemplate()
+	pki.EnsureSecretPerms()
 	return nil
 }

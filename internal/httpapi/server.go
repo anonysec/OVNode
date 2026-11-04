@@ -301,6 +301,7 @@ func markSetupPrinted() {
 
 // Run starts the agent.
 func Run() error {
+	pki.EnsureSecretPerms()
 	cert, key, err := TLSMaterial()
 	if err != nil {
 		return err

@@ -103,6 +103,7 @@ func ReloadOpenVPN() bool {
 // its own pid file instead.
 func RestartOpenVPN() bool {
 	store.FixRuntimePermissions(openvpnRoot())
+	pki.EnsureSecretPerms()
 	if pki.IsInstalledTree() {
 		// systemctl
 		if systemctl, err := exec.LookPath("systemctl"); err == nil {
