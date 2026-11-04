@@ -8,6 +8,8 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"sync"
+	"syscall"
 	"time"
 
 	"ovnode/internal/fsx"
@@ -19,9 +21,29 @@ func pairingPath() string {
 	return filepath.Join(fsx.OVNodeDir(), "state", "pairing.json")
 }
 
+var enforceMu sync.Mutex
+
 // Enforce applies the lease; returns error if refused.
 func Enforce(panelID string) error {
+	enforceMu.Lock()
+	defer enforceMu.Unlock()
+
 	path := pairingPath()
+	dir := filepath.Dir(path)
+	if err := os.MkdirAll(dir, 0o755); err != nil {
+		return err
+	}
+	lockFile := path + ".lock"
+	lf, err := os.OpenFile(lockFile, os.O_CREATE|os.O_RDWR, 0o600)
+	if err != nil {
+		return err
+	}
+	defer lf.Close()
+	if err := syscall.Flock(int(lf.Fd()), syscall.LOCK_EX); err != nil {
+		return err
+	}
+	defer syscall.Flock(int(lf.Fd()), syscall.LOCK_UN)
+
 	now := time.Now().Unix()
 	data, err := os.ReadFile(path)
 	var rec *struct {
