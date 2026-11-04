@@ -6,20 +6,24 @@ package ratelimit
 import (
 	"crypto/sha256"
 	"encoding/hex"
+	"sort"
 	"sync"
 	"time"
 )
 
 const (
-	window      = 60 * time.Second
-	maxRequests = 120
-	globalMax   = 600
-	heavyMax    = 60
-	maxBuckets  = 10000
+	window       = 60 * time.Second
+	failedWindow = 5 * time.Minute
+	maxRequests  = 120
+	globalMax    = 600
+	heavyMax     = 60
+	failedMax    = 10
+	maxBuckets   = 10000
 )
 
 type bucket struct {
-	ts []time.Time
+	ts   []time.Time
+	last time.Time
 }
 
 type Limiter struct {
@@ -28,6 +32,7 @@ type Limiter struct {
 	buckets   map[string]*bucket
 	global    *bucket
 	heavy     map[string]*bucket
+	failed    map[string]*bucket
 }
 
 func New() *Limiter {
@@ -35,6 +40,7 @@ func New() *Limiter {
 		buckets: map[string]*bucket{},
 		global:  &bucket{},
 		heavy:   map[string]*bucket{},
+		failed:  map[string]*bucket{},
 	}
 }
 
@@ -43,72 +49,56 @@ func keyFor(client string) string {
 	return hex.EncodeToString(h[:])[:32]
 }
 
+// trimExpired drops timestamps older than the window in place.
+func trimExpired(b *bucket, now time.Time, w time.Duration) {
+	i := 0
+	for i < len(b.ts) && now.Sub(b.ts[i]) >= w {
+		i++
+	}
+	if i > 0 {
+		b.ts = b.ts[i:]
+	}
+}
+
 func (l *Limiter) prune(now time.Time) {
-	if !l.lastPrune.IsZero() && now.Sub(l.lastPrune) < 10*time.Second && len(l.buckets) < maxBuckets && len(l.heavy) < maxBuckets {
+	if !l.lastPrune.IsZero() && now.Sub(l.lastPrune) < 10*time.Second &&
+		len(l.buckets) < maxBuckets && len(l.heavy) < maxBuckets &&
+		len(l.failed) < maxBuckets {
 		return
 	}
 	l.lastPrune = now
-	for k, b := range l.buckets {
-		fresh := make([]time.Time, 0, len(b.ts))
-		for _, t := range b.ts {
-			if now.Sub(t) < window {
-				fresh = append(fresh, t)
-			}
-		}
-		if len(fresh) == 0 {
-			delete(l.buckets, k)
-		} else {
-			b.ts = fresh
-		}
-	}
-	for len(l.buckets) >= maxBuckets {
-		// evict oldest bucket
-		var oldestKey string
-		var oldest time.Time
-		first := true
-		for k, b := range l.buckets {
+
+	pruneMap := func(m map[string]*bucket, w time.Duration) {
+		for k, b := range m {
+			trimExpired(b, now, w)
 			if len(b.ts) == 0 {
-				oldestKey = k
-				break
-			}
-			if first || b.ts[0].Before(oldest) {
-				oldest = b.ts[0]
-				oldestKey = k
-				first = false
+				delete(m, k)
 			}
 		}
-		delete(l.buckets, oldestKey)
-	}
-	for k, b := range l.heavy {
-		fresh := make([]time.Time, 0, len(b.ts))
-		for _, t := range b.ts {
-			if now.Sub(t) < window {
-				fresh = append(fresh, t)
+		if len(m) >= maxBuckets {
+			// LRU eviction: sort by last use, drop oldest.
+			type kv struct {
+				k    string
+				last time.Time
 			}
-		}
-		if len(fresh) == 0 {
-			delete(l.heavy, k)
-		} else {
-			b.ts = fresh
+			keys := make([]kv, 0, len(m))
+			for k, b := range m {
+				keys = append(keys, kv{k, b.last})
+			}
+			sort.Slice(keys, func(i, j int) bool { return keys[i].last.Before(keys[j].last) })
+			excess := len(m) - maxBuckets + 1
+			for i := 0; i < excess && i < len(keys); i++ {
+				delete(m, keys[i].k)
+			}
 		}
 	}
-	for len(l.heavy) >= maxBuckets {
-		var oldestKey string
-		var oldest time.Time
-		first := true
-		for k, b := range l.heavy {
-			if len(b.ts) == 0 {
-				oldestKey = k
-				break
-			}
-			if first || b.ts[0].Before(oldest) {
-				oldest = b.ts[0]
-				oldestKey = k
-				first = false
-			}
-		}
-		delete(l.heavy, oldestKey)
-	}
+
+	pruneMap(l.buckets, window)
+	pruneMap(l.heavy, window)
+	pruneMap(l.failed, failedWindow)
+
+	// global single bucket
+	trimExpired(l.global, now, window)
 }
 
 func (l *Limiter) Allow(client string) (bool, time.Duration) {
@@ -118,45 +108,22 @@ func (l *Limiter) Allow(client string) (bool, time.Duration) {
 	defer l.mu.Unlock()
 	l.prune(now)
 
-	// global
-	gHits := []time.Time{}
-	for _, t := range l.global.ts {
-		if now.Sub(t) < window {
-			gHits = append(gHits, t)
-		}
-	}
-	l.global.ts = gHits
-	if len(gHits) >= globalMax {
-		retry := window - now.Sub(gHits[0])
-		if retry < time.Second {
-			retry = time.Second
-		}
-		return false, retry
-	}
-	gHits = append(gHits, now)
-	l.global.ts = gHits
-
 	b, ok := l.buckets[key]
 	if !ok {
 		b = &bucket{}
 		l.buckets[key] = b
 	}
-	hits := []time.Time{}
-	for _, t := range b.ts {
-		if now.Sub(t) < window {
-			hits = append(hits, t)
-		}
-	}
-	if len(hits) >= maxRequests {
-		b.ts = hits
-		retry := window - now.Sub(hits[0])
+	trimExpired(b, now, window)
+	if len(b.ts) >= maxRequests {
+		b.last = now
+		retry := window - now.Sub(b.ts[0])
 		if retry < time.Second {
 			retry = time.Second
 		}
 		return false, retry
 	}
-	hits = append(hits, now)
-	b.ts = hits
+	b.ts = append(b.ts, now)
+	b.last = now
 	return true, 0
 }
 
@@ -166,26 +133,67 @@ func (l *Limiter) AllowHeavy(client string) (bool, time.Duration) {
 	l.mu.Lock()
 	defer l.mu.Unlock()
 	l.prune(now)
+
 	b, ok := l.heavy[key]
 	if !ok {
 		b = &bucket{}
 		l.heavy[key] = b
 	}
-	hits := []time.Time{}
-	for _, t := range b.ts {
-		if now.Sub(t) < window {
-			hits = append(hits, t)
-		}
-	}
-	if len(hits) >= heavyMax {
-		b.ts = hits
-		retry := window - now.Sub(hits[0])
+	trimExpired(b, now, window)
+	if len(b.ts) >= heavyMax {
+		b.last = now
+		retry := window - now.Sub(b.ts[0])
 		if retry < time.Second {
 			retry = time.Second
 		}
 		return false, retry
 	}
-	hits = append(hits, now)
-	b.ts = hits
+	b.ts = append(b.ts, now)
+	b.last = now
+	return true, 0
+}
+
+func (l *Limiter) AllowGlobal() (bool, time.Duration) {
+	now := time.Now()
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	l.prune(now)
+
+	b := l.global
+	trimExpired(b, now, window)
+	if len(b.ts) >= globalMax {
+		retry := window - now.Sub(b.ts[0])
+		if retry < time.Second {
+			retry = time.Second
+		}
+		return false, retry
+	}
+	b.ts = append(b.ts, now)
+	return true, 0
+}
+
+func (l *Limiter) AllowFailedAuth(client string) (bool, time.Duration) {
+	now := time.Now()
+	key := keyFor(client)
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	l.prune(now)
+
+	b, ok := l.failed[key]
+	if !ok {
+		b = &bucket{}
+		l.failed[key] = b
+	}
+	trimExpired(b, now, failedWindow)
+	if len(b.ts) >= failedMax {
+		retry := failedWindow - now.Sub(b.ts[0])
+		if retry < time.Second {
+			retry = time.Second
+		}
+		b.last = now
+		return false, retry
+	}
+	b.ts = append(b.ts, now)
+	b.last = now
 	return true, 0
 }
