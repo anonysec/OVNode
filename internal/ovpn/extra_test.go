@@ -2,6 +2,7 @@ package ovpn
 
 import (
 	"os"
+	"os/exec"
 	"path/filepath"
 	"testing"
 
@@ -10,6 +11,12 @@ import (
 )
 
 func TestDeleteUserRemovesAllCopies(t *testing.T) {
+	if _, err := exec.LookPath("openvpn"); err != nil {
+		t.Skip("openvpn not installed")
+	}
+	if _, err := os.Stat("/usr/share/easy-rsa/easyrsa"); err != nil {
+		t.Skip("easy-rsa not installed")
+	}
 	root := t.TempDir()
 	t.Setenv("OVNODE_OPENVPN_ROOT", root)
 	t.Setenv("OVNODE_DATA_DIR", root+"/ovnode-data")
