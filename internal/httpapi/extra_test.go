@@ -2,9 +2,9 @@ package httpapi
 
 import (
 	"net/http"
-	"path/filepath"
-	"os"
 	"net/http/httptest"
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 )
