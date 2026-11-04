@@ -238,6 +238,8 @@ New/changed fields: `GET /sync/status` now includes `update_status` and `crl_day
 
 Every install adds one command, `ovnode` (short for `ovnode`). With no argument it prints this list and exits — there is no menu, so a provisioning script that invokes it never blocks waiting for input. Twelve verbs; `ovnode help --all` carries every option and the retired names.
 
+Run `sudo bash scripts/smoke-test.sh` on a fresh node to verify the install.
+
 | Command | What it does |
 | --- | --- |
 | `ovnode status` | Agent, health, version and VPN state. `--all` adds node, mode, port and TLS. |
