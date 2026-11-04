@@ -317,6 +317,9 @@ func Run() error {
 		markSetupPrinted()
 	}
 	go func() {
+		if _, err := os.Stat(filepath.Join(pki.PKIDir(), "private", "ca.key")); err != nil {
+			return
+		}
 		if !pki.RefreshCRL() {
 			logging.Warn("CRL refresh failed")
 		}
