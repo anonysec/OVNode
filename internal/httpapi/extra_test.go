@@ -2,6 +2,8 @@ package httpapi
 
 import (
 	"net/http"
+	"path/filepath"
+	"os"
 	"net/http/httptest"
 	"strings"
 	"testing"
@@ -78,5 +80,45 @@ func TestHandleUpdateInvalidVersion(t *testing.T) {
 	}
 	if msg, _ := body["msg"].(string); msg != "Invalid target version" {
 		t.Fatalf("msg = %q, want %q", msg, "Invalid target version")
+	}
+}
+
+func TestHandleUpdateLock(t *testing.T) {
+	s := testServer(t)
+	dir := t.TempDir()
+	path := filepath.Join(dir, "install.sh")
+	if err := os.WriteFile(path, []byte("#!/bin/sh\nsleep 2\n"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Chown(path, 0, 0); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("APP_DIR", dir)
+
+	rec := do(t, s, http.MethodPost, "/sync/update", "")
+	body := envelopeOf(t, rec)
+	if body["success"] != true {
+		t.Fatalf("first update should start, got %v (%s)", body["success"], rec.Body.String())
+	}
+
+	rec2 := do(t, s, http.MethodPost, "/sync/update", "")
+	body2 := envelopeOf(t, rec2)
+	if body2["success"] != false {
+		t.Fatalf("second update should be refused, got %v", body2["success"])
+	}
+	if msg, _ := body2["msg"].(string); !strings.Contains(msg, "update already running") {
+		t.Fatalf("msg = %q, want update already running", msg)
+	}
+}
+
+func TestHandlePushPKIRejectsInvalid(t *testing.T) {
+	s := testServer(t)
+	rec := do(t, s, http.MethodPut, "/sync/pki", `{"ca_pem":"x","server_cert_pem":"y","server_key_pem":"z"}`)
+	body := envelopeOf(t, rec)
+	if body["success"] != false {
+		t.Fatalf("expected failure, got %v", body["success"])
+	}
+	if msg, _ := body["msg"].(string); !strings.Contains(msg, "Invalid PKI") {
+		t.Fatalf("msg = %q, want Invalid PKI", msg)
 	}
 }
