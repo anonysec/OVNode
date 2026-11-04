@@ -49,10 +49,18 @@ func Connect(cfg config.Hook, arg string) int {
 	poolIP := os.Getenv("ifconfig_pool_remote_ip")
 
 	safeCN := Sanitize(cn)
+	safeIP := Sanitize(orUnknown(trustedIP))
+	safePort := Sanitize(orUnknown(trustedPort))
 
+	// Reject CNs whose sanitized form differs, so distinct names cannot
+	// collapse onto one store entry / limit / disabled flag.
+	if safeCN != cn {
+		logging.Event(cfg.LogFile, "CN=%s (sanitized=%s) rejected: malformed; REJECT", safeCN, safeCN)
+		return 1
+	}
 	// Fail closed on malformed input.
 	if !HookCNValid(safeCN) {
-		logging.Event(cfg.LogFile, "CN=%s (sanitized=%s) rejected: malformed; REJECT", cn, safeCN)
+		logging.Event(cfg.LogFile, "CN=%s (sanitized=%s) rejected: malformed; REJECT", safeCN, safeCN)
 		return 1
 	}
 
@@ -62,7 +70,7 @@ func Connect(cfg config.Hook, arg string) int {
 	if info, err := os.Stat(cfg.UsersDir); err != nil || !info.IsDir() {
 		logging.Event(cfg.LogFile,
 			"CN=%s ip=%s:%s; USERS_DIR missing or not a directory — fail-closed; REJECT",
-			cn, orUnknown(trustedIP), orUnknown(trustedPort))
+			safeCN, safeIP, safePort)
 		return 1
 	}
 	if err := os.MkdirAll(cfg.SessionsDir, 0o755); err == nil { // #nosec G301 -- sessions dir is world-traversable by design
@@ -78,11 +86,11 @@ func Connect(cfg config.Hook, arg string) int {
 	}
 	if state.Disabled {
 		logging.Event(cfg.LogFile, "CN=%s ip=%s:%s is disabled; REJECT",
-			cn, orUnknown(trustedIP), orUnknown(trustedPort))
+			safeCN, safeIP, safePort)
 		return 1
 	}
 	if limit == 0 {
-		logging.Event(cfg.LogFile, "CN=%s limit=unlimited; LOCAL_ALLOW", cn)
+		logging.Event(cfg.LogFile, "CN=%s limit=unlimited; LOCAL_ALLOW", safeCN)
 		return 0
 	}
 
@@ -103,7 +111,7 @@ func Connect(cfg config.Hook, arg string) int {
 	}); err != nil {
 		// Without the lock two sessions of the same user could pass the
 		// limit check at once. Refuse rather than guess.
-		logging.Event(cfg.LogFile, "CN=%s could not take the session lock: %v; REJECT", cn, err)
+		logging.Event(cfg.LogFile, "CN=%s could not take the session lock: %v; REJECT", safeCN, err)
 		return 1
 	}
 	return exit
@@ -115,15 +123,17 @@ func connectLocked(
 	cn, safeCN, trustedIP, trustedPort, poolIP, key string,
 	limit int,
 ) int {
+	safeIP := Sanitize(orUnknown(trustedIP))
+	safePort := Sanitize(orUnknown(trustedPort))
 	// One status read for the whole hook: the live session count of this
 	// CN decides admission.
-	sessions := liveRows(ovpn.SessionsForCN(cfg.StatusFile, cn))
+	sessions := liveRows(ovpn.SessionsForCN(cfg.StatusFile, safeCN))
 	count := len(sessions)
 
 	if count >= limit {
 		if limit != 1 {
 			logging.Event(cfg.LogFile, "CN=%s ip=%s:%s pool=%s limit=%d status=%d; REJECT",
-				cn, orUnknown(trustedIP), orUnknown(trustedPort), orNone(poolIP), limit, count)
+				safeCN, safeIP, safePort, orNone(poolIP), limit, count)
 			return 1
 		}
 		if !takeover(cfg, cn, safeCN, trustedIP, trustedPort, poolIP, sessions, count) {
@@ -137,19 +147,19 @@ func connectLocked(
 	}
 
 	marker := store.Marker{
-		CommonName:  cn,
+		CommonName:  safeCN,
 		TrustedIP:   trustedIP,
 		TrustedPort: trustedPort,
 		PoolIP:      poolIP,
 		Created:     time.Now().Unix(),
 	}
 	if err := store.WriteMarker(filepath.Join(cfg.SessionsDir, key), marker); err != nil {
-		logging.Event(cfg.LogFile, "CN=%s could not write the session marker: %v; REJECT", cn, err)
+		logging.Event(cfg.LogFile, "CN=%s could not write the session marker: %v; REJECT", safeCN, err)
 		return 1
 	}
 
 	logging.Event(cfg.LogFile, "CN=%s ip=%s:%s pool=%s limit=%d status=%d; ALLOW session=%s",
-		cn, orUnknown(trustedIP), orUnknown(trustedPort), orNone(poolIP), limit, count, key)
+		safeCN, safeIP, safePort, orNone(poolIP), limit, count, key)
 	return 0
 }
 
@@ -165,6 +175,8 @@ func takeover(
 	sessions []ovpn.Session,
 	count int,
 ) bool {
+	safeIP := Sanitize(orUnknown(trustedIP))
+	safePort := Sanitize(orUnknown(trustedPort))
 	var cids []string
 	for _, s := range sessions {
 		if isDigits(s.ClientID) {
@@ -173,17 +185,17 @@ func takeover(
 	}
 	logging.Event(cfg.LogFile,
 		"CN=%s ip=%s:%s pool=%s limit=1 status=%d; TAKEOVER (%d mgmt cmds, one session)",
-		cn, orUnknown(trustedIP), orUnknown(trustedPort), orNone(poolIP), count, len(cids))
+		safeCN, safeIP, safePort, orNone(poolIP), count, len(cids))
 
 	// The sidecar is written BEFORE the attempt: the panel toasts the
 	// displaced user on their next login, and a takeover that failed still
 	// displaced somebody.
 	sidecar := writeLastKill(cfg.UsersDir, safeCN, time.Now().Unix())
-	logging.Event(cfg.LogFile, "CN=%s wrote kill sidecar=%s", cn, sidecar)
+	logging.Event(cfg.LogFile, "CN=%s wrote kill sidecar=%s", safeCN, sidecar)
 
 	result, lines := ovpn.Takeover(cfg.MgmtHost, cfg.MgmtPort, cfg.MgmtPassFile, cn, cids)
 	for _, line := range lines {
-		logging.Event(cfg.LogFile, "CN=%s mgmt: %s", cn, line)
+		logging.Event(cfg.LogFile, "CN=%s mgmt: %s", safeCN, line)
 	}
 
 	switch result {

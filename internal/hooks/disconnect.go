@@ -38,6 +38,10 @@ func Disconnect(cfg config.Hook, arg string) int {
 	poolIP := os.Getenv("ifconfig_pool_remote_ip")
 
 	safeCN := Sanitize(cn)
+	if safeCN != cn || !HookCNValid(safeCN) {
+		logging.Syslog("disconnect rejected malformed CN=%s", safeCN)
+		return 0
+	}
 	poolKey := ""
 	if poolIP != "" {
 		poolKey = Sanitize(poolIP)
@@ -53,24 +57,28 @@ func Disconnect(cfg config.Hook, arg string) int {
 	// simultaneous disconnects of the same CN still cannot lose an update.
 	rx := counter("bytes_received")
 	tx := counter("bytes_sent")
-	if total := rx + tx; total > 0 {
-		accumulated, ok := store.BankUsage(cfg.UsageDir, safeCN, total)
+	sessionFile := filepath.Join(cfg.SessionsDir, key)
+	markerExists := false
+	if info, err := os.Stat(sessionFile); err == nil && !info.IsDir() {
+		markerExists = true
+	}
+	if markerExists && rx+tx > 0 {
+		accumulated, ok := store.BankUsage(cfg.UsageDir, safeCN, rx+tx)
 		if ok {
-			logging.Syslog("CN=%s session ended rx=%d tx=%d accumulated=%d", cn, rx, tx, accumulated)
+			logging.Syslog("CN=%s session ended rx=%d tx=%d accumulated=%d", safeCN, rx, tx, accumulated)
 		} else {
-			logging.Syslog("CN=%s usage accounting skipped (rx=%d tx=%d)", cn, rx, tx)
+			logging.Syslog("CN=%s usage accounting skipped (rx=%d tx=%d)", safeCN, rx, tx)
 		}
 	}
 
 	_ = store.Lock(filepath.Join(cfg.SessionsDir, ".lock."+safeCN), func() error {
-		sessionFile := filepath.Join(cfg.SessionsDir, key)
 		if _, err := os.Stat(sessionFile); err == nil {
 			_ = os.Remove(sessionFile)
-			logging.Syslog("CN=%s disconnect removed session=%s", cn, key)
+			logging.Syslog("CN=%s disconnect removed session=%s", safeCN, key)
 		} else {
 			// Legacy layouts: CN.ip.port.pool (pre pool-IP keying).
 			store.RemoveLegacyMarkers(cfg.SessionsDir, safeCN, poolKey, ipKey, portKey)
-			logging.Syslog("CN=%s disconnect fallback cleanup session=%s", cn, key)
+			logging.Syslog("CN=%s disconnect fallback cleanup session=%s", safeCN, key)
 		}
 		return nil
 	})

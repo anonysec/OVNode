@@ -32,7 +32,7 @@ func TestHookCNValidFailsClosed(t *testing.T) {
 	cases := map[string]bool{
 		"u1":      true,
 		"_u1":     true,
-		".u1":     true,
+		".u1":     false,
 		"u-1":     true,
 		"a.b.c":   true,
 		"":        false,

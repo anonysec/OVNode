@@ -235,11 +235,11 @@ func TestConnectUnlimitedAllows(t *testing.T) {
 // sessions add up, and the marker is gone.
 func TestDisconnectBanksUsage(t *testing.T) {
 	tr := newTree(t)
-	setClientEnv(t, "u1", "10.8.0.5")
-	if code := Connect(tr.config(), ""); code != 0 {
-		t.Fatalf("Connect exit code = %d, want 0", code)
-	}
 	for _, pair := range [][2]string{{"100", "50"}, {"7", "3"}} {
+		setClientEnv(t, "u1", "10.8.0.5")
+		if code := Connect(tr.config(), ""); code != 0 {
+			t.Fatalf("Connect exit code = %d, want 0", code)
+		}
 		t.Setenv("bytes_received", pair[0])
 		t.Setenv("bytes_sent", pair[1])
 		if code := Disconnect(tr.config(), ""); code != 0 {
@@ -290,5 +290,49 @@ func TestPurgeRemovesOnlyStaleDeadMarkers(t *testing.T) {
 	}
 	if _, err := os.Stat(filepath.Join(tr.sessions, "u3.10.8.0.3")); err != nil {
 		t.Fatal("the marker with a live pool was removed")
+	}
+}
+
+// TestConnectRejectsCNThatSanitizesDifferently ensures distinct CNs cannot
+// collapse onto one store entry.
+func TestConnectRejectsCNThatSanitizesDifferently(t *testing.T) {
+	tr := newTree(t)
+	tr.user(t, "a_b", "limit=1\ndisabled=0\n")
+	setClientEnv(t, "a b", "10.8.0.2")
+
+	if code := Connect(tr.config(), ""); code != 1 {
+		t.Fatalf("Connect exit code = %d, want 1", code)
+	}
+	events := tr.events(t)
+	if len(events) != 1 || !strings.Contains(events[0], "rejected: malformed; REJECT") {
+		t.Fatalf("events = %v, want malformed reject", events)
+	}
+}
+
+// TestDisconnectIsIdempotent ensures a duplicate disconnect does not bank
+// usage twice.
+func TestDisconnectIsIdempotent(t *testing.T) {
+	tr := newTree(t)
+	setClientEnv(t, "u1", "10.8.0.5")
+	if code := Connect(tr.config(), ""); code != 0 {
+		t.Fatalf("Connect exit code = %d, want 0", code)
+	}
+	t.Setenv("bytes_received", "100")
+	t.Setenv("bytes_sent", "50")
+	if code := Disconnect(tr.config(), ""); code != 0 {
+		t.Fatalf("Disconnect exit code = %d, want 0", code)
+	}
+	// second run with the same counters must not bank again
+	t.Setenv("bytes_received", "100")
+	t.Setenv("bytes_sent", "50")
+	if code := Disconnect(tr.config(), ""); code != 0 {
+		t.Fatalf("Disconnect exit code = %d, want 0", code)
+	}
+	data, err := os.ReadFile(filepath.Join(tr.usage, "u1"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := strings.TrimSpace(string(data)); got != "150" {
+		t.Fatalf("usage = %q, want 150", got)
 	}
 }
