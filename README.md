@@ -78,6 +78,7 @@ The project is preparing for a major architectural refactor. Advanced AI-assiste
 - The agent generates the PKI and `server.conf` on first boot.
 - The installer adds IP forwarding, NAT masquerade, port redirects, `ufw`/`firewalld` openings, log rotation and a systemd unit (or a compose file).
 - Hardened defaults: ECDSA `prime256v1` PKI, `tls-crypt`, `remote-cert-tls client`, `tls-version-min 1.3` in the generated configuration, AES-GCM, compression off, and CRL enforcement.
+- TLS versions: the VPN data and control channel requires TLS 1.3 (`tls-version-min 1.3`); the panel API on port 2083 accepts TLS 1.2 or newer.
 - OpenVPN drops privileges to an unprivileged runtime user, and the management interface listens on localhost only behind a password file.
 - PKI failures start the agent in diagnostics mode instead of killing it, so you can still reach it to see what went wrong.
 
