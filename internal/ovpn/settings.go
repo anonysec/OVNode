@@ -7,6 +7,7 @@ import (
 	"os"
 
 	"ovnode/internal/fsx"
+	"ovnode/internal/policy"
 	"strconv"
 	"strings"
 )
@@ -92,28 +93,7 @@ func ExtraVPNPorts() []int {
 	if v, ok := os.LookupEnv("OVNODE_EXTRA_PORTS"); ok {
 		raw = v
 	}
-	primary := OpenVPNPort()
-	out := []int{}
-	seen := map[int]bool{}
-	for _, tok := range strings.FieldsFunc(raw, func(r rune) bool { return r == ',' || r == ';' }) {
-		tok = strings.TrimSpace(tok)
-		if tok == "" {
-			continue
-		}
-		n, err := strconv.Atoi(tok)
-		if err != nil {
-			continue
-		}
-		if n == primary || seen[n] {
-			continue
-		}
-		if n < 1 || n > 65535 {
-			continue
-		}
-		seen[n] = true
-		out = append(out, n)
-	}
-	return out
+	return policy.ParseExtraPorts(raw, OpenVPNPort())
 }
 
 // Env is the generic accessor matching Python _env.
