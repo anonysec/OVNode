@@ -71,7 +71,9 @@ func nextSerial() (*big.Int, error) {
 	}
 	// increment file
 	inc := new(big.Int).Add(n, big.NewInt(1))
-	_ = fsx.WriteFileAtomic(filepath.Join(PKIDir(), "serial"), []byte(fmt.Sprintf("%X\n", inc)), 0o644)
+	if err := fsx.WriteFileAtomic(filepath.Join(PKIDir(), "serial"), []byte(fmt.Sprintf("%X\n", inc)), 0o644); err != nil {
+		return nil, err
+	}
 	return n, nil
 }
 
@@ -114,11 +116,13 @@ func IssueClientCert(cn string) (string, string, error) {
 	}
 	keyPEM := pem.EncodeToMemory(&pem.Block{Type: "EC PRIVATE KEY", Bytes: keyDER})
 	// append to index.txt
-	appendIndex(cn, serial, now, tmpl.NotAfter, false)
+	if err := appendIndex(cn, serial, now, tmpl.NotAfter, false); err != nil {
+		return "", "", err
+	}
 	return string(certPEM), string(keyPEM), nil
 }
 
-func appendIndex(cn string, serial *big.Int, notBefore, notAfter time.Time, revoked bool) {
+func appendIndex(cn string, serial *big.Int, notBefore, notAfter time.Time, revoked bool) error {
 	// OpenSSL ca format: status \t expiry \t [revocation] \t serial \t unknown \t /CN=cn
 	status := "V"
 	expiry := notAfter.UTC().Format("060102150405Z")
@@ -126,7 +130,7 @@ func appendIndex(cn string, serial *big.Int, notBefore, notAfter time.Time, revo
 	path := filepath.Join(PKIDir(), "index.txt")
 	data, _ := os.ReadFile(path)
 	data = append(data, []byte(line)...)
-	_ = fsx.WriteFileAtomic(path, data, 0o644)
+	return fsx.WriteFileAtomic(path, data, 0o644)
 }
 
 // RevokeCert marks a cert revoked and regenerates CRL.
@@ -287,7 +291,9 @@ func RenewServerCertificateNative() error {
 	if err := fsx.WriteFileAtomic(ServerCert(), certPEM, 0o644); err != nil {
 		return err
 	}
-	appendIndex("server", serial, now, tmpl.NotAfter, false)
+	if err := appendIndex("server", serial, now, tmpl.NotAfter, false); err != nil {
+		return err
+	}
 	return nil
 }
 
