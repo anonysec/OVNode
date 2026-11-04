@@ -34,7 +34,6 @@ func CleanPEM(s string) (string, error) {
 	return string(pem.EncodeToMemory(block)), nil
 }
 
-
 // ensureSinglePEM verifies a PEM block has no trailing garbage.
 func ensureSinglePEM(s string) error {
 	s = strings.TrimSpace(s)

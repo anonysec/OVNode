@@ -91,5 +91,5 @@ func TestChangeConfigValidationTable(t *testing.T) {
 	}
 }
 
-func boolPtr(b bool) *bool { return &b }
+func boolPtr(b bool) *bool    { return &b }
 func strPtr(s string) *string { return &s }

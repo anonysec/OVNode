@@ -114,7 +114,6 @@ func EnsureDirTree() {
 	}
 }
 
-
 // EnsureSecretPerms repairs permissions on secret material.
 func EnsureSecretPerms() {
 	os.Chmod(filepath.Join(PKIDir(), "private"), 0o700)
