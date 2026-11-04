@@ -87,10 +87,14 @@ jobs:
           TAG="${GITHUB_REF_NAME}"
           gh release view "${TAG}" >/dev/null 2>&1 || gh release create "${TAG}" --title "${TAG}" --generate-notes
 
+      - name: Publish installer checksum
+        run: sha256sum install.sh > install.sh.sha256
+
       - name: Upload assets
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
           gh release upload "v${VER}" \
+            install.sh install.sh.sha256 \
             ovnode-linux-amd64 ovnode-linux-amd64.sha256 ovnode-linux-amd64.minisig \
             ovnode-linux-arm64 ovnode-linux-arm64.sha256 ovnode-linux-arm64.minisig --clobber
