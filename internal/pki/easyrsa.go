@@ -122,6 +122,9 @@ func EnsureSecretPerms() {
 		if err != nil || info == nil || info.IsDir() {
 			return nil
 		}
+		if info.Mode()&os.ModeSymlink != 0 {
+			return nil
+		}
 		if info.Name() == "ca.key" || filepath.Ext(path) == ".key" {
 			_ = os.Chmod(path, 0o600)
 		}
@@ -135,7 +138,11 @@ func EnsureSecretPerms() {
 		entries, _ := os.ReadDir(ud)
 		for _, e := range entries {
 			if e.IsDir() {
-				_ = os.Chmod(filepath.Join(ud, e.Name()), 0o700)
+				p := filepath.Join(ud, e.Name())
+				if st, err := os.Lstat(p); err != nil || st.Mode()&os.ModeSymlink != 0 {
+					continue
+				}
+				_ = os.Chmod(p, 0o700)
 			}
 		}
 	}

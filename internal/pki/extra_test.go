@@ -44,3 +44,36 @@ func TestValidatePushedKeyTrailingGarbage(t *testing.T) {
 	}
 	_ = caPEM
 }
+
+func TestEnsureSecretPermsDoesNotChmodSymlinkTarget(t *testing.T) {
+	root := t.TempDir()
+	t.Setenv("OVNODE_OPENVPN_ROOT", root)
+	t.Setenv("OVNODE_DATA_DIR", root+"/ovnode-data")
+	pkiDir := filepath.Join(root, "server", "pki")
+	if err := os.MkdirAll(filepath.Join(pkiDir, "private"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	keyPath := filepath.Join(pkiDir, "private", "a.key")
+	if err := os.WriteFile(keyPath, []byte("k"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	target := filepath.Join(t.TempDir(), "target")
+	if err := os.WriteFile(target, []byte("target"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	link := filepath.Join(pkiDir, "private", "link.key")
+	if err := os.Symlink(target, link); err != nil {
+		t.Fatal(err)
+	}
+
+	EnsureSecretPerms()
+
+	fi, err := os.Stat(keyPath)
+	if err != nil || fi.Mode().Perm() != 0o600 {
+		t.Fatalf("a.key mode = %v, want 0600", fi.Mode().Perm())
+	}
+	ti, err := os.Stat(target)
+	if err != nil || ti.Mode().Perm() != 0o644 {
+		t.Fatalf("symlink target mode = %v, want 0644", ti.Mode().Perm())
+	}
+}
