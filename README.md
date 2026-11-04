@@ -16,9 +16,9 @@ The VPN server half of an [OVManager](https://github.com/anonysec/OVManager) dep
 
 ## Project Status
 
-> **Early Development / Proof of Concept**
+> **Early Development (v2.0.0)**
 >
-> This repository is currently an early-stage proof of concept. It is not production-ready, APIs and configuration formats may change, and operational guarantees are limited. Use in test environments only.
+> This repository is an early development release. It is not production-ready, APIs and configuration formats may change, and operational guarantees are limited. Use in test environments only.
 
 ## Tech Stack
 
@@ -116,7 +116,9 @@ The project is preparing for a major architectural refactor. Advanced AI-assiste
 - `1194/udp` reachable by your users, and `2083/tcp` reachable from the panel.
 
 ```bash
-bash <(curl -sSL https://raw.githubusercontent.com/anonysec/OVNode/main/install.sh)
+bash <(curl -sSL https://raw.githubusercontent.com/anonysec/OVNode/v2.0.0/install.sh)
+
+Pin the installer to a release tag instead of `main`; the installer's own SHA-256 is published in the release notes.
 ```
 
 The menu asks one question, and the recommended choice asks nothing else:
@@ -127,7 +129,7 @@ The menu asks one question, and the recommended choice asks nothing else:
 To answer every setting yourself, run the wizard instead:
 
 ```bash
-bash <(curl -sSL https://raw.githubusercontent.com/anonysec/OVNode/main/install.sh) interactive
+bash <(curl -sSL https://raw.githubusercontent.com/anonysec/OVNode/v2.0.0/install.sh) interactive
 ```
 
 **With no terminal** — a run without one cannot ask, so it needs `-y` to say that is intended. The two flags are `-y/--yes` and `-h/--help`, and everything else is an `OVN_*` variable:

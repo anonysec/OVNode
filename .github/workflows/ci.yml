@@ -13,19 +13,31 @@ jobs:
   test:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-go@v5
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+      - uses: actions/setup-go@d35c59abb061a4a6fb18e82ac0862c26744d6ab5 # v5.5.0
         with:
           go-version: "1.27"
       - name: System dependencies
         run: |
           sudo apt-get update -qq
-          sudo apt-get install -y -qq openvpn easy-rsa iptables iproute2 logrotate
+          sudo apt-get install -y -qq openvpn easy-rsa iptables iproute2 logrotate shellcheck
       - name: Shell syntax
         run: bash -n install.sh ovnode.sh lib.sh doctor.sh scripts/compose/*.sh
       - name: Go tests
-        run: go test ./...
+        run: go test -race ./...
 
+      - name: Vulnerability scan
+        run: |
+          go install golang.org/x/vuln/cmd/govulncheck@latest
+          govulncheck ./...
+      - name: Static analysis
+        run: |
+          go install honnef.co/go/tools/cmd/staticcheck@latest
+          staticcheck ./...
+          go install github.com/securego/gosec/v2/cmd/gosec@latest
+          gosec ./...
+      - name: Shellcheck
+        run: shellcheck install.sh lib.sh ovnode.sh
       - name: Contract drift check
         run: |
           curl -fsSL -o /tmp/panel-contract.json             https://raw.githubusercontent.com/anonysec/OVManager/main/internal/node/contract.json || {
@@ -44,8 +56,8 @@ jobs:
   lint:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-go@v5
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+      - uses: actions/setup-go@d35c59abb061a4a6fb18e82ac0862c26744d6ab5 # v5.5.0
         with:
           go-version: "1.27"
       - run: make lint
@@ -54,8 +66,8 @@ jobs:
     needs: [test, lint]
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-go@v5
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+      - uses: actions/setup-go@d35c59abb061a4a6fb18e82ac0862c26744d6ab5 # v5.5.0
         with:
           go-version: "1.27"
       - run: go build ./cmd/ovnode

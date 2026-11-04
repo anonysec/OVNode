@@ -68,3 +68,15 @@ func TestHandleDownloadOVPNAutoCreateHeavy(t *testing.T) {
 		t.Fatalf("unexpected auth/ratelimit failure: %d", rec.Code)
 	}
 }
+
+func TestHandleUpdateInvalidVersion(t *testing.T) {
+	s := testServer(t)
+	rec := do(t, s, http.MethodPost, "/sync/update", `{"version":"1.2"}`)
+	body := envelopeOf(t, rec)
+	if body["success"] != false {
+		t.Fatalf("expected failure, got %v", body["success"])
+	}
+	if msg, _ := body["msg"].(string); msg != "Invalid target version" {
+		t.Fatalf("msg = %q, want %q", msg, "Invalid target version")
+	}
+}

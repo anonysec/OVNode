@@ -72,6 +72,12 @@ publish_release() {
     cp "$FAKE_BIN" "$RELEASE_DIR/$ASSET"
     chmod 0755 "$RELEASE_DIR/$ASSET"
     ( cd "$RELEASE_DIR" && sha256sum "$ASSET" > "$ASSET.sha256" )
+    # Sign the fixture with a throwaway keypair so the installer's minisign
+    # verification path is exercised by the same tests.
+    TEST_MINISIGN_KEY="$WORK/minisign.key"
+    TEST_MINISIGN_PUB="$WORK/minisign.pub"
+    minisign -G -p "$TEST_MINISIGN_PUB" -s "$TEST_MINISIGN_KEY" -W >/dev/null 2>&1
+    minisign -S -s "$TEST_MINISIGN_KEY" -m "$RELEASE_DIR/$ASSET" >/dev/null 2>&1
 }
 
 # The curl shim. A release URL becomes the local fixture; anything else is a
@@ -162,6 +168,8 @@ run_installer() {
         "FAKE_OVNODE_ASSETS=$ROOT_DIR"
         "CURL_LOG=$CURL_LOG"
         "NO_COLOR=1"
+        "OVN_VERSION=2.0.0"
+        "OVN_MINISIGN_PUBKEY=$TEST_MINISIGN_PUB"
     )
     local driver="${RUN_DRIVER:-$DRIVER}"
     if [[ -n "$tty_answer" ]]; then
@@ -239,7 +247,7 @@ if ! command -v script >/dev/null 2>&1; then
 else
     WIZ_APP="$WORK/wizard/app"
     rm -rf "$WORK/wizard"; mkdir -p "$WORK/wizard"
-    run_case fresh-wizard "$WIZ_APP" --tty $'2083\n1' -- interactive
+    run_case fresh-wizard "$WIZ_APP" --tty $'ovnode\n2083\n1194\n1\n\n\n' -- interactive
     expect_status 0 "$RC" "the wizard installs on a fresh server"
     expect_in "$WORK/fresh-wizard.log" "MARK-reached-do_install" "the wizard reached the install step"
     expect_not_in "$WORK/fresh-wizard.log" "already installed" "the wizard did not report an existing node"

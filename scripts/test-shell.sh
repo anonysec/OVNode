@@ -31,7 +31,7 @@ echo "OK: all shell files pass bash -n"
 
 # Version parity
 echo "=== version parity ==="
-v_install=$(OVN_VERSION="$("${ROOT_DIR}/cmd/ovnode/main.go" 2>/dev/null || echo "")" bash -c '. "'"${ROOT_DIR}"'/install.sh"; echo "$VERSION"' 2>/dev/null || grep -m1 '^VERSION=' "${ROOT_DIR}/ovnode.sh" | cut -d= -f2 | tr -d '"')
+v_install=$(OVN_VERSION="$(go run "${ROOT_DIR}/cmd/ovnode" version 2>/dev/null || echo "")" bash -c '. "'"${ROOT_DIR}"'/install.sh"; echo "$VERSION"' 2>/dev/null || grep -m1 '^VERSION=' "${ROOT_DIR}/ovnode.sh" | cut -d= -f2 | tr -d '"')
 v_ovnode=$(grep -m1 '^VERSION=' "${ROOT_DIR}/ovnode.sh" | cut -d= -f2 | tr -d '"')
 v_binary=$(go run "${ROOT_DIR}/cmd/ovnode" version 2>/dev/null || echo "unknown")
 echo "install.sh: $v_install"

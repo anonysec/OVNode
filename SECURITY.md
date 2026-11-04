@@ -4,10 +4,11 @@
 
 | Version | Supported |
 | ------- | --------- |
-| 1.x     | yes       |
+| 2.0.x   | yes       |
+| 1.x     | no        |
 | < 1.0   | no        |
 
-Upgrade together with the panel: node `1.x` (current line 1.3) pairs with OVManager `2.x`.
+Upgrade together with the panel: node `2.0.x` (current line) pairs with OVManager `2.x`.
 
 ## Reporting a vulnerability
 
@@ -17,6 +18,15 @@ or email the maintainer address listed on the repository profile.
 
 Include: affected version(s), steps to reproduce, impact. Acknowledgement
 within 7 days, fix timeline within 30 days, 90-day disclosure after fix.
+
+## Threat model notes
+
+- The API key is the full node control secret: any holder can push PKI,
+  restart or trigger a self-update. Treat it like a root credential and
+  rotate it with `ovnode auth rotate` on suspected exposure.
+- A single panel holds the node lease; a second panel is refused with 409.
+- The self-updater only runs a root-owned, non-writable `install.sh` and
+  verifies the release signature (minisign) unless `OVN_ALLOW_UNSIGNED=1`.
 
 ## Scope
 

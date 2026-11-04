@@ -15,14 +15,14 @@ jobs:
   test:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-go@v5
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+      - uses: actions/setup-go@d35c59abb061a4a6fb18e82ac0862c26744d6ab5 # v5.5.0
         with:
           go-version: "1.27"
       - name: System dependencies
         run: |
           sudo apt-get update -qq
-          sudo apt-get install -y -qq openvpn easy-rsa iptables iproute2 logrotate
+          sudo apt-get install -y -qq openvpn easy-rsa iptables iproute2 logrotate minisign
       - name: Lint
         run: make lint
       - name: Go tests
@@ -36,12 +36,12 @@ jobs:
 
     steps:
       - name: Checkout repository
-        uses: actions/checkout@v4
+        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
         with:
           fetch-depth: 0
 
       - name: Setup Go
-        uses: actions/setup-go@v5
+        uses: actions/setup-go@d35c59abb061a4a6fb18e82ac0862c26744d6ab5 # v5.5.0
         with:
           go-version: "1.27"
 
@@ -56,6 +56,9 @@ jobs:
       # carries the shell files it needs. A release used to ship the whole
       # source tree, so every box ended up with a checkout of the repository
       # in /opt/ovnode.
+      - name: System dependencies
+        run: sudo apt-get update -qq && sudo apt-get install -y -qq minisign
+
       - name: Build platform binaries
         run: |
           VER="$(go run ./cmd/ovnode version)"
@@ -65,6 +68,16 @@ jobs:
             GOOS=linux GOARCH="${arch}" CGO_ENABLED=0 go build -trimpath -ldflags "-s -w" -o "${out}" ./cmd/ovnode
             sha256sum "${out}" > "${out}.sha256"
           done
+
+      - name: Sign platform binaries
+        env:
+          MINISIGN_SECRET_KEY: ${{ secrets.MINISIGN_SECRET_KEY }}
+        run: |
+          printf '%s' "$MINISIGN_SECRET_KEY" > /tmp/ovnode.key
+          for arch in amd64 arm64; do
+            minisign -S -s /tmp/ovnode.key -m "ovnode-linux-${arch}"
+          done
+          rm -f /tmp/ovnode.key
 
       - name: Ensure release exists
         if: startsWith(github.ref_name, 'v')
@@ -79,5 +92,5 @@ jobs:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
           gh release upload "v${VER}" \
-            ovnode-linux-amd64 ovnode-linux-amd64.sha256 \
-            ovnode-linux-arm64 ovnode-linux-arm64.sha256 --clobber
+            ovnode-linux-amd64 ovnode-linux-amd64.sha256 ovnode-linux-amd64.minisig \
+            ovnode-linux-arm64 ovnode-linux-arm64.sha256 ovnode-linux-arm64.minisig --clobber
