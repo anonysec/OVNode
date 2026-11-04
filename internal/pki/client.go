@@ -206,6 +206,16 @@ func serialForCN(cn string) (string, bool, error) {
 	return "", false, fmt.Errorf("no valid certificate for cn %q", cn)
 }
 
+// WithPKILock runs fn while holding the PKI write lock.
+func WithPKILock(fn func() error) error {
+	unlock, err := lockPKI()
+	if err != nil {
+		return err
+	}
+	defer unlock()
+	return fn()
+}
+
 // RemoveClientMaterial deletes the certificate, key and inline bundle of a
 // client from the PKI tree.
 //

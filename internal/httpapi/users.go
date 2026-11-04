@@ -5,6 +5,7 @@ package httpapi
 
 import (
 	"errors"
+	"fmt"
 	"net/http"
 	"os"
 	"path/filepath"
@@ -388,29 +389,64 @@ func (s *Server) handlePushPKI(w http.ResponseWriter, r *http.Request) {
 	body.ServerCertPEM = certClean
 	body.ServerKeyPEM = keyClean
 
-	for _, item := range []struct {
-		label, pem string
-		path       string
-		perm       os.FileMode
-	}{
-		{"ca_pem", body.CAPEM, pki.CACert(), 0o644},
-		{"server_cert_pem", body.ServerCertPEM, pki.ServerCert(), 0o644},
-		{"server_key_pem", body.ServerKeyPEM, pki.ServerKey(), 0o600},
-	} {
-		if item.pem == "" {
-			writeFail(w, item.label+" is required")
-			return
+	err := pki.WithPKILock(func() error {
+		type pkiFile struct {
+			path    string
+			pem     string
+			perm    os.FileMode
+			old     []byte
+			existed bool
 		}
-		if err := os.MkdirAll(filepath.Dir(item.path), 0o755); err != nil {
-			writeFail(w, "Failed to store pushed PKI")
-			return
+		files := []pkiFile{
+			{path: pki.ServerKey(), pem: body.ServerKeyPEM, perm: 0o600},
+			{path: pki.ServerCert(), pem: body.ServerCertPEM, perm: 0o644},
+			{path: pki.CACert(), pem: body.CAPEM, perm: 0o644},
 		}
-		// Atomic: the server reads these files on the next start, and a
-		// half-written certificate would lock every client out.
-		if err := fsx.WriteFileAtomic(item.path, []byte(item.pem), item.perm); err != nil {
-			logging.Error("could not store the pushed %s: %v", item.label, err)
-			writeFail(w, "Failed to store pushed PKI")
-			return
+		labels := []string{"server_key_pem", "server_cert_pem", "ca_pem"}
+		for i := range files {
+			data, rerr := os.ReadFile(files[i].path)
+			if rerr == nil {
+				files[i].existed = true
+				files[i].old = data
+			} else if !os.IsNotExist(rerr) {
+				return rerr
+			}
+			if files[i].pem == "" {
+				return fmt.Errorf("%s is required", labels[i])
+			}
+		}
+		restore := func(n int) {
+			for j := 0; j < n; j++ {
+				if files[j].existed {
+					_ = fsx.WriteFileAtomic(files[j].path, files[j].old, files[j].perm)
+				} else {
+					_ = os.Remove(files[j].path)
+				}
+			}
+		}
+		written := 0
+		for i := range files {
+			if err := os.MkdirAll(filepath.Dir(files[i].path), 0o755); err != nil {
+				restore(written)
+				return err
+			}
+			if err := fsx.WriteFileAtomic(files[i].path, []byte(files[i].pem), files[i].perm); err != nil {
+				restore(written)
+				return err
+			}
+			written++
+		}
+		return nil
+	})
+	if err != nil {
+		logging.Error("could not store the pushed PKI: %v", err)
+		writeFail(w, "Failed to store pushed PKI")
+		return
+	}
+
+	if _, err := os.Stat(filepath.Join(pki.PKIDir(), "private", "ca.key")); err == nil {
+		if !pki.Healthy() {
+			logging.Warn("pushed CA replaced the node CA; local CA key may no longer match, so this node cannot issue or revoke certificates locally")
 		}
 	}
 	reloaded := false
