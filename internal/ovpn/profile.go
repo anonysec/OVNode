@@ -6,6 +6,8 @@ package ovpn
 import (
 	"os"
 	"strings"
+
+	"ovnode/internal/pki"
 )
 
 // Build assembles a .ovpn profile from named parts.
@@ -38,14 +40,32 @@ func BuildTemplate(path string, p Parts) (string, error) {
 		b.WriteString(line)
 		b.WriteString("\n")
 	}
-	if p.CACert != "" {
-		b.WriteString("\n<ca>\n" + p.CACert + "\n</ca>\n")
+	caCert := p.CACert
+	if caCert != "" {
+		if c, err := pki.CleanPEM(caCert); err == nil {
+			caCert = c
+		}
 	}
-	if p.ClientCert != "" {
-		b.WriteString("\n<cert>\n" + p.ClientCert + "\n</cert>\n")
+	clientCert := p.ClientCert
+	if clientCert != "" {
+		if c, err := pki.CleanPEM(clientCert); err == nil {
+			clientCert = c
+		}
 	}
-	if p.ClientKey != "" {
-		b.WriteString("\n<key>\n" + p.ClientKey + "\n</key>\n")
+	clientKey := p.ClientKey
+	if clientKey != "" {
+		if c, err := pki.CleanPEM(clientKey); err == nil {
+			clientKey = c
+		}
+	}
+	if caCert != "" {
+		b.WriteString("\n<ca>\n" + caCert + "\n</ca>\n")
+	}
+	if clientCert != "" {
+		b.WriteString("\n<cert>\n" + clientCert + "\n</cert>\n")
+	}
+	if clientKey != "" {
+		b.WriteString("\n<key>\n" + clientKey + "\n</key>\n")
 	}
 	if p.TLSCrypt != "" {
 		b.WriteString("\n<tls-crypt>\n" + p.TLSCrypt + "\n</tls-crypt>\n")

@@ -375,6 +375,19 @@ func (s *Server) handlePushPKI(w http.ResponseWriter, r *http.Request) {
 		writeFail(w, "Invalid PKI payload")
 		return
 	}
+	// validate pushed PKI
+	if err := pki.ValidateServerCert(body.CAPEM, body.ServerCertPEM, body.ServerKeyPEM); err != nil {
+		writeFail(w, "Invalid PKI: "+err.Error())
+		return
+	}
+	// clean PEMs
+	caClean, _ := pki.CleanPEM(body.CAPEM)
+	certClean, _ := pki.CleanPEM(body.ServerCertPEM)
+	keyClean, _ := pki.CleanPEM(body.ServerKeyPEM)
+	body.CAPEM = caClean
+	body.ServerCertPEM = certClean
+	body.ServerKeyPEM = keyClean
+
 	for _, item := range []struct {
 		label, pem string
 		path       string
@@ -384,8 +397,8 @@ func (s *Server) handlePushPKI(w http.ResponseWriter, r *http.Request) {
 		{"server_cert_pem", body.ServerCertPEM, pki.ServerCert(), 0o644},
 		{"server_key_pem", body.ServerKeyPEM, pki.ServerKey(), 0o600},
 	} {
-		if !strings.Contains(item.pem, "-----BEGIN") {
-			writeFail(w, item.label+" is not a PEM block")
+		if item.pem == "" {
+			writeFail(w, item.label+" is required")
 			return
 		}
 		if err := os.MkdirAll(filepath.Dir(item.path), 0o755); err != nil {

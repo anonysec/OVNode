@@ -1,5 +1,14 @@
 # Changelog
 
+## 1.4.25 — 2026-11-04
+
+- Security(pki): tls-crypt key chmod 0600 (was 0644); private dirs 0700; ca.key and *.key 0600; per-user dirs 0700. Added pki.EnsureSecretPerms() (serve start + update) and store.FixRuntimePermissions repair.
+- Security(pki): atomic writes for serial, index, CRL, crlnumber, server cert/key (temp pair verified via tls.X509KeyPair before rename); RenewServerCert and nextSerial under lockPKI.
+- Security(httpapi): handlePushPKI and CreateUserWithCredentials validate PEM (CA is CA, server cert chains to CA, key matches, CN matches, not expired, no trailing garbage, 16 KiB cap) and re-encode via pem.EncodeToMemory.
+- Security(profile): BuildTemplate re-encodes pushed PEMs; store.WriteName rejects control characters.
+- Fix(delete): DeleteUser removes all client material copies (issued/private/inline + user dir).
+
+
 ## 1.4.24 — 2026-11-01
 
 - Fix(hooks): AgentBin points at the app binary (not data dir); server.conf stale hook lines are replaced on upgrade.

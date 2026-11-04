@@ -66,11 +66,26 @@ func CreateUserWithCredentials(cn, certPEM, keyPEM, caPEM string, maxLogins int,
 	if certPEM == "" || keyPEM == "" {
 		return fmt.Errorf("cert_pem and key_pem are required")
 	}
+	if err := pki.ValidateClientCert(cn, certPEM, keyPEM, caPEM); err != nil {
+		return err
+	}
+	// clean PEMs
+	if c, err := pki.CleanPEM(certPEM); err == nil {
+		certPEM = c
+	}
+	if c, err := pki.CleanPEM(keyPEM); err == nil {
+		keyPEM = c
+	}
+	if caPEM != "" {
+		if c, err := pki.CleanPEM(caPEM); err == nil {
+			caPEM = c
+		}
+	}
 	dir, err := store.UserDir(pki.UsersDir(), cn)
 	if err != nil {
 		return err
 	}
-	if err := os.MkdirAll(dir, 0o755); err != nil {
+	if err := os.MkdirAll(dir, 0o700); err != nil {
 		return err
 	}
 	for _, f := range []struct {
@@ -216,7 +231,7 @@ func BuildUserProfile(cn string) (string, error) {
 	if err != nil {
 		return "", err
 	}
-	if err := os.MkdirAll(dir, 0o755); err != nil {
+	if err := os.MkdirAll(dir, 0o700); err != nil {
 		return "", err
 	}
 	path := filepath.Join(dir, "client.ovpn")
