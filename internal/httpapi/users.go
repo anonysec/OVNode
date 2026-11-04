@@ -449,6 +449,13 @@ func (s *Server) handlePushPKI(w http.ResponseWriter, r *http.Request) {
 			logging.Warn("pushed CA replaced the node CA; local CA key may no longer match, so this node cannot issue or revoke certificates locally")
 		}
 	}
+	if !pki.CRLMatchesCA() {
+		if pki.Healthy() {
+			pki.RegenerateCRL()
+		} else {
+			logging.Warn("the CRL was signed by the previous CA; push a CRL signed by the new CA or clients may be refused")
+		}
+	}
 	reloaded := false
 	if ovpn.OpenVPNIsRunning() {
 		reloaded = ovpn.ReloadOpenVPN()

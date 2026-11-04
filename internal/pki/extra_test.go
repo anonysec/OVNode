@@ -77,3 +77,29 @@ func TestEnsureSecretPermsDoesNotChmodSymlinkTarget(t *testing.T) {
 		t.Fatalf("symlink target mode = %v, want 0644", ti.Mode().Perm())
 	}
 }
+
+func TestCRLMatchesCA(t *testing.T) {
+	root := t.TempDir()
+	t.Setenv("OVNODE_OPENVPN_ROOT", root)
+	t.Setenv("OVNODE_DATA_DIR", root+"/ovnode-data")
+	writeTestCA(t, root)
+	if err := GenerateCRL(); err != nil {
+		t.Fatal(err)
+	}
+	if !CRLMatchesCA() {
+		t.Fatal("CRLMatchesCA() = false, want true")
+	}
+	// A different CA must not match the existing CRL.
+	root2 := t.TempDir()
+	writeTestCA(t, root2)
+	data, err := os.ReadFile(filepath.Join(root2, "server", "pki", "ca.crt"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(root, "server", "pki", "ca.crt"), data, 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if CRLMatchesCA() {
+		t.Fatal("CRLMatchesCA() = true, want false")
+	}
+}

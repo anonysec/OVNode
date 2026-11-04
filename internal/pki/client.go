@@ -161,6 +161,16 @@ func RefreshCRL() bool {
 	return EnsureCRL()
 }
 
+// RegenerateCRL regenerates the CRL immediately, ignoring its expiry.
+func RegenerateCRL() bool {
+	unlock, err := lockPKI()
+	if err != nil {
+		return false
+	}
+	defer unlock()
+	return GenerateCRL() == nil
+}
+
 // validSerialsForCN returns the serials of every still-valid certificate for
 // cn, in index.txt order. A CN may appear more than once after a delete and
 // re-issue, and revoking by CN must cover all of them.

@@ -4,6 +4,8 @@
 package pki
 
 import (
+	"crypto/x509"
+	"encoding/pem"
 	"os"
 	"os/exec"
 	"strconv"
@@ -99,6 +101,45 @@ func EnsureCRL() bool {
 	}
 	os.Chmod(CRLFile(), 0o644)
 	return true
+}
+
+// CRLMatchesCA reports whether the local CRL was signed by the current CA.
+//
+// A pushed CA replaces ca.crt but leaves the old crl.pem behind; OpenVPN's
+// crl-verify then rejects every client. Returning true when no CRL exists
+// keeps a fresh node from being reported as mismatched.
+func CRLMatchesCA() bool {
+	if _, err := os.Stat(CRLFile()); err != nil {
+		if os.IsNotExist(err) {
+			return true
+		}
+		return false
+	}
+	crlPEM, err := os.ReadFile(CRLFile())
+	if err != nil {
+		return false
+	}
+	crlBlock, _ := pem.Decode(crlPEM)
+	if crlBlock == nil {
+		return false
+	}
+	crl, err := x509.ParseRevocationList(crlBlock.Bytes)
+	if err != nil {
+		return false
+	}
+	caPEM, err := os.ReadFile(CACert())
+	if err != nil {
+		return false
+	}
+	caBlock, _ := pem.Decode(caPEM)
+	if caBlock == nil {
+		return false
+	}
+	cert, err := x509.ParseCertificate(caBlock.Bytes)
+	if err != nil {
+		return false
+	}
+	return crl.CheckSignatureFrom(cert) == nil
 }
 
 // ReadTLSCryptKey returns the tls-crypt key or "".

@@ -53,6 +53,7 @@ func (s *Server) handleStatus(w http.ResponseWriter, r *http.Request) {
 		// every client and the panel cannot see it otherwise.
 		"ca_expiry":          pki.CertExpiry(pki.CACert()),
 		"crl_days_remaining": pki.CRLDaysRemaining(),
+		"crl_matches_ca":     pki.CRLMatchesCA(),
 		"server_expiry":      pki.CertExpiry(pki.ServerCert()),
 		"errors_1h":          errors1h,
 		"warnings_1h":        warnings1h,
