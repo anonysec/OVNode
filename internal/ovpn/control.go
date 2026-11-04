@@ -4,6 +4,7 @@
 package ovpn
 
 import (
+	"fmt"
 	"os"
 	"path/filepath"
 	"regexp"
@@ -382,6 +383,16 @@ func ChangeConfig(req ChangeConfigRequest, classification *ChangeConfigResult) b
 		if extraProvided {
 			policy.WritePortsState(extraPorts)
 			policy.SyncNATConfig(ovpnPort, extraPorts)
+		}
+		if dnsProvided {
+			if st := policy.ReadDNSState(); st.DNS1 != d1 || st.DNS2 != d2 {
+				return fmt.Errorf("dns state was not written")
+			}
+		}
+		if extraProvided {
+			if !intsEqual(policy.ReadPortsState().Ports, extraPorts) {
+				return fmt.Errorf("ports state was not written")
+			}
 		}
 		return nil
 	}()
