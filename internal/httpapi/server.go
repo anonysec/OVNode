@@ -316,6 +316,18 @@ func Run() error {
 	if printed {
 		markSetupPrinted()
 	}
+	go func() {
+		if !pki.RefreshCRL() {
+			logging.Warn("CRL refresh failed")
+		}
+		ticker := time.NewTicker(24 * time.Hour)
+		defer ticker.Stop()
+		for range ticker.C {
+			if !pki.RefreshCRL() {
+				logging.Warn("CRL refresh failed")
+			}
+		}
+	}()
 	err = s.ListenAndServe()
 	return err
 }

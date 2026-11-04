@@ -150,6 +150,17 @@ func RevokeCertByCN(cn string) error {
 	return nil
 }
 
+// RefreshCRL regenerates the CRL under the PKI lock. It is safe to call
+// from a long-running service's periodic refresh.
+func RefreshCRL() bool {
+	unlock, err := lockPKI()
+	if err != nil {
+		return false
+	}
+	defer unlock()
+	return EnsureCRL()
+}
+
 // validSerialsForCN returns the serials of every still-valid certificate for
 // cn, in index.txt order. A CN may appear more than once after a delete and
 // re-issue, and revoking by CN must cover all of them.

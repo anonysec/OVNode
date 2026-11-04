@@ -51,12 +51,13 @@ func (s *Server) handleStatus(w http.ResponseWriter, r *http.Request) {
 		"cert_expiry": pki.CertExpiry(s.CertFile),
 		// The VPN PKI: a lapsed CA or server certificate silently kills
 		// every client and the panel cannot see it otherwise.
-		"ca_expiry":     pki.CertExpiry(pki.CACert()),
-		"server_expiry": pki.CertExpiry(pki.ServerCert()),
-		"errors_1h":     errors1h,
-		"warnings_1h":   warnings1h,
-		"last_error":    lastError,
-		"update_status": updater.UpdateStatus(s.appDir()),
+		"ca_expiry":          pki.CertExpiry(pki.CACert()),
+		"crl_days_remaining": pki.CRLDaysRemaining(),
+		"server_expiry":      pki.CertExpiry(pki.ServerCert()),
+		"errors_1h":          errors1h,
+		"warnings_1h":        warnings1h,
+		"last_error":         lastError,
+		"update_status":      updater.UpdateStatus(s.appDir()),
 	})
 }
 
