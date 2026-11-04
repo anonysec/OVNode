@@ -15,14 +15,16 @@ package httpapi
 
 import (
 	"compress/gzip"
+	"context"
 	"crypto/tls"
 	"fmt"
-	"io"
 	"net"
 	"net/http"
 	"os"
+	"os/signal"
 	"path/filepath"
 	"strings"
+	"syscall"
 	"time"
 
 	"ovnode/internal/logging"
@@ -121,21 +123,33 @@ func gzipMiddleware(next http.Handler) http.Handler {
 			next.ServeHTTP(w, r)
 			return
 		}
+		// Never compress the .ovpn download (raw profile).
+		if strings.Contains(r.URL.Path, "/sync/download/ovpn/") {
+			next.ServeHTTP(w, r)
+			return
+		}
 		w.Header().Set("Content-Encoding", "gzip")
 		w.Header().Set("Vary", "Accept-Encoding")
 		gz := gzip.NewWriter(w)
 		defer gz.Close()
-		next.ServeHTTP(&gzipWriter{ResponseWriter: w, Writer: gz}, r)
+		next.ServeHTTP(&gzipWriter{ResponseWriter: w, gz: gz}, r)
 	})
 }
 
 type gzipWriter struct {
 	http.ResponseWriter
-	io.Writer
+	gz *gzip.Writer
 }
 
 func (g *gzipWriter) Write(b []byte) (int, error) {
-	return g.Writer.Write(b)
+	return g.gz.Write(b)
+}
+
+func (g *gzipWriter) Flush() {
+	_ = g.gz.Flush()
+	if f, ok := g.ResponseWriter.(http.Flusher); ok {
+		f.Flush()
+	}
 }
 
 // ListenAndServe serves the /sync API over TLS.
@@ -157,10 +171,26 @@ func (s *Server) ListenAndServe() error {
 		MaxHeaderBytes:    1 << 20,
 		TLSConfig: &tls.Config{
 			Certificates: []tls.Certificate{cert},
+			MinVersion:   tls.VersionTLS12,
 		},
 		Handler: gzipMiddleware(s.recoveryMiddleware(s.routes())),
 	}
-	return srv.ListenAndServeTLS("", "")
+	// Graceful shutdown on SIGINT/SIGTERM.
+	errCh := make(chan error, 1)
+	go func() { errCh <- srv.ListenAndServeTLS("", "") }()
+	sigCh := make(chan os.Signal, 1)
+	signal.Notify(sigCh, os.Interrupt, syscall.SIGTERM)
+	select {
+	case err := <-errCh:
+		return err
+	case <-sigCh:
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+	if err := srv.Shutdown(ctx); err != nil {
+		return err
+	}
+	return http.ErrServerClosed
 }
 
 // TLSMaterial resolves cert+key like Python _tls_material: operator override
@@ -215,6 +245,23 @@ func setupPrintedPath() string {
 	return filepath.Join(dir, ".setup-printed")
 }
 
+// isTTY reports whether f is a terminal.
+func isTTY(f *os.File) bool {
+	info, err := f.Stat()
+	if err != nil {
+		return false
+	}
+	return (info.Mode() & os.ModeCharDevice) != 0
+}
+
+// keyFingerprint returns a non-secret hint for the API key.
+func keyFingerprint(key string) string {
+	if len(key) < 8 {
+		return "****"
+	}
+	return key[:4] + "..." + key[len(key)-4:]
+}
+
 // printSetupIfFirstBoot writes the connection details to stdout the first time
 // the agent successfully serves. It returns true when it printed.
 func printSetupIfFirstBoot() bool {
@@ -233,7 +280,11 @@ func printSetupIfFirstBoot() bool {
 	fmt.Println("Address:", primaryIP())
 	fmt.Println("Port:", port)
 	fmt.Println("Protocol:", proto)
-	fmt.Println("API Key:", key)
+	if isTTY(os.Stdout) {
+		fmt.Println("API Key:", key)
+	} else {
+		fmt.Println("API Key fingerprint:", keyFingerprint(key))
+	}
 	fmt.Println("Certificate:")
 	if data, err := os.ReadFile(certFile); err == nil {
 		fmt.Print(string(data))
@@ -257,15 +308,16 @@ func Run() error {
 	s := NewServer()
 	s.CertFile = cert
 	s.KeyFile = key
+	if len(s.APIKey) < 16 {
+		return fmt.Errorf("API_KEY must be at least 16 characters")
+	}
 	logging.Info("ovnode agent %s starting (addr=%s, openvpn_root=%s)",
 		version.Version, s.Addr, pki.OpenVPNRoot())
 	fmt.Println("ovnode serve listening on", s.Addr)
 	printed := printSetupIfFirstBoot()
-	err = s.ListenAndServe()
-	if err == nil || err == http.ErrServerClosed {
-		if printed {
-			markSetupPrinted()
-		}
+	if printed {
+		markSetupPrinted()
 	}
+	err = s.ListenAndServe()
 	return err
 }
