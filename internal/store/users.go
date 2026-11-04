@@ -196,7 +196,7 @@ func MigrateLegacy(openvpnRoot string) {
 				namePath := filepath.Join(usersDir, uid, "name")
 				if _, err := os.Stat(namePath); err != nil {
 					os.MkdirAll(filepath.Join(usersDir, uid), 0o755)
-					os.WriteFile(namePath, []byte(name+"\n"), 0o600)
+					fsx.WriteFileAtomic(namePath, []byte(name+"\n"), 0o600)
 				}
 			}
 		}
@@ -245,7 +245,7 @@ func moveFile(src, dst string) {
 		if rerr != nil {
 			return
 		}
-		if werr := os.WriteFile(dst, data, 0o644); werr == nil {
+		if werr := fsx.WriteFileAtomic(dst, data, 0o644); werr == nil {
 			os.Remove(src)
 		}
 	}
