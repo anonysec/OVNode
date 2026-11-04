@@ -89,6 +89,21 @@ func UpdateStatus(appDir string) string {
 		return "idle"
 	}
 	status := strings.TrimSpace(string(data))
+	if status == "running" {
+		f, err := os.OpenFile(filepath.Join(appDir, lockName), os.O_RDWR, 0)
+		if err != nil {
+			return "running"
+		}
+		defer f.Close()
+		if err := syscall.Flock(int(f.Fd()), syscall.LOCK_EX|syscall.LOCK_NB); err == nil {
+			_ = syscall.Flock(int(f.Fd()), syscall.LOCK_UN)
+			return "interrupted"
+		}
+		if errors.Is(err, syscall.EWOULDBLOCK) {
+			return "running"
+		}
+		return "running"
+	}
 	if len(status) > 32 {
 		status = status[:32]
 	}
