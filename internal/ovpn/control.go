@@ -302,7 +302,22 @@ func ChangeConfig(req ChangeConfigRequest, classification *ChangeConfigResult) b
 	tmplChanged := newTemplate != originalTmpl
 	confChanged := newConfig != config
 
-	anyChange := confChanged || tmplChanged || dnsProvided || ipv6Provided || extraProvided
+	dnsStateChanged := false
+	if dnsProvided {
+		st := policy.ReadDNSState()
+		dnsStateChanged = st.DNS1 != d1 || st.DNS2 != d2
+	}
+	ipv6StateChanged := false
+	if ipv6Provided {
+		en, pref := policy.IPv6Effective(IPv6Enabled(), IPv6Prefix())
+		ipv6StateChanged = en != enableIPv6 || pref != ipv6Prefix
+	}
+	portsStateChanged := false
+	if extraProvided {
+		portsStateChanged = !intsEqual(policy.PortsEffective(ExtraVPNPorts()), extraPorts)
+	}
+
+	anyChange := confChanged || tmplChanged || dnsStateChanged || ipv6StateChanged || portsStateChanged
 
 	// no-op fast path
 	if !anyChange {
@@ -385,7 +400,7 @@ func ChangeConfig(req ChangeConfigRequest, classification *ChangeConfigResult) b
 		if OpenVPNIsRunning() && !RestartOpenVPN() {
 			restartFailed = true
 		}
-	} else if anyChange {
+	} else if confChanged {
 		if OpenVPNIsRunning() && !ReloadOpenVPN() {
 			restartFailed = true
 		}
@@ -576,4 +591,16 @@ func invalidateCachedOVPN() {
 	for _, m := range matches {
 		os.Remove(m)
 	}
+}
+
+func intsEqual(a, b []int) bool {
+	if len(a) != len(b) {
+		return false
+	}
+	for i := range a {
+		if a[i] != b[i] {
+			return false
+		}
+	}
+	return true
 }

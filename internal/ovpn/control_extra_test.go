@@ -91,5 +91,50 @@ func TestChangeConfigValidationTable(t *testing.T) {
 	}
 }
 
+func TestChangeConfigIdenticalPushIsNoop(t *testing.T) {
+	root := t.TempDir()
+	t.Setenv("OVNODE_OPENVPN_ROOT", root)
+	t.Setenv("OVNODE_DATA_DIR", root+"/ovnode-data")
+	serverDir := filepath.Join(root, "server")
+	if err := os.MkdirAll(serverDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(serverDir, "server.conf"), []byte("port 1194\nproto udp\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(serverDir, "client-common.txt"), []byte("client\nproto udp\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	req := ChangeConfigRequest{
+		OVPNPort:      1194,
+		Protocol:      "udp",
+		TunnelAddress: "vpn.example.com",
+	}
+	var c1 ChangeConfigResult
+	if !ChangeConfig(req, &c1) {
+		t.Fatal("first change failed")
+	}
+
+	before, err := os.Stat(filepath.Join(serverDir, "server.conf"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	var c2 ChangeConfigResult
+	if !ChangeConfig(req, &c2) {
+		t.Fatalf("second change failed")
+	}
+	if c2.HotReload {
+		t.Fatal("HotReload true on identical push")
+	}
+	after, err := os.Stat(filepath.Join(serverDir, "server.conf"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !before.ModTime().Equal(after.ModTime()) {
+		t.Fatalf("server.conf mtime changed: %v -> %v", before.ModTime(), after.ModTime())
+	}
+}
+
 func boolPtr(b bool) *bool    { return &b }
 func strPtr(s string) *string { return &s }
