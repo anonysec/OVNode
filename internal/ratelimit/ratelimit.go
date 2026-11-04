@@ -88,7 +88,7 @@ func (l *Limiter) prune(now time.Time) {
 				keys = append(keys, kv{k, b.last})
 			}
 			sort.Slice(keys, func(i, j int) bool { return keys[i].last.Before(keys[j].last) })
-			for i := 0; i < len(m)-target && i < len(keys); i++ {
+			for i := 0; i < len(m)-target+1 && i < len(keys); i++ {
 				delete(m, keys[i].k)
 			}
 		}

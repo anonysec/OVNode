@@ -71,7 +71,7 @@ func TestPruneEvictsTenPercentAtOnce(t *testing.T) {
 	if elapsed := time.Since(start); elapsed >= 2*time.Second {
 		t.Fatalf("loop took %v, want under 2s", elapsed)
 	}
-	if len(l.buckets) > maxBuckets {
-		t.Fatalf("buckets len = %d, want <= %d", len(l.buckets), maxBuckets)
+	if len(l.buckets) >= maxBuckets {
+		t.Fatalf("buckets len = %d, want < %d", len(l.buckets), maxBuckets)
 	}
 }
