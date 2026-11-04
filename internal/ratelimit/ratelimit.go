@@ -172,6 +172,44 @@ func (l *Limiter) AllowGlobal() (bool, time.Duration) {
 	return true, 0
 }
 
+// FailedBlocked reports whether client is currently locked out for repeated
+// failed authentication, without recording a new failure.
+func (l *Limiter) FailedBlocked(client string) (bool, time.Duration) {
+	now := time.Now()
+	key := keyFor(client)
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	b := l.failed[key]
+	if b == nil {
+		return false, 0
+	}
+	trimExpired(b, now, failedWindow)
+	if len(b.ts) >= failedMax {
+		retry := failedWindow - now.Sub(b.ts[0])
+		if retry < time.Second {
+			retry = time.Second
+		}
+		return true, retry
+	}
+	return false, 0
+}
+
+// RecordFailedAuth records one failed authentication attempt for client.
+func (l *Limiter) RecordFailedAuth(client string) {
+	now := time.Now()
+	key := keyFor(client)
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	b, ok := l.failed[key]
+	if !ok {
+		b = &bucket{}
+		l.failed[key] = b
+	}
+	trimExpired(b, now, failedWindow)
+	b.ts = append(b.ts, now)
+	b.last = now
+}
+
 func (l *Limiter) AllowFailedAuth(client string) (bool, time.Duration) {
 	now := time.Now()
 	key := keyFor(client)

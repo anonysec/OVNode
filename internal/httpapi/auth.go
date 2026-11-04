@@ -47,13 +47,13 @@ func (s *Server) authorize(w http.ResponseWriter, r *http.Request, heavy bool) b
 		writeAuthError(w, http.StatusTooManyRequests, "Rate limit exceeded")
 		return false
 	}
+	if blocked, retry := s.limiter.FailedBlocked(client); blocked {
+		w.Header().Set("Retry-After", strconv.Itoa(int(retry.Seconds())))
+		writeAuthError(w, http.StatusTooManyRequests, "Too many failed authentication attempts")
+		return false
+	}
 	if !keyEqual(given, s.APIKey) {
-		// Failed-auth limiter with backoff for brute-force resistance.
-		if ok, retry := s.limiter.AllowFailedAuth(client); !ok {
-			w.Header().Set("Retry-After", strconv.Itoa(int(retry.Seconds())))
-			writeAuthError(w, http.StatusTooManyRequests, "Too many failed authentication attempts")
-			return false
-		}
+		s.limiter.RecordFailedAuth(client)
 		writeAuthError(w, http.StatusUnauthorized, "Invalid API key")
 		return false
 	}
