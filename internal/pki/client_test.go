@@ -145,6 +145,38 @@ func TestRevokeCertByCNIsIdempotent(t *testing.T) {
 	}
 }
 
+// TestRevokeCertByCNRevokesReissuedCert covers a deleted-then-recreated user.
+//
+// The old index row for the revoked certificate stays ahead of the new one,
+// so revoking by CN must not stop at the first matching row.
+func TestRevokeCertByCNRevokesReissuedCert(t *testing.T) {
+	root := t.TempDir()
+	t.Setenv("OVNODE_OPENVPN_ROOT", root)
+	t.Setenv("OVNODE_DATA_DIR", root+"/ovnode-data")
+	writeTestCA(t, root)
+	if _, _, err := IssueClientCertToTree("bob"); err != nil {
+		t.Fatal(err)
+	}
+	if err := RevokeCertByCN("bob"); err != nil {
+		t.Fatalf("the first revoke failed: %v", err)
+	}
+	if _, _, err := IssueClientCertToTree("bob"); err != nil {
+		t.Fatal(err)
+	}
+	if err := RevokeCertByCN("bob"); err != nil {
+		t.Fatalf("the second revoke failed: %v", err)
+	}
+	index, err := os.ReadFile(filepath.Join(root, "server", "pki", "index.txt"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, line := range strings.Split(string(index), "\n") {
+		if strings.HasPrefix(line, "V") && strings.Contains(line, "/CN=bob") {
+			t.Fatalf("a valid bob certificate remains: %q", line)
+		}
+	}
+}
+
 // TestIssueClientCertRejectsABadCN covers the path safety: a common name
 // must never escape the PKI directory.
 func TestIssueClientCertRejectsABadCN(t *testing.T) {

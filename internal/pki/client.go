@@ -129,12 +129,12 @@ func RevokeCertByCN(cn string) error {
 		return err
 	}
 	defer unlock()
-	serial, valid, err := serialForCN(cn)
+	serials, err := validSerialsForCN(cn)
 	if err != nil {
 		return err
 	}
-	if !valid {
-		// Already revoked: make sure the CRL covers it.
+	if len(serials) == 0 {
+		// Already revoked or unknown: make sure the CRL covers it.
 		return GenerateCRL()
 	}
 	// The CRL must be regenerable before the index says "R": a mark
@@ -142,7 +142,37 @@ func RevokeCertByCN(cn string) error {
 	if err := GenerateCRL(); err != nil {
 		return err
 	}
-	return RevokeCert(serial)
+	for _, serial := range serials {
+		if err := RevokeCert(serial); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+// validSerialsForCN returns the serials of every still-valid certificate for
+// cn, in index.txt order. A CN may appear more than once after a delete and
+// re-issue, and revoking by CN must cover all of them.
+func validSerialsForCN(cn string) ([]string, error) {
+	data, err := os.ReadFile(filepath.Join(PKIDir(), "index.txt"))
+	if err != nil {
+		return nil, err
+	}
+	var serials []string
+	for _, ln := range strings.Split(string(data), "\n") {
+		fields := strings.Split(ln, "\t")
+		if len(fields) < 6 {
+			continue
+		}
+		if fields[0] != "V" {
+			continue
+		}
+		if fields[5] != "/CN="+cn {
+			continue
+		}
+		serials = append(serials, fields[3])
+	}
+	return serials, nil
 }
 
 // serialForCN returns the serial of the certificate of cn and whether it is
