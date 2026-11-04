@@ -7,6 +7,7 @@ import (
 	"crypto/ecdsa"
 	"crypto/elliptic"
 	"crypto/rand"
+	"crypto/tls"
 	"crypto/x509"
 	"crypto/x509/pkix"
 	"encoding/pem"
@@ -14,6 +15,8 @@ import (
 	"math/big"
 	"net"
 	"os"
+
+	"ovnode/internal/fsx"
 	"path/filepath"
 	"strings"
 	"time"
@@ -68,7 +71,7 @@ func nextSerial() (*big.Int, error) {
 	}
 	// increment file
 	inc := new(big.Int).Add(n, big.NewInt(1))
-	os.WriteFile(filepath.Join(PKIDir(), "serial"), []byte(fmt.Sprintf("%X\n", inc)), 0o644)
+	_ = fsx.WriteFileAtomic(filepath.Join(PKIDir(), "serial"), []byte(fmt.Sprintf("%X\n", inc)), 0o644)
 	return n, nil
 }
 
@@ -150,7 +153,7 @@ func RevokeCert(serialHex string) error {
 		}
 		out = append(out, ln)
 	}
-	os.WriteFile(path, []byte(strings.Join(out, "\n")), 0o644)
+	_ = fsx.WriteFileAtomic(path, []byte(strings.Join(out, "\n")), 0o644)
 	return GenerateCRL()
 }
 
@@ -190,7 +193,7 @@ func GenerateCRL() error {
 			crlNum = n
 			// increment
 			inc := new(big.Int).Add(n, big.NewInt(1))
-			os.WriteFile(filepath.Join(PKIDir(), "crlnumber"), []byte(fmt.Sprintf("%X\n", inc)), 0o644)
+			_ = fsx.WriteFileAtomic(filepath.Join(PKIDir(), "crlnumber"), []byte(fmt.Sprintf("%X\n", inc)), 0o644)
 		}
 	}
 	now := time.Now()
@@ -205,7 +208,7 @@ func GenerateCRL() error {
 		return err
 	}
 	pemBytes := pem.EncodeToMemory(&pem.Block{Type: "X509 CRL", Bytes: crlDER})
-	os.WriteFile(CRLFile(), pemBytes, 0o644)
+	_ = fsx.WriteFileAtomic(CRLFile(), pemBytes, 0o644)
 	os.Chmod(CRLFile(), 0o644)
 	return nil
 }
@@ -227,11 +230,6 @@ func primaryIP() string {
 
 // RenewServerCertificateNative renews server cert.
 func RenewServerCertificateNative() error {
-	unlock, err := lockPKI()
-	if err != nil {
-		return err
-	}
-	defer unlock()
 	caCert, caKey, err := loadCA()
 	if err != nil {
 		return err
@@ -240,7 +238,7 @@ func RenewServerCertificateNative() error {
 	oldCert, _ := os.ReadFile(ServerCert())
 	if oldCert != nil {
 		os.MkdirAll(filepath.Join(PKIDir(), "renewed"), 0o755)
-		os.WriteFile(filepath.Join(PKIDir(), "renewed", "server.crt.bak"), oldCert, 0o644)
+		_ = fsx.WriteFileAtomic(filepath.Join(PKIDir(), "renewed", "server.crt.bak"), oldCert, 0o644)
 	}
 	key, err := ecdsa.GenerateKey(caCert.PublicKey.(*ecdsa.PublicKey).Curve, rand.Reader)
 	if err != nil {
@@ -275,11 +273,21 @@ func RenewServerCertificateNative() error {
 	if err != nil {
 		return err
 	}
-	os.MkdirAll(filepath.Dir(ServerCert()), 0o755)
-	os.WriteFile(ServerCert(), pem.EncodeToMemory(&pem.Block{Type: "CERTIFICATE", Bytes: certDER}), 0o644)
+	certPEM := pem.EncodeToMemory(&pem.Block{Type: "CERTIFICATE", Bytes: certDER})
 	keyDER, _ := x509.MarshalECPrivateKey(key)
-	os.MkdirAll(filepath.Dir(ServerKey()), 0o755)
-	os.WriteFile(ServerKey(), pem.EncodeToMemory(&pem.Block{Type: "EC PRIVATE KEY", Bytes: keyDER}), 0o600)
+	keyPEM := pem.EncodeToMemory(&pem.Block{Type: "EC PRIVATE KEY", Bytes: keyDER})
+	// verify cert matches key before writing
+	if _, err := tls.X509KeyPair(certPEM, keyPEM); err != nil {
+		return err
+	}
+	os.MkdirAll(filepath.Dir(ServerCert()), 0o700)
+	os.MkdirAll(filepath.Dir(ServerKey()), 0o700)
+	if err := fsx.WriteFileAtomic(ServerCert(), certPEM, 0o644); err != nil {
+		return err
+	}
+	if err := fsx.WriteFileAtomic(ServerKey(), keyPEM, 0o600); err != nil {
+		return err
+	}
 	appendIndex("server", serial, now, tmpl.NotAfter, false)
 	return nil
 }

@@ -91,21 +91,21 @@ func IssueClientCertToTree(cn string) (string, string, error) {
 		filepath.Join(PKIDir(), "private"),
 		filepath.Join(PKIDir(), "inline", "private"),
 	} {
-		if err := os.MkdirAll(d, 0o755); err != nil {
+		if err := os.MkdirAll(d, 0o700); err != nil {
 			return "", "", err
 		}
 	}
-	if err := os.WriteFile(IssuedCertPath(cn), []byte(certPEM), 0o600); err != nil {
+	if err := fsx.WriteFileAtomic(IssuedCertPath(cn), []byte(certPEM), 0o600); err != nil {
 		return "", "", err
 	}
-	if err := os.WriteFile(ClientKeyPath(cn), []byte(keyPEM), 0o600); err != nil {
+	if err := fsx.WriteFileAtomic(ClientKeyPath(cn), []byte(keyPEM), 0o600); err != nil {
 		return "", "", err
 	}
 	bundle := "# OVNode inline bundle\n# commonName: " + cn + "\n\n" +
 		"<cert>\n" + strings.TrimSpace(certPEM) + "\n</cert>\n\n" +
 		"<key>\n" + strings.TrimSpace(keyPEM) + "\n</key>\n\n" +
 		"<ca>\n" + strings.TrimSpace(string(caPEM)) + "\n</ca>\n"
-	if err := os.WriteFile(InlineBundlePath(cn), []byte(bundle), 0o600); err != nil {
+	if err := fsx.WriteFileAtomic(InlineBundlePath(cn), []byte(bundle), 0o600); err != nil {
 		return "", "", err
 	}
 	return certPEM, keyPEM, nil
@@ -203,6 +203,11 @@ func Healthy() bool {
 // the renewed certificate must land in the tree server.conf reads. The
 // easyrsa path stays as the fallback for a tree the Go CA cannot load.
 func RenewServerCert() error {
+	unlock, err := lockPKI()
+	if err != nil {
+		return err
+	}
+	defer unlock()
 	if err := RenewServerCertificateNative(); err == nil {
 		return nil
 	}
