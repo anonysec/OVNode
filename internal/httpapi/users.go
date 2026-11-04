@@ -258,7 +258,7 @@ func (s *Server) handleResetUsage(w http.ResponseWriter, r *http.Request) {
 // with "client" or carry a "<ca>" block), so the profile is built here on
 // the first download.
 func (s *Server) handleDownloadOVPN(w http.ResponseWriter, r *http.Request) {
-	if !s.authorize(w, r, false) {
+	if !s.authorize(w, r, true) {
 		return
 	}
 	cn, err := store.SafeCN(strings.TrimSpace(r.PathValue("uid")))
@@ -273,6 +273,7 @@ func (s *Server) handleDownloadOVPN(w http.ResponseWriter, r *http.Request) {
 	}
 	if _, err := os.Stat(path); err != nil {
 		// Lazy creation on first download: mint client credentials if not yet present
+		logging.Info("auto-creating user and profile for %q on download", cn)
 		if err := ovpn.CreateUser(cn, "", 1, nil); err != nil {
 			logging.Warn("could not auto-create user and profile for %q: %v", cn, err)
 			writeFail(w, "OVPN file not found")

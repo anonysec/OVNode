@@ -70,11 +70,23 @@ func (s *Server) handleLogs(w http.ResponseWriter, r *http.Request) {
 	if level == "" {
 		level = "WARNING"
 	}
+	switch level {
+	case "DEBUG", "INFO", "WARNING", "ERROR":
+	default:
+		writeFail(w, "Invalid log level")
+		return
+	}
 	limit := 200
 	if raw := r.URL.Query().Get("limit"); raw != "" {
-		if n, err := strconv.Atoi(raw); err == nil {
-			limit = n
+		n, err := strconv.Atoi(raw)
+		if err != nil || n < 1 {
+			writeFail(w, "Invalid log limit")
+			return
 		}
+		if n > 1000 {
+			n = 1000
+		}
+		limit = n
 	}
 	records := logging.Recent(level, limit)
 	errors1h, warnings1h, lastError := logging.Stats()

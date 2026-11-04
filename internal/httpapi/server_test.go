@@ -19,7 +19,7 @@ import (
 	"ovnode/internal/ratelimit"
 )
 
-const testKey = "test-key"
+const testKey = "test-key-1234567890"
 
 // testServer builds a server on a throwaway OpenVPN root.
 func testServer(t *testing.T) *Server {
