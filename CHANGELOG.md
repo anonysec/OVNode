@@ -1,5 +1,25 @@
 # Changelog
 
+## 2.0.1 — 2026-11-04
+
+Security:
+- API key comparison hashes both sides; keys shorter than 16 characters are refused (HTTP 503).
+- Rate limit: per-IP limit before auth, global limit after auth; an IP with 10 failed keys in 5 minutes is blocked with 429 before the key is compared.
+- First boot prints a key fingerprint instead of the full API key.
+- Pushed PEMs (PUT /sync/pki, PUT /sync/users/{cn}) are parsed, checked (CA flag, key match, chain, CN, expiry, 16 KiB cap) and re-encoded.
+- PKI push takes the PKI lock and rolls back partial writes.
+- Revoking a user now revokes every valid certificate of that name (a re-created user was previously left valid).
+- CRL is refreshed daily; /sync/status reports crl_days_remaining and crl_matches_ca.
+- Secret permissions: tls.key 0600, private dirs 0700, per-user dirs 0700; repaired on start and on restart; symlinks are never followed.
+- Installer verifies a minisign signature; a custom key needs OVN_ALLOW_KEY_OVERRIDE=1; OVN_ALLOW_UNSIGNED=1 skips verification.
+- Updater runs only a root-owned, non-writable install.sh with a minimal environment and a lock; POST /sync/update accepts an optional version (x.y.z); /sync/status shows update_status.
+
+Behavior changes:
+- POST /sync/config validates everything before writing, rolls back on failure, refuses reserved ports (22, API, management; extra ports also 80/443 unless allowed), and no longer reloads OpenVPN when nothing changed.
+- CN rules: a CN must not start with a dot, and must equal its sanitized form.
+- .env is no longer read from the current directory.
+- NAT redirect rules carry the comment "ovnode-redirect" and are rebuilt on apply; redirects created by older versions are not removed automatically.
+
 ## 1.4.25 — 2026-11-04
 
 - Security(pki): tls-crypt key chmod 0600 (was 0644); private dirs 0700; ca.key and *.key 0600; per-user dirs 0700. Added pki.EnsureSecretPerms() (serve start + update) and store.FixRuntimePermissions repair.

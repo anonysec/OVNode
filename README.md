@@ -226,6 +226,14 @@ Identity: the OpenVPN CN is the panel's numeric user id (`str(user.id)`), and th
 
 Diagnostics without SSH: `GET /sync/logs?level=ERROR` reads the agent's in-memory log buffer, and `GET /sync/status` reports `openvpn_running`, `uptime_seconds`, `errors_1h`, `warnings_1h` and `last_error` alongside the panel-contract keys.
 
+New/changed fields: `GET /sync/status` now includes `update_status` and `crl_days_remaining`; `POST /sync/update` accepts an optional `version` (x.y.z); `authorize` may return 429 (rate limit) or 503 (API key shorter than 16 characters).
+
+### Upgrading
+
+- Permissions are repaired on first start after update.
+- Extra-port redirects from older versions may need `iptables -t nat -S PREROUTING` review.
+- Forks must set `OVN_ALLOW_KEY_OVERRIDE=1` with their own minisign key.
+
 ## 🧰 Day-to-day commands
 
 Every install adds one command, `ovnode` (short for `ovnode`). With no argument it prints this list and exits — there is no menu, so a provisioning script that invokes it never blocks waiting for input. Twelve verbs; `ovnode help --all` carries every option and the retired names.

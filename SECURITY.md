@@ -28,6 +28,10 @@ within 7 days, fix timeline within 30 days, 90-day disclosure after fix.
 - The self-updater only runs a root-owned, non-writable `install.sh` and
   verifies the release signature (minisign) unless `OVN_ALLOW_UNSIGNED=1`.
 
+## Threat model
+
+The API key grants full control of the node (users, restart, update, PKI push). The key must travel only over TLS and be rotated by reinstall. A node trusts one panel at a time (30-minute lease).
+
 ## Scope
 
 In scope: sync-API authentication (`key` header), management-interface
