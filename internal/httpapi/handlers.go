@@ -11,6 +11,7 @@ import (
 	"time"
 
 	"ovnode/internal/logging"
+	"ovnode/internal/fsx"
 	"ovnode/internal/ovpn"
 	"ovnode/internal/pki"
 	"ovnode/internal/updater"
@@ -182,7 +183,7 @@ func (s *Server) handleUpdate(w http.ResponseWriter, r *http.Request) {
 	if !s.authorize(w, r, true) {
 		return
 	}
-	appDir := envOr("APP_DIR", "")
+	appDir := fsx.EnvOr("APP_DIR", "")
 	if appDir == "" {
 		for _, c := range []string{"/opt/ovnode", "/usr/local/ovnode"} {
 			if _, err := os.Stat(c + "/install.sh"); err == nil {

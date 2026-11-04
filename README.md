@@ -276,6 +276,8 @@ These still work, unchanged. Nothing warns — a deprecation line on every night
 The installer writes `.env` once, at install, and **nothing in `ovnode` ever edits it again** — not `ovnode auth rotate`, not `ovnode tls`. Edit it freely; changes take effect on `ovnode restart`. `ovnode config` prints every effective setting and its source.
 
 That is why `ovnode auth rotate` prints the new key and the line to change rather than making the change: a command that quietly rewrote the file would mean the `.env` in your backups is not the one you last edited.
+When both `.env` and the process environment define a variable, the `.env`
+value wins (cached at startup).
 
 Node data lives at `/var/lib/ovnode`, and `DATA_DIR` in `.env` names it. Older
 installs kept it one level down at `/var/lib/ovnode/<name>` — a layout for several

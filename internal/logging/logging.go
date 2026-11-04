@@ -28,7 +28,8 @@ func Event(path, format string, args ...any) {
 	if dir := filepath.Dir(path); dir != "" {
 		_ = os.MkdirAll(dir, 0o755)
 	}
-	line := fmt.Sprintf("%d [%s] %s\n", time.Now().Unix(), Tag, fmt.Sprintf(format, args...))
+	msg := strings.NewReplacer("\r", "", "\n", "").Replace(fmt.Sprintf(format, args...))
+	line := fmt.Sprintf("%d [%s] %s\n", time.Now().Unix(), Tag, msg)
 	f, err := os.OpenFile(path, os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0o644)
 	if err != nil {
 		return

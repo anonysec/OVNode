@@ -9,18 +9,25 @@ import (
 	"os/exec"
 	"path/filepath"
 	"strings"
+	"sync"
 )
 
 // envFileValues reads uncommented KEY=VALUE pairs from the first .env file
 // found, so a user can force an option by editing the file (PasarGuard-style:
 // .env wins over the process environment).
-func envFileValues() map[string]string {
+var (
+	envFileOnce   sync.Once
+	envFileCache  map[string]string
+	envFileSource string
+)
+
+func loadEnvFile() {
 	out := map[string]string{}
 	paths := []string{}
 	if d := os.Getenv("OVN_APP_DIR"); d != "" {
 		paths = append(paths, filepath.Join(d, ".env"))
 	}
-	paths = append(paths, "/opt/ovnode/.env", "/etc/openvpn/ovnode/.env", ".env")
+	paths = append(paths, "/opt/ovnode/.env", "/etc/openvpn/ovnode/.env")
 	for _, p := range paths {
 		data, err := os.ReadFile(p)
 		if err != nil {
@@ -38,13 +45,25 @@ func envFileValues() map[string]string {
 				out[k] = v
 			}
 		}
+		envFileSource = p
 		break // first readable .env wins
 	}
-	return out
+	envFileCache = out
+}
+
+func envFileValues() map[string]string {
+	envFileOnce.Do(loadEnvFile)
+	return envFileCache
+}
+
+// EnvFileSource reports the .env path that was loaded (if any).
+func EnvFileSource() string {
+	envFileOnce.Do(loadEnvFile)
+	return envFileSource
 }
 
 func envOr(name, fallback string) string {
-	// .env wins over process env
+	// .env wins over the process environment (documented behavior).
 	if v := envFileValues()[name]; v != "" {
 		return v
 	}

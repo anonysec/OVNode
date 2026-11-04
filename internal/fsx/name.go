@@ -11,15 +11,15 @@ import (
 )
 
 var (
-	StoreKeyRe = regexp.MustCompile(`^[A-Za-z0-9._-]{1,64}$`)
-	HookCNRe   = regexp.MustCompile(`^[A-Za-z0-9_.][A-Za-z0-9_.-]*$`)
+	StoreKeyRe = regexp.MustCompile(`^[A-Za-z0-9_][A-Za-z0-9._-]{0,63}$`)
+	HookCNRe   = regexp.MustCompile(`^[A-Za-z0-9_][A-Za-z0-9_.-]*$`)
 )
 
 // SafeCN validates a CN before it becomes a path component (strict rule:
 // store/API side). Rejects leading dash, ".", "..", and non-alphanumeric chars.
 func SafeCN(cn string) (string, error) {
 	cn = strings.TrimSpace(cn)
-	if cn == "" || cn == "." || cn == ".." {
+	if cn == "" || cn == "." || cn == ".." || cn[0] == '.' {
 		return "", fmt.Errorf("invalid common name: %q", cn)
 	}
 	if !StoreKeyRe.MatchString(cn) {
@@ -51,7 +51,7 @@ func HookCNValid(safe string) bool {
 	if safe == "" || len(safe) > 64 {
 		return false
 	}
-	if safe == "." || safe == ".." {
+	if safe == "." || safe == ".." || safe[0] == '.' {
 		return false
 	}
 	return HookCNRe.MatchString(safe)

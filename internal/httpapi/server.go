@@ -27,6 +27,7 @@ import (
 	"syscall"
 	"time"
 
+	"ovnode/internal/fsx"
 	"ovnode/internal/logging"
 	"ovnode/internal/pki"
 	"ovnode/internal/ratelimit"
@@ -44,24 +45,17 @@ type Server struct {
 	started time.Time
 }
 
-func envOr(name, fb string) string {
-	if v, ok := os.LookupEnv(name); ok && v != "" {
-		return v
-	}
-	return fb
-}
-
 // NewServer builds the server from the environment.
 func NewServer() *Server {
 	s := &Server{limiter: ratelimit.New(), started: time.Now()}
-	port := envOr("SERVICE_PORT", "")
+	port := fsx.EnvOr("SERVICE_PORT", "")
 	if port == "" {
 		port = "2083"
 	}
 	s.Addr = ":" + port
-	s.APIKey = envOr("API_KEY", "")
-	cf := envOr("SSL_CERTFILE", "")
-	kf := envOr("SSL_KEYFILE", "")
+	s.APIKey = fsx.EnvOr("API_KEY", "")
+	cf := fsx.EnvOr("SSL_CERTFILE", "")
+	kf := fsx.EnvOr("SSL_KEYFILE", "")
 	if cf == "" {
 		cf = pki.ServerCert()
 	}
@@ -197,8 +191,8 @@ func (s *Server) ListenAndServe() error {
 // (SSL_CERTFILE/SSL_KEYFILE) wins, then the PKI server pair. Missing or
 // unreadable file is fatal — no plaintext fallback.
 func TLSMaterial() (string, string, error) {
-	cert := envOr("SSL_CERTFILE", "")
-	key := envOr("SSL_KEYFILE", "")
+	cert := fsx.EnvOr("SSL_CERTFILE", "")
+	key := fsx.EnvOr("SSL_KEYFILE", "")
 	if cert == "" {
 		cert = pki.ServerCert()
 	}
@@ -241,7 +235,7 @@ func primaryIP() string {
 
 // setupPrintedPath is the marker that makes the first-boot print happen once.
 func setupPrintedPath() string {
-	dir := envOr("DATA_DIR", "/var/lib/ovnode")
+	dir := fsx.EnvOr("DATA_DIR", "/var/lib/ovnode")
 	return filepath.Join(dir, ".setup-printed")
 }
 
@@ -269,9 +263,9 @@ func printSetupIfFirstBoot() bool {
 	if _, err := os.Stat(marker); err == nil {
 		return false
 	}
-	port := envOr("SERVICE_PORT", "2083")
-	key := envOr("API_KEY", "")
-	certFile := envOr("SSL_CERTFILE", "")
+	port := fsx.EnvOr("SERVICE_PORT", "2083")
+	key := fsx.EnvOr("API_KEY", "")
+	certFile := fsx.EnvOr("SSL_CERTFILE", "")
 	if certFile == "" {
 		certFile = pki.ServerCert()
 	}
@@ -302,6 +296,9 @@ func markSetupPrinted() {
 // Run starts the agent.
 func Run() error {
 	pki.EnsureSecretPerms()
+	if src := fsx.EnvFileSource(); src != "" {
+		logging.Info(".env loaded from %s (.env wins over process env)", src)
+	}
 	cert, key, err := TLSMaterial()
 	if err != nil {
 		return err

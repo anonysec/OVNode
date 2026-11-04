@@ -8,10 +8,10 @@
 package config
 
 import (
-	"os"
 	"strconv"
 
 	"ovnode/internal/fsx"
+	"ovnode/internal/logging"
 )
 
 // Defaults for the hook paths. They match the bash hooks and the store.
@@ -66,14 +66,18 @@ func HookFromEnv() Hook {
 		MgmtPort:     DefaultMgmtPort,
 		SessionTTL:   DefaultSessionTTL,
 	}
-	if v, ok := os.LookupEnv("OVNODE_MANAGEMENT_PORT"); ok && v != "" {
-		if p, err := strconv.Atoi(v); err == nil {
+	if v := fsx.EnvOr("OVNODE_MANAGEMENT_PORT", ""); v != "" {
+		if p, err := strconv.Atoi(v); err == nil && p >= 1 && p <= 65535 {
 			h.MgmtPort = p
+		} else {
+			logging.Event(h.LogFile, "OVNODE_MANAGEMENT_PORT invalid (%s); falling back to %d", v, DefaultMgmtPort)
 		}
 	}
-	if v, ok := os.LookupEnv("OVNODE_SESSION_TTL"); ok && v != "" {
-		if t, err := strconv.Atoi(v); err == nil {
+	if v := fsx.EnvOr("OVNODE_SESSION_TTL", ""); v != "" {
+		if t, err := strconv.Atoi(v); err == nil && t > 0 {
 			h.SessionTTL = t
+		} else {
+			logging.Event(h.LogFile, "OVNODE_SESSION_TTL invalid (%s); falling back to %d", v, DefaultSessionTTL)
 		}
 	}
 	return h
