@@ -4,6 +4,7 @@
 package httpapi
 
 import (
+	"crypto/sha256"
 	"crypto/subtle"
 	"encoding/json"
 	"net"
@@ -31,18 +32,35 @@ import (
 // keys evicted the real caller.
 func (s *Server) authorize(w http.ResponseWriter, r *http.Request, heavy bool) bool {
 	given := r.Header.Get("key")
+	if len(s.APIKey) < 16 {
+		writeAuthError(w, http.StatusServiceUnavailable, "API key not configured")
+		return false
+	}
 	if given == "" {
 		writeAuthError(w, http.StatusUnauthorized, "Missing API key")
 		return false
 	}
 	client := clientAddr(r)
+	// Only the per-IP bucket is charged before authentication.
 	if ok, retry := s.limiter.Allow(client); !ok {
 		w.Header().Set("Retry-After", strconv.Itoa(int(retry.Seconds())))
 		writeAuthError(w, http.StatusTooManyRequests, "Rate limit exceeded")
 		return false
 	}
-	if subtle.ConstantTimeCompare([]byte(given), []byte(s.APIKey)) != 1 {
+	if !keyEqual(given, s.APIKey) {
+		// Failed-auth limiter with backoff for brute-force resistance.
+		if ok, retry := s.limiter.AllowFailedAuth(client); !ok {
+			w.Header().Set("Retry-After", strconv.Itoa(int(retry.Seconds())))
+			writeAuthError(w, http.StatusTooManyRequests, "Too many failed authentication attempts")
+			return false
+		}
 		writeAuthError(w, http.StatusUnauthorized, "Invalid API key")
+		return false
+	}
+	// Global bucket charged only after the key is verified.
+	if ok, retry := s.limiter.AllowGlobal(); !ok {
+		w.Header().Set("Retry-After", strconv.Itoa(int(retry.Seconds())))
+		writeAuthError(w, http.StatusTooManyRequests, "Rate limit exceeded")
 		return false
 	}
 	if heavy {
@@ -62,6 +80,13 @@ func (s *Server) authorize(w http.ResponseWriter, r *http.Request, heavy bool) b
 		return false
 	}
 	return true
+}
+
+// keyEqual compares API keys in constant time without leaking length.
+func keyEqual(given, apiKey string) bool {
+	h1 := sha256.Sum256([]byte(given))
+	h2 := sha256.Sum256([]byte(apiKey))
+	return subtle.ConstantTimeCompare(h1[:], h2[:]) == 1
 }
 
 // clientAddr returns the connecting address, the rate-limit key.
