@@ -407,7 +407,7 @@ func ChangeConfig(req ChangeConfigRequest, classification *ChangeConfigResult) b
 	invalidateCachedOVPN()
 
 	restartRequired := changed || tunnelAddr != oldTunnelAddr
-	hotReload := dnsChanged || ipv6Changed || extraProvided
+	hotReload := dnsChanged || ipv6Changed || portsStateChanged
 
 	restartFailed := false
 	if restartRequired {

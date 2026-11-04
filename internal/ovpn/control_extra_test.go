@@ -110,6 +110,8 @@ func TestChangeConfigIdenticalPushIsNoop(t *testing.T) {
 		OVPNPort:      1194,
 		Protocol:      "udp",
 		TunnelAddress: "vpn.example.com",
+		ExtraPorts:    "",
+		DNS1:          strPtr("1.1.1.1"),
 	}
 	var c1 ChangeConfigResult
 	if !ChangeConfig(req, &c1) {
