@@ -125,6 +125,7 @@ func rule(op, table, chain string, args ...string) error {
 func Apply() error {
 	cfg := LoadConfig()
 	iface := defaultIface()
+	flushOwnRedirects()
 	if iface == "" {
 		return fmt.Errorf("ovnode-nat: no default interface found")
 	}
@@ -135,7 +136,7 @@ func Apply() error {
 	if cfg.PrimaryPort > 0 && cfg.ExtraPorts != "" {
 		for _, p := range strings.Fields(strings.ReplaceAll(cfg.ExtraPorts, ",", " ")) {
 			for _, proto := range []string{"tcp", "udp"} {
-				if err := rule("add", "nat", "PREROUTING", "-p", proto, "--dport", p, "-j", "REDIRECT", "--to-ports", strconv.Itoa(cfg.PrimaryPort)); err != nil {
+				if err := rule("add", "nat", "PREROUTING", "-p", proto, "--dport", p, "-m", "comment", "--comment", "ovnode-redirect", "-j", "REDIRECT", "--to-ports", strconv.Itoa(cfg.PrimaryPort)); err != nil {
 					return err
 				}
 			}
@@ -143,6 +144,29 @@ func Apply() error {
 	}
 
 	return nil
+}
+
+// flushOwnRedirects removes redirect rules previously created by this
+// package, so a removed or changed extra port stops redirecting.
+func flushOwnRedirects() {
+	out, err := exec.Command("iptables", "-t", "nat", "-S", "PREROUTING").Output()
+	if err != nil {
+		return
+	}
+	for _, line := range strings.Split(string(out), "\n") {
+		if !strings.Contains(line, "ovnode-redirect") {
+			continue
+		}
+		if !strings.HasPrefix(line, "-A PREROUTING") {
+			continue
+		}
+		fields := strings.Fields(line)
+		if len(fields) == 0 {
+			continue
+		}
+		fields[0] = "-D"
+		_ = exec.Command("iptables", append([]string{"-t", "nat"}, fields...)...).Run()
+	}
 }
 
 func Cleanup() {
@@ -154,7 +178,7 @@ func Cleanup() {
 	if cfg.PrimaryPort > 0 && cfg.ExtraPorts != "" {
 		for _, p := range strings.Fields(strings.ReplaceAll(cfg.ExtraPorts, ",", " ")) {
 			for _, proto := range []string{"tcp", "udp"} {
-				_ = rule("del", "nat", "PREROUTING", "-p", proto, "--dport", p, "-j", "REDIRECT", "--to-ports", strconv.Itoa(cfg.PrimaryPort))
+				_ = rule("del", "nat", "PREROUTING", "-p", proto, "--dport", p, "-m", "comment", "--comment", "ovnode-redirect", "-j", "REDIRECT", "--to-ports", strconv.Itoa(cfg.PrimaryPort))
 			}
 		}
 	}
