@@ -27,9 +27,55 @@ func statePath(name string) string {
 
 func PortsStatePath() string { return statePath("ports") }
 
-func ParseExtraPorts(raw string, primary int) []int {
+func reservedExtraPorts(primary int) map[int]bool {
+	m := map[int]bool{
+		22:      true,
+		primary: true,
+		7505:    true,
+		2083:    true,
+	}
+	// management/API ports may be overridden by env
+	if mp := envInt("MANAGEMENT_PORT", 7505); mp > 0 {
+		m[mp] = true
+	}
+	if ap := envInt("SERVICE_PORT", 2083); ap > 0 {
+		m[ap] = true
+	}
+	if !allowWebExtraPorts() {
+		m[80] = true
+		m[443] = true
+	}
+	return m
+}
+
+func allowWebExtraPorts() bool {
+	for _, name := range []string{"OVNODE_ALLOW_EXTRA_WEB_PORTS", "OVNODE_ALLOW_PRIVILEGED_EXTRA_PORTS", "ALLOW_EXTRA_WEB_PORTS", "ALLOW_PRIVILEGED_EXTRA_PORTS"} {
+		v := strings.ToLower(strings.TrimSpace(fsx.Env(name, "")))
+		if v == "1" || v == "true" || v == "yes" || v == "on" {
+			return true
+		}
+	}
+	return false
+}
+
+func envInt(name string, def int) int {
+	v := strings.TrimSpace(fsx.Env(name, ""))
+	if v == "" {
+		return def
+	}
+	n, err := strconv.Atoi(v)
+	if err != nil {
+		return def
+	}
+	return n
+}
+
+// ValidateExtraPorts strictly validates pushed extra ports.
+func ValidateExtraPorts(raw string, primary int) ([]int, error) {
 	out := []int{}
 	seen := map[int]bool{}
+	reserved := reservedExtraPorts(primary)
+	count := 0
 	for _, tok := range strings.FieldsFunc(raw, func(r rune) bool { return r == ',' || r == ';' }) {
 		tok = strings.TrimSpace(tok)
 		if tok == "" {
@@ -37,16 +83,57 @@ func ParseExtraPorts(raw string, primary int) []int {
 		}
 		n, err := strconv.Atoi(tok)
 		if err != nil {
-			continue
-		}
-		if n == primary || seen[n] {
-			continue
+			return nil, fmt.Errorf("invalid extra port %q", tok)
 		}
 		if n < 1 || n > 65535 {
+			return nil, fmt.Errorf("extra port %d out of range", n)
+		}
+		if reserved[n] {
+			return nil, fmt.Errorf("extra port %d is reserved", n)
+		}
+		if seen[n] {
 			continue
+		}
+		if count >= 16 {
+			return nil, fmt.Errorf("too many extra ports (max 16)")
 		}
 		seen[n] = true
 		out = append(out, n)
+		count++
+	}
+	return out, nil
+}
+
+func ParseExtraPorts(raw string, primary int) []int {
+	out, err := ValidateExtraPorts(raw, primary)
+	if err != nil {
+		// lenient fallback: skip invalid/reserved
+		out = []int{}
+		seen := map[int]bool{}
+		reserved := reservedExtraPorts(primary)
+		count := 0
+		for _, tok := range strings.FieldsFunc(raw, func(r rune) bool { return r == ',' || r == ';' }) {
+			tok = strings.TrimSpace(tok)
+			if tok == "" {
+				continue
+			}
+			n, err := strconv.Atoi(tok)
+			if err != nil {
+				continue
+			}
+			if n < 1 || n > 65535 {
+				continue
+			}
+			if reserved[n] || n == primary || seen[n] {
+				continue
+			}
+			if count >= 16 {
+				break
+			}
+			seen[n] = true
+			out = append(out, n)
+			count++
+		}
 	}
 	return out
 }
@@ -92,17 +179,9 @@ func WritePortsState(ports []int) bool {
 		}
 	}
 	os.MkdirAll(filepath.Dir(path), 0o755)
-	tmp, err := os.CreateTemp(filepath.Dir(path), ".ports-")
-	if err != nil {
+	if err := fsx.WriteFileAtomic(path, []byte(desired+"\n"), 0o644); err != nil {
 		return false
 	}
-	if tmp == nil {
-		return false
-	}
-	tmp.WriteString(desired + "\n")
-	tmp.Close()
-	os.Chmod(tmp.Name(), 0o644)
-	os.Rename(tmp.Name(), path)
 	return true
 }
 
@@ -123,8 +202,13 @@ func SyncNATConfig(primaryPort int, extraPorts []int) {
 		return
 	}
 	content := fmt.Sprintf("# OVNode NAT configuration\nVPN_PRIMARY_PORT=%d\nVPN_EXTRA_PORTS=%s\n", primaryPort, joinInts(extraPorts))
-	_ = os.WriteFile(natConf, []byte(content), 0o644)
-	_ = exec.Command(natScript, "apply").Run()
+	if err := fsx.WriteFileAtomic(natConf, []byte(content), 0o644); err != nil {
+		// log via stderr; policy has no logger import
+		fmt.Fprintf(os.Stderr, "policy: write nat config: %v\n", err)
+	}
+	if err := exec.Command(natScript, "apply").Run(); err != nil {
+		fmt.Fprintf(os.Stderr, "policy: nat apply: %v\n", err)
+	}
 }
 
 // ── DNS ──────────────────────────────────────────────────────────────

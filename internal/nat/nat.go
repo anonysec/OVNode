@@ -73,23 +73,53 @@ func LoadConfig() Config {
 }
 
 func defaultIface() string {
-	out, _ := exec.Command("sh", "-c", "ip route show default 2>/dev/null | awk '{print $5; exit}'").Output()
-	return strings.TrimSpace(string(out))
+	out, err := exec.Command("ip", "-o", "route", "show", "default").Output()
+	if err != nil {
+		return ""
+	}
+	for _, line := range strings.Split(string(out), "\n") {
+		fields := strings.Fields(line)
+		for i := 0; i+1 < len(fields); i++ {
+			if fields[i] == "dev" {
+				iface := fields[i+1]
+				if validIface(iface) {
+					return iface
+				}
+			}
+		}
+	}
+	return ""
 }
 
-func rule(op, table, chain string, args ...string) {
-	// check exists first for add
+func validIface(name string) bool {
+	if len(name) < 1 || len(name) > 15 {
+		return false
+	}
+	for _, c := range name {
+		if !((c >= 'A' && c <= 'Z') || (c >= 'a' && c <= 'z') || (c >= '0' && c <= '9') || c == '.' || c == '_' || c == '-') {
+			return false
+		}
+	}
+	return true
+}
+
+func rule(op, table, chain string, args ...string) error {
 	if op == "add" {
 		check := exec.Command("iptables", append([]string{"-t", table, "-C", chain}, args...)...)
 		if check.Run() == nil {
-			return // already present
+			return nil // already present
 		}
 		add := exec.Command("iptables", append([]string{"-t", table, "-A", chain}, args...)...)
-		add.Run()
-		return
+		if err := add.Run(); err != nil {
+			return fmt.Errorf("iptables add %s/%s: %w", table, chain, err)
+		}
+		return nil
 	}
 	del := exec.Command("iptables", append([]string{"-t", table, "-D", chain}, args...)...)
-	del.Run()
+	if err := del.Run(); err != nil {
+		return fmt.Errorf("iptables del %s/%s: %w", table, chain, err)
+	}
+	return nil
 }
 
 func Apply() error {
@@ -98,12 +128,16 @@ func Apply() error {
 	if iface == "" {
 		return fmt.Errorf("ovnode-nat: no default interface found")
 	}
-	rule("add", "nat", "POSTROUTING", "-o", iface, "-j", "MASQUERADE")
+	if err := rule("add", "nat", "POSTROUTING", "-o", iface, "-j", "MASQUERADE"); err != nil {
+		return err
+	}
 	// redirects
 	if cfg.PrimaryPort > 0 && cfg.ExtraPorts != "" {
 		for _, p := range strings.Fields(strings.ReplaceAll(cfg.ExtraPorts, ",", " ")) {
 			for _, proto := range []string{"tcp", "udp"} {
-				rule("add", "nat", "PREROUTING", "-p", proto, "--dport", p, "-j", "REDIRECT", "--to-ports", strconv.Itoa(cfg.PrimaryPort))
+				if err := rule("add", "nat", "PREROUTING", "-p", proto, "--dport", p, "-j", "REDIRECT", "--to-ports", strconv.Itoa(cfg.PrimaryPort)); err != nil {
+					return err
+				}
 			}
 		}
 	}
@@ -115,12 +149,12 @@ func Cleanup() {
 	cfg := LoadConfig()
 	iface := defaultIface()
 	if iface != "" {
-		rule("del", "nat", "POSTROUTING", "-o", iface, "-j", "MASQUERADE")
+		_ = rule("del", "nat", "POSTROUTING", "-o", iface, "-j", "MASQUERADE")
 	}
 	if cfg.PrimaryPort > 0 && cfg.ExtraPorts != "" {
 		for _, p := range strings.Fields(strings.ReplaceAll(cfg.ExtraPorts, ",", " ")) {
 			for _, proto := range []string{"tcp", "udp"} {
-				rule("del", "nat", "PREROUTING", "-p", proto, "--dport", p, "-j", "REDIRECT", "--to-ports", strconv.Itoa(cfg.PrimaryPort))
+				_ = rule("del", "nat", "PREROUTING", "-p", proto, "--dport", p, "-j", "REDIRECT", "--to-ports", strconv.Itoa(cfg.PrimaryPort))
 			}
 		}
 	}

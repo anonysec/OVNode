@@ -33,9 +33,9 @@ func NodePublicIP() string {
 }
 
 // RemoteLines builds one remote line per reachable port.
-func RemoteLines(tunnelAddr string, primaryPort int) string {
+func RemoteLines(tunnelAddr string, primaryPort int, extraPorts ...int) string {
 	ports := []int{primaryPort}
-	ports = append(ports, ExtraVPNPorts()...)
+	ports = append(ports, extraPorts...)
 	lines := make([]string, 0, len(ports))
 	for _, p := range ports {
 		lines = append(lines, "remote "+tunnelAddr+" "+strconv.Itoa(p))
