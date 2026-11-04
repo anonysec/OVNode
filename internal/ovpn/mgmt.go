@@ -41,6 +41,25 @@ const (
 	verifyPoll      = 500 * time.Millisecond
 )
 
+// validateMgmtHost refuses non-loopback management hosts unless explicitly
+// allowed, because the management password travels in cleartext.
+func validateMgmtHost(host string) error {
+	host = strings.TrimSpace(host)
+	if host == "" {
+		return nil
+	}
+	if host == "localhost" {
+		return nil
+	}
+	if ip := net.ParseIP(host); ip != nil && ip.IsLoopback() {
+		return nil
+	}
+	if strings.EqualFold(strings.TrimSpace(fsx.Env("ALLOW_REMOTE_MGMT", "")), "1") {
+		return nil
+	}
+	return fmt.Errorf("management host %q is not loopback; set OVNODE_ALLOW_REMOTE_MGMT=1", host)
+}
+
 // Takeover kills the given client ids over ONE management connection and
 // then verifies that the common name is gone.
 //
@@ -53,6 +72,9 @@ const (
 //
 // The returned lines are the log text the hook writes.
 func Takeover(host string, port int, passFile, cn string, cids []string) (TakeoverResult, []string) {
+	if err := validateMgmtHost(host); err != nil {
+		return TakeoverDown, []string{fmt.Sprintf("RESULT DOWN (%s)", err)}
+	}
 	addr := net.JoinHostPort(host, strconv.Itoa(port))
 	conn, err := net.DialTimeout("tcp", addr, mgmtDialTimeout)
 	if err != nil {
@@ -62,13 +84,18 @@ func Takeover(host string, port int, passFile, cn string, cids []string) (Takeov
 	m := &mgmtConn{conn: conn}
 
 	if strings.Contains(strings.ToUpper(m.readBanner()), "PASSWORD") {
-		if pw, ok := readPassword(passFile); ok {
-			_ = conn.SetWriteDeadline(time.Now().Add(mgmtReplyBudget))
-			if _, err := conn.Write([]byte(pw + "\n")); err == nil {
-				// The interface answers the password; a real one that
-				// does not must not stall the takeover.
-				m.readUntil(time.Now().Add(mgmtAuthBudget), "SUCCESS", "ERROR")
-			}
+		pw, ok := readPassword(passFile)
+		if !ok {
+			return TakeoverDown, []string{"RESULT DOWN (management password unreadable)"}
+		}
+		_ = conn.SetWriteDeadline(time.Now().Add(mgmtReplyBudget))
+		if _, err := conn.Write([]byte(pw + "\n")); err != nil {
+			return TakeoverDown, []string{fmt.Sprintf("RESULT DOWN (password write failed: %s)", err)}
+		}
+		authReply := m.readUntil(time.Now().Add(mgmtAuthBudget), "SUCCESS", "ERROR")
+		upper := strings.ToUpper(authReply)
+		if strings.Contains(upper, "BAD PASSWORD") || (strings.Contains(upper, "ERROR") && strings.Contains(upper, "PASSWORD")) {
+			return TakeoverDown, append([]string{}, "RESULT DOWN (bad management password)")
 		}
 	}
 
@@ -124,7 +151,11 @@ func mgmtHost() string {
 
 // dialManagement opens a connection to the management socket.
 func dialManagement() (net.Conn, error) {
-	addr := net.JoinHostPort(mgmtHost(), strconv.Itoa(ManagementPort()))
+	host := mgmtHost()
+	if err := validateMgmtHost(host); err != nil {
+		return nil, err
+	}
+	addr := net.JoinHostPort(host, strconv.Itoa(ManagementPort()))
 	return net.DialTimeout("tcp", addr, mgmtDialTimeout)
 }
 
@@ -145,11 +176,18 @@ func SendCommands(cmds []string) ([]string, error) {
 	m := &mgmtConn{conn: conn}
 
 	if strings.Contains(strings.ToUpper(m.readBanner()), "PASSWORD") {
-		if pw, ok := readPassword(pki.MgmtPassFile()); ok {
-			_ = conn.SetWriteDeadline(time.Now().Add(mgmtReplyBudget))
-			if _, err := conn.Write([]byte(pw + "\n")); err == nil {
-				m.readUntil(time.Now().Add(mgmtAuthBudget), "SUCCESS", "ERROR")
-			}
+		pw, ok := readPassword(pki.MgmtPassFile())
+		if !ok {
+			return nil, fmt.Errorf("management password unreadable")
+		}
+		_ = conn.SetWriteDeadline(time.Now().Add(mgmtReplyBudget))
+		if _, err := conn.Write([]byte(pw + "\n")); err != nil {
+			return nil, err
+		}
+		authReply := m.readUntil(time.Now().Add(mgmtAuthBudget), "SUCCESS", "ERROR")
+		upper := strings.ToUpper(authReply)
+		if strings.Contains(upper, "BAD PASSWORD") || (strings.Contains(upper, "ERROR") && strings.Contains(upper, "PASSWORD")) {
+			return nil, fmt.Errorf("bad management password")
 		}
 	}
 
@@ -218,11 +256,14 @@ func (m *mgmtConn) readBanner() string {
 func (m *mgmtConn) readUntil(deadline time.Time, markers ...string) string {
 	for {
 		text := string(m.buf)
-		upper := strings.ToUpper(text)
-		for _, marker := range markers {
-			if strings.Contains(upper, marker) {
-				m.buf = nil
-				return text
+		for _, line := range strings.Split(text, "\n") {
+			line = strings.TrimRight(line, "\r")
+			upperLine := strings.ToUpper(line)
+			for _, marker := range markers {
+				if strings.HasPrefix(upperLine, strings.ToUpper(marker)) {
+					m.buf = nil
+					return text
+				}
 			}
 		}
 		if !time.Now().Before(deadline) {
