@@ -117,7 +117,7 @@ The project is preparing for a major architectural refactor. Advanced AI-assiste
 - `1194/udp` reachable by your users, and `2083/tcp` reachable from the panel.
 
 ```bash
-bash <(curl -sSL https://raw.githubusercontent.com/anonysec/OVNode/v2.0.1/install.sh)
+bash <(curl -sSL https://raw.githubusercontent.com/anonysec/OVNode/main/install.sh)
 
 Pin the installer to a release tag instead of `main`; the installer's own SHA-256 is published in the release notes.
 ```
@@ -130,13 +130,13 @@ The menu asks one question, and the recommended choice asks nothing else:
 To answer every setting yourself, run the wizard instead:
 
 ```bash
-bash <(curl -sSL https://raw.githubusercontent.com/anonysec/OVNode/v2.0.1/install.sh) interactive
+bash <(curl -sSL https://raw.githubusercontent.com/anonysec/OVNode/main/install.sh) interactive
 ```
 
 **With no terminal** — a run without one cannot ask, so it needs `-y` to say that is intended. The two flags are `-y/--yes` and `-h/--help`, and everything else is an `OVN_*` variable:
 
 ```bash
-curl -fsSL https://raw.githubusercontent.com/anonysec/OVNode/v2.0.1/install.sh -o install.sh
+curl -fsSL https://raw.githubusercontent.com/anonysec/OVNode/main/install.sh -o install.sh
 OVN_NAME=eu-1 OVN_VPN_PORTS=1194,443,8443 OVN_IPV6=1 bash install.sh -y
 ```
 
