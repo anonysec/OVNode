@@ -1,5 +1,10 @@
 # Changelog
 
+## 2.0.2 — 2026-11-05
+
+- Remove checksum/signature verification remnants; releases ship bare binaries.
+- Installer and docs fetch install.sh from `main` (latest).
+
 ## 2.0.1 — 2026-11-04
 
 Security:
