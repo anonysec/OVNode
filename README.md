@@ -232,11 +232,8 @@ New/changed fields: `GET /sync/status` now includes `update_status` and `crl_day
 
 - Permissions are repaired on first start after update.
 - Extra-port redirects from older versions may need `iptables -t nat -S PREROUTING` review.
-- Forks must set `OVN_ALLOW_KEY_OVERRIDE=1` with their own minisign key.
 
-## 🧰 Day-to-day commands
-
-Every install adds one command, `ovnode` (short for `ovnode`). With no argument it prints this list and exits — there is no menu, so a provisioning script that invokes it never blocks waiting for input. Twelve verbs; `ovnode help --all` carries every option and the retired names.
+## 🧰 Day-to-day commands With no argument it prints this list and exits — there is no menu, so a provisioning script that invokes it never blocks waiting for input. Twelve verbs; `ovnode help --all` carries every option and the retired names.
 
 Run `sudo bash scripts/smoke-test.sh` on a fresh node to verify the install.
 

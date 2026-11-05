@@ -25,8 +25,7 @@ within 7 days, fix timeline within 30 days, 90-day disclosure after fix.
   restart or trigger a self-update. Treat it like a root credential and
   rotate it with `ovnode auth rotate` on suspected exposure.
 - A single panel holds the node lease; a second panel is refused with 409.
-- The self-updater only runs a root-owned, non-writable `install.sh` and
-  verifies the release signature (minisign) unless `OVN_ALLOW_UNSIGNED=1`.
+- The self-updater only runs a root-owned, non-writable `install.sh`.
 
 ## Threat model
 

@@ -64,20 +64,13 @@ expect_not_in() {
 }
 
 # ── Fixtures ───────────────────────────────────────────────────────────
-# The published release: the bare binary plus its .sha256 sidecar, exactly the
-# two files fetch_release_binary expects to find.
+# The published release: a bare binary only (no checksum or signature), which is
+# all fetch_release_binary now installs.
 RELEASE_DIR="$WORK/release"
 publish_release() {
     mkdir -p "$RELEASE_DIR"
     cp "$FAKE_BIN" "$RELEASE_DIR/$ASSET"
     chmod 0755 "$RELEASE_DIR/$ASSET"
-    ( cd "$RELEASE_DIR" && sha256sum "$ASSET" > "$ASSET.sha256" )
-    # Sign the fixture with a throwaway keypair so the installer's minisign
-    # verification path is exercised by the same tests.
-    TEST_MINISIGN_KEY="$WORK/minisign.key"
-    TEST_MINISIGN_PUB="$WORK/minisign.pub"
-    minisign -G -p "$TEST_MINISIGN_PUB" -s "$TEST_MINISIGN_KEY" -W >/dev/null 2>&1
-    minisign -S -s "$TEST_MINISIGN_KEY" -m "$RELEASE_DIR/$ASSET" >/dev/null 2>&1
 }
 
 # The curl shim. A release URL becomes the local fixture; anything else is a

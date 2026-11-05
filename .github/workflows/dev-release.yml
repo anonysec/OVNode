@@ -35,11 +35,10 @@ jobs:
             GOOS=linux GOARCH="${arch}" CGO_ENABLED=0 go build -trimpath \
               -ldflags "-s -w -X ovnode/internal/version.Version=${VER}" \
               -o "${out}" ./cmd/ovnode
-            sha256sum "${out}" > "${out}.sha256"
           done
       - name: Publish dev release
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
           gh release view dev >/dev/null 2>&1 || gh release create dev --title "dev" --prerelease --notes "Rolling dev build from main."
-          gh release upload dev ovnode-linux-amd64 ovnode-linux-amd64.sha256 ovnode-linux-arm64 ovnode-linux-arm64.sha256 --clobber
+          gh release upload dev ovnode-linux-amd64 ovnode-linux-arm64 --clobber

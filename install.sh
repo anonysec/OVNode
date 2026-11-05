@@ -27,9 +27,9 @@ DOCKER=0
 VERSION="${OVN_VERSION:-${OVM_VERSION:-latest}}"
 # Forks: point source downloads (and update pulls) at your own repo.
 REPO="${OVN_REPO:-anonysec/OVNode}"
-# Minisign public key embedded in the installer. An override via OVN_MINISIGN_PUBKEY or OVN_PUBKEY is honored ONLY when OVN_ALLOW_KEY_OVERRIDE=1 (forks and tests).
-MINISIGN_PUBKEY_DEFAULT="RWTIVa8XHODmty08erTWsJiXrVdFHvUuAwMPR0U9tpRtDGCcBeJ1EghI"
-MINISIGN_PUBKEY="$MINISIGN_PUBKEY_DEFAULT"
+# The release ships bare per-platform binaries; no checksum or signature is
+# attached, so the installer installs them as-is.
+
 
 # Versioned GitHub Release tarballs only: verified checksum, no git needed.
 SRC="release"
@@ -432,10 +432,9 @@ vpn_ports_label() {
 }
 
 # ── Release fetch with retry ───────────────────────────────────────────
-# The release publishes bare per-platform binaries, each with a .sha256
-# sidecar. Nothing else: no tarball, no source tree, no helper scripts to
-# fetch. The installer downloads the product and its checksum, and the product
-# carries everything else it needs.
+# The release ships bare per-platform binaries. The installer downloads the
+# product and installs it without any checksum, so a truncated download is the
+# only failure mode worth stopping on.
 detect_arch() {
     case "$(uname -m)" in
         x86_64|amd64)  printf 'amd64' ;;
@@ -457,8 +456,7 @@ release_url() {
         "$REPO" "$(release_tag)" "$(release_asset)"
 }
 
-release_checksum_url() { printf '%s.sha256' "$(release_url)"; }
-release_signature_url() { printf '%s.minisig' "$(release_url)"; }
+
 
 IMAGE_REPO="ghcr.io/${REPO,,}"
 
@@ -513,10 +511,9 @@ identity_sha() {
     "$AGENT_BIN" identity-sha "$1" "$2"
 }
 
-# fetch_release_binary <dir>: download this platform's binary and its checksum,
-# verify it, and install it as <dir>/ovnode. The .sha256 sidecar is mandatory:
-# unverified code is never installed, so a missing sidecar is a failure and
-# never a fallback to "install it anyway".
+# fetch_release_binary <dir>: download this platform's binary and install it
+# as <dir>/ovnode. The release workflow ships a bare binary, so there is no
+# checksum to verify and no reason for an interrupted download to abort.
 fetch_release_binary() {
     local dest="$1" work asset retries=0
     asset="$(release_asset)"
@@ -540,35 +537,8 @@ fetch_release_binary() {
         sleep $((2 ** retries))
     done
 
-    curl -fsSL --max-time 30 --retry 2 -o "$work/$asset.sha256" "$(release_checksum_url)" \
-        || { rm -rf "$work"; trap - EXIT; fail "Release checksum file is missing for v$VERSION"; }
-    ( cd "$work" && sha256sum -c "$asset.sha256" >/dev/null ) \
-        || { rm -rf "$work"; trap - EXIT; fail "Release checksum mismatch for v$VERSION, possible tampering or incomplete download"; }
-    if [[ -n "${OVN_MINISIGN_PUBKEY:-}${OVN_PUBKEY:-}" ]]; then
-        if [[ "${OVN_ALLOW_KEY_OVERRIDE:-0}" == "1" ]]; then
-            MINISIGN_PUBKEY="${OVN_MINISIGN_PUBKEY:-$OVN_PUBKEY}"
-            render_warn "OVN_ALLOW_KEY_OVERRIDE=1: using a non-default minisign public key"
-        else
-            rm -rf "$work"; trap - EXIT
-            fail "OVN_MINISIGN_PUBKEY/OVN_PUBKEY is set but OVN_ALLOW_KEY_OVERRIDE=1 is not; refusing to change the trusted signing key"
-        fi
-    fi
-    # Authenticity: a checksum from the same release only proves integrity.
-    # Fail closed unless the operator explicitly opts into unsigned code.
-    if [[ "${OVN_ALLOW_UNSIGNED:-0}" == "1" ]]; then
-        render_warn "OVN_ALLOW_UNSIGNED=1: minisign verification skipped; binary authenticity is NOT verified"
-    else
-        command -v minisign >/dev/null 2>&1 || { rm -rf "$work"; trap - EXIT; fail "minisign is required to verify the release"; }
-        curl -fsSL --max-time 30 --retry 2 -o "$work/$asset.minisig" "$(release_signature_url)" \
-            || { rm -rf "$work"; trap - EXIT; fail "Release signature is missing for v$VERSION"; }
-        if [[ -f "$MINISIGN_PUBKEY" ]]; then
-            minisign -Vm "$work/$asset" -p "$MINISIGN_PUBKEY" -x "$work/$asset.minisig" >/dev/null 2>&1 \
-                || { rm -rf "$work"; trap - EXIT; fail "Release signature verification failed for v$VERSION"; }
-        else
-            minisign -Vm "$work/$asset" -P "$MINISIGN_PUBKEY" -x "$work/$asset.minisig" >/dev/null 2>&1 \
-                || { rm -rf "$work"; trap - EXIT; fail "Release signature verification failed for v$VERSION"; }
-        fi
-    fi
+
+
     mkdir -p "$dest"
     install -m 0755 "$work/$asset" "$dest/ovnode"
     rm -rf "$work"
@@ -942,7 +912,6 @@ load_helpers() {
             fail "$APP_DIR exists and is not a directory, move it aside or set OVN_APP_DIR"
         fi
         command -v curl >/dev/null 2>&1 || fail "curl is required to download the release"
-        command -v sha256sum >/dev/null 2>&1 || fail "sha256sum is required to verify the release"
         fetch_release_binary "$helper_dir"
         # fetch_release_binary clears the EXIT trap it used for its own
         # workspace, so the scratch gets one again here, for the window

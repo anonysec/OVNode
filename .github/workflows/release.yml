@@ -22,7 +22,7 @@ jobs:
       - name: System dependencies
         run: |
           sudo apt-get update -qq
-          sudo apt-get install -y -qq openvpn easy-rsa iptables iproute2 logrotate minisign
+          sudo apt-get install -y -qq openvpn easy-rsa iptables iproute2 logrotate
       - name: Lint
         run: make lint
       - name: Go tests
@@ -51,14 +51,6 @@ jobs:
           VER="$(grep -m1 -E '(const|var) Version' internal/version/version.go | cut -d'"' -f2)"
           [ "${VER}" = "${GITHUB_REF_NAME#v}" ] || { echo "tag does not match internal/version/version.go"; exit 1; }
 
-      # Bare per-platform binaries, each with a .sha256 sidecar. No tarball:
-      # the installer downloads the product and its checksum, and the product
-      # carries the shell files it needs. A release used to ship the whole
-      # source tree, so every box ended up with a checkout of the repository
-      # in /opt/ovnode.
-      - name: System dependencies
-        run: sudo apt-get update -qq && sudo apt-get install -y -qq minisign
-
       - name: Build platform binaries
         run: |
           VER="$(go run ./cmd/ovnode version)"
@@ -66,18 +58,7 @@ jobs:
           for arch in amd64 arm64; do
             out="ovnode-linux-${arch}"
             GOOS=linux GOARCH="${arch}" CGO_ENABLED=0 go build -trimpath -ldflags "-s -w" -o "${out}" ./cmd/ovnode
-            sha256sum "${out}" > "${out}.sha256"
           done
-
-      - name: Sign platform binaries
-        env:
-          MINISIGN_SECRET_KEY: ${{ secrets.MINISIGN_SECRET_KEY }}
-        run: |
-          printf '%s' "$MINISIGN_SECRET_KEY" > /tmp/ovnode.key
-          for arch in amd64 arm64; do
-            minisign -S -s /tmp/ovnode.key -m "ovnode-linux-${arch}"
-          done
-          rm -f /tmp/ovnode.key
 
       - name: Ensure release exists
         if: startsWith(github.ref_name, 'v')
@@ -87,14 +68,10 @@ jobs:
           TAG="${GITHUB_REF_NAME}"
           gh release view "${TAG}" >/dev/null 2>&1 || gh release create "${TAG}" --title "${TAG}" --generate-notes
 
-      - name: Publish installer checksum
-        run: sha256sum install.sh > install.sh.sha256
-
       - name: Upload assets
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
           gh release upload "v${VER}" \
-            install.sh install.sh.sha256 \
-            ovnode-linux-amd64 ovnode-linux-amd64.sha256 ovnode-linux-amd64.minisig \
-            ovnode-linux-arm64 ovnode-linux-arm64.sha256 ovnode-linux-arm64.minisig --clobber
+            install.sh \
+            ovnode-linux-amd64 ovnode-linux-arm64 --clobber

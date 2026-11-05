@@ -11,7 +11,8 @@ Security:
 - Revoking a user now revokes every valid certificate of that name (a re-created user was previously left valid).
 - CRL is refreshed daily; /sync/status reports crl_days_remaining and crl_matches_ca.
 - Secret permissions: tls.key 0600, private dirs 0700, per-user dirs 0700; repaired on start and on restart; symlinks are never followed.
-- Installer verifies a minisign signature; a custom key needs OVN_ALLOW_KEY_OVERRIDE=1; OVN_ALLOW_UNSIGNED=1 skips verification.
+- Installer installs the release binary as-is; no checksum or signature is
+  verified.
 - Updater runs only a root-owned, non-writable install.sh with a minimal environment and a lock; POST /sync/update accepts an optional version (x.y.z); /sync/status shows update_status.
 
 Behavior changes:

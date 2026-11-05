@@ -12,7 +12,6 @@ Lightweight filter applies. Stdlib only, no new deps, smallest diff wins.
 - Revoking a user revokes every valid certificate of that name.
 - CRL refreshed daily; /sync/status reports crl_days_remaining.
 - Secret permissions repaired on start/restart; symlinks never followed.
-- Installer verifies a minisign signature (OVN_ALLOW_UNSIGNED=1 to skip).
 - POST /sync/config validates before writing, refuses reserved ports.
 - CN rules: no leading dot, must equal its sanitized form.
 - .env is not read from the current directory.
