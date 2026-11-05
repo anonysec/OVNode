@@ -12,6 +12,11 @@ func TestHookFromEnvValidatesRanges(t *testing.T) {
 	t.Setenv("OVNODE_DATA_DIR", dir+"/ovnode-data")
 	t.Setenv("OVNODE_MANAGEMENT_PORT", "0")
 	t.Setenv("OVNODE_SESSION_TTL", "-5")
+	// Keep the hook event log inside the sandbox: HookFromEnv writes the
+	// fallback lines to LogDir/hook-events.log, so pointing OVNODE_LOG_DIR at
+	// the temp dir makes this test self-contained (no dependency on
+	// /var/log/ovnode or root).
+	t.Setenv("OVNODE_LOG_DIR", dir)
 	cfg := HookFromEnv()
 	if cfg.MgmtPort != DefaultMgmtPort {
 		t.Fatalf("mgmt port = %d, want %d", cfg.MgmtPort, DefaultMgmtPort)

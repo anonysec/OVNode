@@ -95,7 +95,7 @@ func TestHandleUpdateLock(t *testing.T) {
 	if err := os.WriteFile(path, []byte("#!/bin/sh\nsleep 2\n"), 0o755); err != nil {
 		t.Fatal(err)
 	}
-	if err := os.Chown(path, 0, 0); err != nil {
+	if err := os.Chown(path, 0, 0); err != nil && !os.IsPermission(err) {
 		t.Fatal(err)
 	}
 	t.Setenv("APP_DIR", dir)

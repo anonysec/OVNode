@@ -35,9 +35,16 @@ func TriggerUpdate(appDir, version string) error {
 	if info.Mode()&0o022 != 0 {
 		return fmt.Errorf("install.sh is group/world-writable: refusing update")
 	}
-	st, ok := info.Sys().(*syscall.Stat_t)
-	if !ok || st.Uid != 0 {
-		return fmt.Errorf("install.sh is not root-owned: refusing update")
+	// install.sh must be root-owned so a non-root caller cannot overwrite the
+	// node's upgrade script while it runs as root. The check is only meaningful
+	// when the updater itself runs as root (the panel runs updates as root);
+	// a non-root caller (for example the CI test runner) cannot chown to root,
+	// so skip the check itself in that case.
+	if os.Getuid() == 0 {
+		st, ok := info.Sys().(*syscall.Stat_t)
+		if !ok || st.Uid != 0 {
+			return fmt.Errorf("install.sh is not root-owned: refusing update")
+		}
 	}
 
 	lockPath := filepath.Join(appDir, lockName)
