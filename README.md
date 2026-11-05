@@ -6,7 +6,7 @@ The VPN server half of an [OVManager](https://github.com/anonysec/OVManager) dep
   <img src=".github/assets/banner.svg" alt="OVNode — the VPN server agent for OVManager" width="820">
   <br><br>
 
-  [![Version](https://img.shields.io/badge/version-2.0.0-blue)](CHANGELOG.md)
+  [![Version](https://img.shields.io/badge/version-2.0.1-blue)](CHANGELOG.md)
   [![License: MIT](https://img.shields.io/badge/License-MIT-green.svg)](LICENSE)
   [![CI](https://github.com/anonysec/OVNode/actions/workflows/ci.yml/badge.svg)](https://github.com/anonysec/OVNode/actions/workflows/ci.yml)
   [![Go](https://img.shields.io/badge/go-1.27-00ADD8?logo=go&logoColor=white)](go.mod)
@@ -16,9 +16,9 @@ The VPN server half of an [OVManager](https://github.com/anonysec/OVManager) dep
 
 ## Project Status
 
-> **Early Development (v2.0.0)**
+> **Stable release (v2.0.1)**
 >
-> This repository is an early development release. It is not production-ready, APIs and configuration formats may change, and operational guarantees are limited. Use in test environments only.
+> This repository is a stable, production-ready release. The API, configuration format and deployment model are frozen for this line; the changelog lists every change. Use it on VPN servers.
 
 ## Tech Stack
 
@@ -117,7 +117,7 @@ The project is preparing for a major architectural refactor. Advanced AI-assiste
 - `1194/udp` reachable by your users, and `2083/tcp` reachable from the panel.
 
 ```bash
-bash <(curl -sSL https://raw.githubusercontent.com/anonysec/OVNode/v2.0.0/install.sh)
+bash <(curl -sSL https://raw.githubusercontent.com/anonysec/OVNode/v2.0.1/install.sh)
 
 Pin the installer to a release tag instead of `main`; the installer's own SHA-256 is published in the release notes.
 ```
@@ -130,13 +130,13 @@ The menu asks one question, and the recommended choice asks nothing else:
 To answer every setting yourself, run the wizard instead:
 
 ```bash
-bash <(curl -sSL https://raw.githubusercontent.com/anonysec/OVNode/v2.0.0/install.sh) interactive
+bash <(curl -sSL https://raw.githubusercontent.com/anonysec/OVNode/v2.0.1/install.sh) interactive
 ```
 
 **With no terminal** — a run without one cannot ask, so it needs `-y` to say that is intended. The two flags are `-y/--yes` and `-h/--help`, and everything else is an `OVN_*` variable:
 
 ```bash
-curl -fsSL https://raw.githubusercontent.com/anonysec/OVNode/main/install.sh -o install.sh
+curl -fsSL https://raw.githubusercontent.com/anonysec/OVNode/v2.0.1/install.sh -o install.sh
 OVN_NAME=eu-1 OVN_VPN_PORTS=1194,443,8443 OVN_IPV6=1 bash install.sh -y
 ```
 
@@ -340,7 +340,7 @@ The production installer consumes verified release archives only, so a source ch
 
 MIT. See [LICENSE](LICENSE).
 
-Node `1.0.x` pairs with OVManager `1.0.x`, so upgrade both together. The `2.x` line was retired before 1.0.0 — see [CHANGELOG.md](CHANGELOG.md).
+OVManager and OVNode are independent repositories released on the same line (currently `2.0.1`). The OVManager installer can install OVNode on the same host; register the node in OVManager under **Nodes → Add Node**. The node never calls the panel — see the OVManager guide [Adding nodes](https://anonysec.github.io/OVManager/wiki/nodes.html).
 
 ## Dev builds
 Install a rolling dev build: `OVN_VERSION=dev bash <(curl -sSL https://raw.githubusercontent.com/anonysec/OVNode/main/install.sh)`. Dev versions look like `dev-YYYYMMDD.N-<sha>`.

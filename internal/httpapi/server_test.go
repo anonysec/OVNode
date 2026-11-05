@@ -17,6 +17,7 @@ import (
 	"time"
 
 	"ovnode/internal/ratelimit"
+	"ovnode/internal/version"
 )
 
 const testKey = "test-key-1234567890"
@@ -220,8 +221,8 @@ func TestStatusCarriesThePanelKeys(t *testing.T) {
 			t.Errorf("the status has no %q key: %s", key, rec.Body.String())
 		}
 	}
-	if data["version"] != "2.0.0" {
-		t.Errorf("version = %v, want the agent version", data["version"])
+	if data["version"] != version.Version {
+		t.Errorf("version = %v, want the agent version %q", data["version"], version.Version)
 	}
 }
 

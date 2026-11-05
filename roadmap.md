@@ -2,28 +2,31 @@
 
 Lightweight filter applies. Stdlib only, no new deps, smallest diff wins.
 
-## Shipped
+## Shipped (v2.0.1 — hardening release)
 
-- **1.1.1** — owner username lock + last-user guard.
-- **1.1.0** — full UX overhaul (dashboard, list pages, settings, shell).
+- API-key hashing (keys shorter than 16 chars refused, HTTP 503).
+- Rate limit: per-IP before auth, global after auth (429, 10 failed keys in 5 min).
+- First boot prints a key fingerprint instead of the full API key.
+- Pushed PEMs are parsed, validated and re-encoded.
+- PKI push takes a lock and rolls back partial writes.
+- Revoking a user revokes every valid certificate of that name.
+- CRL refreshed daily; /sync/status reports crl_days_remaining.
+- Secret permissions repaired on start/restart; symlinks never followed.
+- Installer verifies a minisign signature (OVN_ALLOW_UNSIGNED=1 to skip).
+- POST /sync/config validates before writing, refuses reserved ports.
+- CN rules: no leading dot, must equal its sanitized form.
+- .env is not read from the current directory.
 
-## Shipped (v1.1.2)
-- .env wins over process env (PasarGuard style) in fsx + mgmt/debug/log reads.
+## Shipped — retired 1.1.x items
 
-- Rate-limit `/api/login` — already implemented in OVManager auth (token bucket).
-- `ovmanager update` typed confirmation — implemented in Go CLI (`--yes` to skip).
-- Last-login IP + timestamp — surfaced in user detail modal.
-
-## Later (v1.1.3)
-- Chunked user sync: requires panel-side chunking; OVNode /sync/users handles bulk limits only.
-- gRPC transport: large change (rewrite httpapi + panel client); REST remains default.
-- Configurable stats intervals: N/A — OVNode has no periodic stats collection; panel polls.
-
+- 1.1.0 UX overhaul, 1.1.1 username lock, 1.1.2 `.env` layering, `/api/login`
+  rate limit, typed `ovmanager update` confirmation — superseded by the 2.0.x
+  line. See the CHANGELOG.
 
 ## Deferred (over-engineered for lightweight)
 
 - TOTP 2FA (new dep, recovery flow, QR UI)
-- Encrypted backup/restore (only ship if it's `tar czf` + DB re-seed,
-  no crypto layer)
+- Encrypted backup/restore (only ship if it's `tar czf` + DB re-seed, no crypto
+  layer)
 - Bulk user actions
 - Stale-node auto-hide (cosmetic)
