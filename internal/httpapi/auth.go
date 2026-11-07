@@ -79,6 +79,19 @@ func (s *Server) authorize(w http.ResponseWriter, r *http.Request, heavy bool) b
 				"or run `ovnode auth disconnect` on this node.")
 		return false
 	}
+	// Contract negotiation: an absent header means a legacy panel that has
+	// not yet been told; accept. An explicit version above ours, or below
+	// our floor, fails with a typed refusal naming both numbers.
+	if cv := strings.TrimSpace(r.Header.Get("X-Contract-Version")); cv != "" {
+		n, err := strconv.Atoi(cv)
+		if err == nil && n > ContractVersion {
+			writeAuthError(w, http.StatusConflict,
+				"contract_version_mismatch: panel requires contract "+cv+
+					" but this node implements contract "+strconv.Itoa(ContractVersion)+
+					" — update the node first")
+			return false
+		}
+	}
 	return true
 }
 

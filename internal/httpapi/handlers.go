@@ -40,6 +40,7 @@ func (s *Server) handleStatus(w http.ResponseWriter, r *http.Request) {
 	}
 	writeOK(w, "Node status retrieved successfully", map[string]any{
 		"status":          status,
+		"contract_version": ContractVersion,
 		"version":         version.Version,
 		"cpu_usage":       cpuUsage(),
 		"memory_usage":    memoryUsage(),

@@ -4,6 +4,7 @@
     "path": "/sync/status",
     "request": [],
     "response": [
+      "contract_version",
       "version",
       "cpu_usage",
       "memory_usage",
