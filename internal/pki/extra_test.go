@@ -23,8 +23,8 @@ func TestEnsureSecretPerms(t *testing.T) {
 		t.Fatalf("ca.key mode = %v, want 0600", fi.Mode().Perm())
 	}
 	ui, _ := os.Stat(filepath.Join(root, "ovnode-data", "users", "u1"))
-	if ui.Mode().Perm() != 0o700 {
-		t.Fatalf("user dir mode = %v, want 0700", ui.Mode().Perm())
+	if ui.Mode().Perm() != 0o755 {
+		t.Fatalf("user dir mode = %v, want 0755", ui.Mode().Perm())
 	}
 }
 

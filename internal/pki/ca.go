@@ -4,6 +4,7 @@
 package pki
 
 import (
+	"crypto"
 	"crypto/ecdsa"
 	"crypto/elliptic"
 	"crypto/rand"
@@ -24,27 +25,7 @@ import (
 
 // loadCA loads the CA cert and private key (PKCS#8 per V3).
 func loadCA() (*x509.Certificate, *ecdsa.PrivateKey, error) {
-	certPEM, err := os.ReadFile(CACert())
-	if err != nil {
-		return nil, nil, err
-	}
-	block, _ := pem.Decode(certPEM)
-	if block == nil {
-		return nil, nil, fmt.Errorf("no CA cert PEM")
-	}
-	cert, err := x509.ParseCertificate(block.Bytes)
-	if err != nil {
-		return nil, nil, err
-	}
-	keyPEM, err := os.ReadFile(filepath.Join(PKIDir(), "private", "ca.key"))
-	if err != nil {
-		return nil, nil, err
-	}
-	kblock, _ := pem.Decode(keyPEM)
-	if kblock == nil {
-		return nil, nil, fmt.Errorf("no CA key PEM")
-	}
-	key, err := x509.ParsePKCS8PrivateKey(kblock.Bytes)
+	cert, key, err := loadCASigner()
 	if err != nil {
 		return nil, nil, err
 	}
@@ -52,10 +33,31 @@ func loadCA() (*x509.Certificate, *ecdsa.PrivateKey, error) {
 	if !ok {
 		return nil, nil, fmt.Errorf("CA key is not ECDSA")
 	}
-	if !ecKey.PublicKey.Equal(cert.PublicKey) {
-		return nil, nil, fmt.Errorf("CA key does not match cert")
-	}
 	return cert, ecKey, nil
+}
+
+func loadCASigner() (*x509.Certificate, crypto.Signer, error) {
+	certPEM, err := os.ReadFile(CACert())
+	if err != nil {
+		return nil, nil, err
+	}
+	keyPEM, err := os.ReadFile(filepath.Join(PKIDir(), "private", "ca.key"))
+	if err != nil {
+		return nil, nil, err
+	}
+	pair, err := tls.X509KeyPair(certPEM, keyPEM)
+	if err != nil {
+		return nil, nil, err
+	}
+	cert, err := x509.ParseCertificate(pair.Certificate[0])
+	if err != nil {
+		return nil, nil, err
+	}
+	key, ok := pair.PrivateKey.(crypto.Signer)
+	if !ok {
+		return nil, nil, fmt.Errorf("CA key cannot sign")
+	}
+	return cert, key, nil
 }
 
 // nextSerial reads serial file (hex) and increments it.
@@ -65,9 +67,9 @@ func nextSerial() (*big.Int, error) {
 		return nil, err
 	}
 	s := strings.TrimSpace(string(data))
-	n := new(big.Int)
-	if _, ok := n.SetString(s, 16); !ok {
-		return nil, fmt.Errorf("bad serial %s", s)
+	n, err := hexNumber(s)
+	if err != nil {
+		return nil, err
 	}
 	// increment file
 	inc := new(big.Int).Add(n, big.NewInt(1))
@@ -79,15 +81,35 @@ func nextSerial() (*big.Int, error) {
 
 // IssueClientCert issues a client certificate for cn. Returns cert PEM, key PEM.
 func IssueClientCert(cn string) (string, string, error) {
+	return issueClientCert(cn, nil)
+}
+
+func issueClientCert(cn string, existingKey []byte) (string, string, error) {
 	caCert, caKey, err := loadCA()
 	if err != nil {
 		return "", "", err
 	}
-	// generate key
-	key, err := ecdsa.GenerateKey(caCert.PublicKey.(*ecdsa.PublicKey).Curve, rand.Reader)
-	if err != nil {
-		// use P-256
-		key, err = ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
+	var key *ecdsa.PrivateKey
+	if existingKey != nil {
+		block, rest := pem.Decode(existingKey)
+		if block == nil || strings.TrimSpace(string(rest)) != "" {
+			return "", "", fmt.Errorf("invalid existing client key")
+		}
+		if block.Type == "EC PRIVATE KEY" {
+			key, err = x509.ParseECPrivateKey(block.Bytes)
+		} else {
+			var parsed any
+			parsed, err = x509.ParsePKCS8PrivateKey(block.Bytes)
+			key, _ = parsed.(*ecdsa.PrivateKey)
+		}
+		if err != nil {
+			return "", "", err
+		}
+		if key == nil {
+			return "", "", fmt.Errorf("existing client key is not ECDSA")
+		}
+	} else {
+		key, err = ecdsa.GenerateKey(caCert.PublicKey.(*ecdsa.PublicKey).Curve, rand.Reader)
 		if err != nil {
 			return "", "", err
 		}
@@ -115,6 +137,9 @@ func IssueClientCert(cn string) (string, string, error) {
 		return "", "", err
 	}
 	keyPEM := pem.EncodeToMemory(&pem.Block{Type: "EC PRIVATE KEY", Bytes: keyDER})
+	if existingKey != nil {
+		keyPEM = existingKey
+	}
 	// append to index.txt
 	if err := appendIndex(cn, serial, now, tmpl.NotAfter, false); err != nil {
 		return "", "", err
@@ -128,91 +153,240 @@ func appendIndex(cn string, serial *big.Int, notBefore, notAfter time.Time, revo
 	expiry := notAfter.UTC().Format("060102150405Z")
 	line := status + "\t" + expiry + "\t\t" + fmt.Sprintf("%X", serial) + "\tunknown\t/CN=" + cn + "\n"
 	path := filepath.Join(PKIDir(), "index.txt")
-	data, _ := os.ReadFile(path)
+	data, err := os.ReadFile(path)
+	if err != nil {
+		return err
+	}
+	rows, err := parseIndex(data)
+	if err != nil {
+		return err
+	}
+	for _, row := range rows {
+		n, _ := hexNumber(row[3])
+		if n.Cmp(serial) == 0 {
+			return fmt.Errorf("certificate serial %X already exists in the index", serial)
+		}
+	}
+	if len(data) != 0 && data[len(data)-1] != '\n' {
+		data = append(data, '\n')
+	}
 	data = append(data, []byte(line)...)
 	return fsx.WriteFileAtomic(path, data, 0o644)
 }
 
 // RevokeCert marks a cert revoked and regenerates CRL.
 func RevokeCert(serialHex string) error {
-	// mark index.txt row
-	path := filepath.Join(PKIDir(), "index.txt")
-	data, _ := os.ReadFile(path)
-	lines := strings.Split(string(data), "\n")
-	now := time.Now().UTC().Format("060102150405Z")
-	var out []string
-	for _, ln := range lines {
-		fields := strings.Split(ln, "\t")
-		if len(fields) >= 4 && strings.EqualFold(fields[3], serialHex) && fields[0] == "V" {
-			// status R, add revocation time
-			if len(fields) < 3 {
-				fields = append(fields, "")
-			}
-			fields[0] = "R"
-			fields[2] = now
-			out = append(out, strings.Join(fields, "\t"))
-			continue
-		}
-		out = append(out, ln)
+	serial, err := hexNumber(serialHex)
+	if err != nil {
+		return err
 	}
-	_ = fsx.WriteFileAtomic(path, []byte(strings.Join(out, "\n")), 0o644)
+	rows, err := readIndex()
+	if err != nil {
+		return err
+	}
+	now := time.Now().UTC().Format("060102150405Z")
+	found := false
+	for _, row := range rows {
+		n, _ := hexNumber(row[3])
+		if n.Cmp(serial) == 0 {
+			found = true
+			if row[0] != "R" {
+				row[0], row[2] = "R", now
+			}
+		}
+	}
+	if !found {
+		return fmt.Errorf("certificate serial %s is not in the local index", serialHex)
+	}
+	if err := writeIndex(rows); err != nil {
+		return err
+	}
 	return GenerateCRL()
 }
 
 // GenerateCRL writes crl.pem using Go crypto/x509.
 func GenerateCRL() error {
-	caCert, caKey, err := loadCA()
+	caCert, caKey, err := loadCASigner()
 	if err != nil {
 		return err
 	}
-	// parse revoked entries from index.txt
-	data, _ := os.ReadFile(filepath.Join(PKIDir(), "index.txt"))
-	var revoked []pkix.RevokedCertificate
-	for _, ln := range strings.Split(string(data), "\n") {
-		fields := strings.Split(ln, "\t")
-		if len(fields) < 4 || fields[0] != "R" {
-			continue
-		}
-		serial := new(big.Int)
-		if _, ok := serial.SetString(fields[3], 16); !ok {
-			continue
-		}
-		// revocation time fields[2]
-		rt, err := time.Parse("060102150405Z", fields[2])
-		if err != nil {
-			rt = time.Now()
-		}
-		revoked = append(revoked, pkix.RevokedCertificate{
-			SerialNumber:   serial,
-			RevocationTime: rt,
-		})
+	rows, err := readIndex()
+	if err != nil {
+		return err
 	}
-	// crl number
-	crlNum := big.NewInt(4096)
-	if data, err := os.ReadFile(filepath.Join(PKIDir(), "crlnumber")); err == nil {
-		n := new(big.Int)
-		if _, ok := n.SetString(strings.TrimSpace(string(data)), 16); ok {
-			crlNum = n
-			// increment
-			inc := new(big.Int).Add(n, big.NewInt(1))
-			_ = fsx.WriteFileAtomic(filepath.Join(PKIDir(), "crlnumber"), []byte(fmt.Sprintf("%X\n", inc)), 0o644)
+	var revoked []x509.RevocationListEntry
+	seen := map[string]bool{}
+	previous, err := readCRL()
+	if err == nil {
+		if err := previous.CheckSignatureFrom(caCert); err != nil {
+			return fmt.Errorf("existing CRL does not match the local CA: %w", err)
 		}
+		for _, entry := range previous.RevokedCertificateEntries {
+			revoked = append(revoked, entry)
+			seen[entry.SerialNumber.Text(16)] = true
+		}
+	} else if !os.IsNotExist(err) {
+		return err
+	}
+	for _, row := range rows {
+		if row[0] != "R" {
+			continue
+		}
+		entry, err := indexRevocation(row)
+		if err != nil {
+			return err
+		}
+		key := entry.SerialNumber.Text(16)
+		if !seen[key] {
+			revoked = append(revoked, entry)
+			seen[key] = true
+		}
+	}
+	crlNum := big.NewInt(4096)
+	numberPath := filepath.Join(PKIDir(), "crlnumber")
+	if data, err := os.ReadFile(numberPath); err == nil {
+		crlNum, err = hexNumber(strings.TrimSpace(string(data)))
+		if err != nil {
+			return fmt.Errorf("invalid CRL number: %w", err)
+		}
+	} else if !os.IsNotExist(err) {
+		return err
+	}
+	if previous != nil && previous.Number != nil && crlNum.Cmp(previous.Number) <= 0 {
+		crlNum = new(big.Int).Add(previous.Number, big.NewInt(1))
 	}
 	now := time.Now()
 	tmpl := &x509.RevocationList{
-		Number:              crlNum,
-		ThisUpdate:          now,
-		NextUpdate:          now.Add(365 * 24 * time.Hour),
-		RevokedCertificates: revoked,
+		Number:                    crlNum,
+		ThisUpdate:                now,
+		NextUpdate:                now.Add(365 * 24 * time.Hour),
+		RevokedCertificateEntries: revoked,
 	}
 	crlDER, err := x509.CreateRevocationList(rand.Reader, tmpl, caCert, caKey)
 	if err != nil {
 		return err
 	}
 	pemBytes := pem.EncodeToMemory(&pem.Block{Type: "X509 CRL", Bytes: crlDER})
-	_ = fsx.WriteFileAtomic(CRLFile(), pemBytes, 0o644)
-	os.Chmod(CRLFile(), 0o644)
-	return nil
+	inc := new(big.Int).Add(crlNum, big.NewInt(1))
+	if err := fsx.WriteFileAtomic(numberPath, []byte(fmt.Sprintf("%X\n", inc)), 0o644); err != nil {
+		return err
+	}
+	if err := fsx.WriteFileAtomic(CRLFile(), pemBytes, 0o644); err != nil {
+		return err
+	}
+	dir, err := os.Open(PKIDir())
+	if err != nil {
+		return err
+	}
+	defer dir.Close()
+	return dir.Sync()
+}
+
+func hexNumber(value string) (*big.Int, error) {
+	if value == "" {
+		return nil, fmt.Errorf("empty hexadecimal value")
+	}
+	for _, ch := range value {
+		if !(ch >= '0' && ch <= '9' || ch >= 'A' && ch <= 'F' || ch >= 'a' && ch <= 'f') {
+			return nil, fmt.Errorf("invalid hexadecimal value %q", value)
+		}
+	}
+	n, ok := new(big.Int).SetString(value, 16)
+	if !ok {
+		return nil, fmt.Errorf("invalid hexadecimal value %q", value)
+	}
+	return n, nil
+}
+
+func readIndex() ([][]string, error) {
+	data, err := os.ReadFile(filepath.Join(PKIDir(), "index.txt"))
+	if err != nil {
+		return nil, err
+	}
+	return parseIndex(data)
+}
+
+func parseIndex(data []byte) ([][]string, error) {
+	var rows [][]string
+	seen := map[string]bool{}
+	for _, line := range strings.Split(string(data), "\n") {
+		if line == "" {
+			continue
+		}
+		fields := strings.Split(line, "\t")
+		if len(fields) != 6 || fields[5] == "" || (fields[0] != "V" && fields[0] != "R" && fields[0] != "E") {
+			return nil, fmt.Errorf("malformed certificate index row %q", line)
+		}
+		serial, err := hexNumber(fields[3])
+		if err != nil {
+			return nil, err
+		}
+		if seen[serial.Text(16)] {
+			return nil, fmt.Errorf("duplicate certificate index serial %s", fields[3])
+		}
+		seen[serial.Text(16)] = true
+		if _, err := indexTime(fields[1]); err != nil {
+			return nil, err
+		}
+		if fields[0] == "R" {
+			if _, err := indexRevocation(fields); err != nil {
+				return nil, err
+			}
+		} else if fields[2] != "" {
+			return nil, fmt.Errorf("unexpected revocation date on a %s index row", fields[0])
+		}
+		rows = append(rows, fields)
+	}
+	return rows, nil
+}
+
+func writeIndex(rows [][]string) error {
+	var body strings.Builder
+	for _, row := range rows {
+		body.WriteString(strings.Join(row, "\t"))
+		body.WriteByte('\n')
+	}
+	return fsx.WriteFileAtomic(filepath.Join(PKIDir(), "index.txt"), []byte(body.String()), 0o644)
+}
+
+func indexTime(value string) (time.Time, error) {
+	for _, layout := range []string{"060102150405Z", "20060102150405Z"} {
+		if parsed, err := time.Parse(layout, value); err == nil {
+			return parsed, nil
+		}
+	}
+	return time.Time{}, fmt.Errorf("invalid certificate index time %q", value)
+}
+
+func indexRevocation(row []string) (x509.RevocationListEntry, error) {
+	entry := x509.RevocationListEntry{}
+	serial, err := hexNumber(row[3])
+	if err != nil {
+		return entry, err
+	}
+	date, reason, _ := strings.Cut(row[2], ",")
+	revokedAt, err := indexTime(date)
+	if err != nil {
+		return entry, err
+	}
+	reasons := map[string]int{"": 0, "unspecified": 0, "keyCompromise": 1, "CACompromise": 2, "affiliationChanged": 3, "superseded": 4, "cessationOfOperation": 5, "certificateHold": 6, "privilegeWithdrawn": 9, "AACompromise": 10}
+	code, ok := reasons[reason]
+	if !ok {
+		return entry, fmt.Errorf("unsupported certificate revocation reason %q", reason)
+	}
+	return x509.RevocationListEntry{SerialNumber: serial, RevocationTime: revokedAt, ReasonCode: code}, nil
+}
+
+func readCRL() (*x509.RevocationList, error) {
+	data, err := os.ReadFile(CRLFile())
+	if err != nil {
+		return nil, err
+	}
+	block, rest := pem.Decode(data)
+	if block == nil || block.Type != "X509 CRL" || strings.TrimSpace(string(rest)) != "" {
+		return nil, fmt.Errorf("invalid CRL PEM at %s", CRLFile())
+	}
+	return x509.ParseRevocationList(block.Bytes)
 }
 
 // primaryIP returns the host's outbound IPv4 address for certificate SANs.

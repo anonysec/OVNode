@@ -14,7 +14,10 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"syscall"
 	"time"
+
+	"ovnode/internal/fsx"
 )
 
 // Tag marks every hook event line.
@@ -26,15 +29,37 @@ func Event(path, format string, args ...any) {
 		return
 	}
 	if dir := filepath.Dir(path); dir != "" {
-		_ = os.MkdirAll(dir, 0o755)
+		if err := fsx.MkdirAllNoFollow(dir, 0o755); err != nil {
+			return
+		}
 	}
 	msg := strings.NewReplacer("\r", "", "\n", "").Replace(fmt.Sprintf(format, args...))
 	line := fmt.Sprintf("%d [%s] %s\n", time.Now().Unix(), Tag, msg)
-	f, err := os.OpenFile(path, os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0o644)
+	f, err := fsx.OpenFileNoFollow(path, os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0o660)
 	if err != nil {
 		return
 	}
 	defer f.Close()
+	info, err := f.Stat()
+	if err != nil {
+		return
+	}
+	if info.Mode().Perm() != 0o660 {
+		if err := f.Chmod(0o660); err != nil {
+			return
+		}
+	}
+	if os.Geteuid() == 0 {
+		gid, err := fsx.RuntimeGroupID()
+		if err != nil {
+			return
+		}
+		if int(info.Sys().(*syscall.Stat_t).Gid) != gid {
+			if err := f.Chown(0, gid); err != nil {
+				return
+			}
+		}
+	}
 	_, _ = f.WriteString(line)
 }
 

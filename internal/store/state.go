@@ -9,7 +9,6 @@ import (
 	"path/filepath"
 
 	"ovnode/internal/fsx"
-	"strconv"
 	"strings"
 )
 
@@ -20,36 +19,83 @@ import (
 // value file and a `disabled` existence marker) are removed once the merged
 // file lands, so the tree converges on one format.
 func WriteUserState(usersDir, cn string, limit *int, disabled *bool) error {
+	return WriteUserPolicy(usersDir, cn, nil, limit, disabled)
+}
+
+func WriteUserPolicy(usersDir, cn string, name *string, limit *int, disabled *bool) error {
+	if name != nil {
+		if err := validateName(*name); err != nil {
+			return err
+		}
+	}
 	dir, err := UserDir(usersDir, cn)
 	if err != nil {
 		return err
 	}
-	if err := os.MkdirAll(dir, 0o755); err != nil {
+	if err := CreateUser(usersDir, cn); err != nil {
 		return err
 	}
-	current := ReadUserState(usersDir, cn)
-	effective := current.Limit
-	if !current.LimitSet {
-		effective = 1
-	}
-	if limit != nil {
-		effective = *limit
-		if effective < 0 {
-			effective = 0
+	// Serialize read/merge/write across processes with a root-only state lock.
+	return Lock(filepath.Join(dir, ".state.lock"), 0o600, func() error {
+		current, err := ReadUserState(usersDir, cn)
+		if err != nil {
+			return err
 		}
-	}
-	off := current.Disabled
-	if disabled != nil {
-		off = *disabled
-	}
-	body := fmt.Sprintf("limit=%d\ndisabled=%d\n", effective, boolInt(off))
-	if err := fsx.WriteFileAtomic(filepath.Join(dir, "state"), []byte(body), 0o644); err != nil {
-		return err
-	}
-	for _, legacy := range []string{"limit", "disabled"} {
-		_ = os.Remove(filepath.Join(dir, legacy))
-	}
-	return nil
+		if !current.NameSet {
+			if data, err := readPolicyFile(filepath.Join(dir, "name")); err == nil {
+				current.Name = strings.TrimSpace(string(data))
+				if err := validateName(current.Name); err != nil {
+					return err
+				}
+				current.NameSet = true
+			} else if !os.IsNotExist(err) {
+				return err
+			}
+		}
+		if name != nil {
+			current.Name, current.NameSet = *name, true
+		}
+		effective := current.Limit
+		if !current.LimitSet {
+			effective = 1
+		}
+		if limit != nil {
+			effective = *limit
+			if effective < 0 {
+				effective = 0
+			}
+		}
+		off := current.Disabled
+		if disabled != nil {
+			off = *disabled
+		}
+		body := fmt.Sprintf("disabled=%d\n", boolInt(off))
+		if current.LimitSet || limit != nil || disabled != nil || name == nil {
+			body = fmt.Sprintf("limit=%d\n", effective) + body
+		}
+		if current.NameSet {
+			body += "name=" + current.Name + "\n"
+		}
+		if err := fsx.WriteFileAtomic(filepath.Join(dir, "state"), []byte(body), 0o640); err != nil {
+			return err
+		}
+		f, err := os.Open(dir)
+		if err != nil {
+			return err
+		}
+		err = f.Sync()
+		f.Close()
+		if err != nil {
+			return err
+		}
+		InvalidateNameCache()
+		for _, legacy := range []string{"limit", "disabled", "name"} {
+			if err := os.Remove(filepath.Join(dir, legacy)); err != nil && !os.IsNotExist(err) {
+				return err
+			}
+		}
+		return nil
+	})
 }
 
 // SetLimit sets the max simultaneous logins for a user.
@@ -98,69 +144,35 @@ func CNForName(usersDir, name string) string {
 	return ""
 }
 
-// AccumulatedUsage returns the bytes banked by a user's finished sessions.
-//
-// A corrupt bank file (undecodable or non-numeric) counts as 0 instead of
-// failing: the panel poll must stay a 200.
+// AccumulatedUsage returns the persisted total for one CN.
 func AccumulatedUsage(usageDir, cn string) uint64 {
-	raw, err := os.ReadFile(filepath.Join(usageDir, cn))
+	st, err := ReadUsageState(usageDir, cn)
 	if err != nil {
 		return 0
 	}
-	n, err := strconv.ParseUint(strings.TrimSpace(string(raw)), 10, 64)
-	if err != nil {
-		return 0
-	}
-	return n
+	return st.Total
 }
 
-// AllAccumulatedUsage returns cn → banked bytes for every user with usage.
+// AllAccumulatedUsage returns cn → persisted total for every user with usage.
 //
-// The cache keeps a busy node from re-reading the whole usage directory on
-// every panel poll.
+// Authoritative accounting reads the persisted counter directly; the bank
+// value cache is intentionally not consulted.
 func AllAccumulatedUsage(usageDir string) map[string]uint64 {
-	if m, ok := UsageCacheGet(usageDir); ok {
-		return m
-	}
 	out := map[string]uint64{}
 	entries, err := os.ReadDir(usageDir)
 	if err != nil {
 		return out
 	}
 	for _, e := range entries {
-		// `.lock.<cn>` is the store's own per-CN flock file, not a user.
 		if e.IsDir() || strings.HasPrefix(e.Name(), ".lock.") {
 			continue
 		}
 		if !fsx.StoreKeyRe.MatchString(e.Name()) {
 			continue
 		}
-		if n := AccumulatedUsage(usageDir, e.Name()); n > 0 {
-			out[e.Name()] = n
+		if st, err := ReadUsageState(usageDir, e.Name()); err == nil {
+			out[e.Name()] = st.Total
 		}
 	}
-	UsageCacheSet(usageDir, out)
 	return out
-}
-
-// ResetUsage removes a user's banked counter.
-//
-// The removal happens under the same lock the disconnect hook uses for its
-// read-modify-write, so a concurrent hook cannot write the pre-reset total
-// back and silently undo the reset.
-func ResetUsage(usageDir, cn string) error {
-	safe, err := SafeCN(cn)
-	if err != nil {
-		return err
-	}
-	if err := os.MkdirAll(usageDir, 0o755); err != nil {
-		return err
-	}
-	InvalidateUsageCache()
-	return Lock(filepath.Join(usageDir, ".lock."+safe), func() error {
-		if err := os.Remove(filepath.Join(usageDir, safe)); err != nil && !os.IsNotExist(err) {
-			return err
-		}
-		return nil
-	})
 }

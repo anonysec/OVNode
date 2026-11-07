@@ -25,7 +25,6 @@ func TLSKey() string         { return fsx.TLSKey() }
 func CACert() string         { return fsx.CACert() }
 func ServerCert() string     { return fsx.ServerCert() }
 func ServerKey() string      { return fsx.ServerKey() }
-func DHPem() string          { return fsx.DHPem() }
 func CRLFile() string        { return fsx.CRLFile() }
 func PIDFile() string        { return fsx.PIDFile() }
 func MgmtPassFile() string   { return fsx.MgmtPassFile() }
@@ -33,6 +32,4 @@ func OVNodeDir() string      { return fsx.OVNodeDir() }
 func UsersDir() string       { return fsx.UsersDir() }
 func SessionsDir() string    { return fsx.SessionsDir() }
 func UsageDir() string       { return fsx.UsageDir() }
-func ScriptsDir() string     { return fsx.ScriptsDir() }
-func AgentBin() string       { return fsx.AgentBin() }
 func RequiredDirs() []string { return fsx.RequiredDirs() }

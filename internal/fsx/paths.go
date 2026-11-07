@@ -6,7 +6,6 @@ package fsx
 
 import (
 	"os"
-	"os/exec"
 	"path/filepath"
 	"strings"
 	"sync"
@@ -118,12 +117,15 @@ func ServerCert() string {
 	return filepath.Join(PKIDir(), "issued", "server.crt")
 }
 func ServerKey() string { return filepath.Join(PKIDir(), "private", "server.key") }
-func DHPem() string     { return filepath.Join(PKIDir(), "dh.pem") }
 func CRLFile() string   { return filepath.Join(PKIDir(), "crl.pem") }
 func PIDFile() string   { return joinRoot("server", "ovnode.pid") }
 func MgmtPassFile() string {
-	return joinRoot("server", "mgmt-pass")
+	return envOr("OVNODE_MGMT_PASS_FILE", joinRoot("server", "mgmt-pass"))
 }
+
+func StatusFile() string { return envOr("OVNODE_STATUS_FILE", joinRoot("server", "status.log")) }
+func LogDir() string     { return envOr("OVNODE_LOG_DIR", "/var/log/ovnode") }
+func LogFile() string    { return envOr("OVNODE_LOG_FILE", filepath.Join(LogDir(), "hook-events.log")) }
 
 func OVNodeDir() string {
 	// Data lives in /var/lib/ovnode by default (consistent with OVManager),
@@ -146,12 +148,6 @@ func SessionsDir() string {
 }
 func UsageDir() string {
 	return envOr("OVNODE_USAGE_DIR", filepath.Join(OVNodeDir(), "usage"))
-}
-func ScriptsDir() string {
-	// Kept for callers that historically stored the agent under a scripts/
-	// subdir; the agent now lives directly in OVNodeDir() so the path does
-	// not repeat the "ovnode" name.
-	return OVNodeDir()
 }
 
 // AgentBin is the single on-disk location of the node agent binary. It sits
@@ -182,16 +178,4 @@ func RequiredDirs() []string {
 		joinRoot("server"),
 		joinRoot("ccd"),
 	}
-}
-
-func OpenVPNBin() string {
-	if p, err := exec.LookPath("openvpn"); err == nil {
-		return p
-	}
-	for _, c := range []string{"/usr/sbin/openvpn", "/usr/local/sbin/openvpn", "/sbin/openvpn"} {
-		if _, err := exec.LookPath(c); err == nil {
-			return c
-		}
-	}
-	return "openvpn"
 }

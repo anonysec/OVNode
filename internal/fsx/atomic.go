@@ -27,15 +27,15 @@ func WriteFileAtomic(path string, data []byte, perm os.FileMode) error {
 		f.Close()
 		return err
 	}
+	if err := f.Chmod(perm); err != nil {
+		f.Close()
+		return err
+	}
 	if err := f.Sync(); err != nil {
 		f.Close()
 		return err
 	}
 	if err := f.Close(); err != nil {
-		return err
-	}
-	// future upgrade: write a .bak copy of the previous file before rename
-	if err := os.Chmod(tmp, perm); err != nil {
 		return err
 	}
 	return os.Rename(tmp, path)

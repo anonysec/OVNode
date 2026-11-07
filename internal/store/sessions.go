@@ -15,11 +15,16 @@ import (
 
 // Marker is one live session marker.
 type Marker struct {
-	CommonName  string
-	TrustedIP   string
-	TrustedPort string
-	PoolIP      string
-	Created     int64
+	CommonName        string
+	TrustedIP         string
+	TrustedPort       string
+	PoolIP            string
+	Created           int64
+	SessionID         string
+	ConnectedAt       int64
+	Generation        string
+	ConnectionStarted int64
+	ConnectedSince    int64
 }
 
 // SessionKey is the marker file name of a session: the CN plus the VPN pool
@@ -39,10 +44,12 @@ func SessionKey(safeCN, poolIP, trustedIP, trustedPort string) string {
 // real address of the client.
 func WriteMarker(path string, m Marker) error {
 	body := fmt.Sprintf(
-		"common_name=%s\ntrusted_ip=%s\ntrusted_port=%s\nifconfig_pool_remote_ip=%s\ncreated=%d\n",
+		"common_name=%s\ntrusted_ip=%s\ntrusted_port=%s\nifconfig_pool_remote_ip=%s\ncreated=%d\nsession_id=%s\nconnection_started=%d\n",
 		m.CommonName, m.TrustedIP, m.TrustedPort, m.PoolIP, m.Created,
+		firstNonEmpty(m.SessionID, m.Generation),
+		firstNonZero(m.ConnectedAt, m.ConnectionStarted, m.ConnectedSince, m.Created),
 	)
-	return fsx.WriteFileAtomic(path, []byte(body), 0o600)
+	return fsx.WriteFileAtomic(path, []byte(body), 0o660)
 }
 
 // ReadMarker parses a marker file. A missing file is not an error the
@@ -70,6 +77,25 @@ func ReadMarker(path string) (Marker, bool) {
 		case "created":
 			if n, err := strconv.ParseInt(v, 10, 64); err == nil {
 				m.Created = n
+			}
+		case "session_id":
+			m.SessionID = v
+			if m.Generation == "" {
+				m.Generation = v
+			}
+		case "generation":
+			m.Generation = v
+			if m.SessionID == "" {
+				m.SessionID = v
+			}
+		case "connection_started", "connected_at", "connected_since":
+			if n, err := strconv.ParseInt(v, 10, 64); err == nil {
+				m.ConnectedAt = n
+				m.ConnectionStarted = n
+				m.ConnectedSince = n
+				if m.Created == 0 {
+					m.Created = n
+				}
 			}
 		}
 	}
@@ -120,4 +146,22 @@ func RemoveLegacyMarkers(sessionsDir, safeCN, poolIP, trustedIP, trustedPort str
 			_ = os.Remove(filepath.Join(sessionsDir, name))
 		}
 	}
+}
+
+func firstNonEmpty(vals ...string) string {
+	for _, v := range vals {
+		if v != "" {
+			return v
+		}
+	}
+	return ""
+}
+
+func firstNonZero(vals ...int64) int64 {
+	for _, v := range vals {
+		if v != 0 {
+			return v
+		}
+	}
+	return 0
 }

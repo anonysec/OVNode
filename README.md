@@ -103,7 +103,8 @@ The project is preparing for a major architectural refactor. Advanced AI-assiste
 
 ### 🔧 Operations
 - `ovnode update` takes a verified snapshot of the identity file, the node data directory, `/etc/openvpn` and the API TLS files, then swaps in the release and restores the snapshot if the new one does not come up healthy.
-- `ovnode rollback` returns to the previous code tree; `ovnode update` cleans up an update interrupted by a reboot or power loss before it starts a new one.
+- `ovnode rollback` returns to the previous code tree; it refuses to run while any v2 usage counter is present (the previous binary cannot read them) and points at a state restore instead; `ovnode update` cleans up an update interrupted by a reboot or power loss before it starts a new one.
+- **Usage counter format (v2) and downgrade.** The per-CN usage file is a version-2 JSON counter (`version`, `epoch`, `total`, `sessions`) that commits total, session offsets and completed receipts atomically. A legacy unsigned-integer file is accepted once as the starting total. Empty, corrupt, or unknown-version files are reported as unavailable, never zeroed. Binaries that predate the v2 counter cannot decode these files and must not be run against them: a code-only downgrade against live v2 state would treat the JSON as an unreadable digit file and overwrite history. To downgrade, quiesce traffic (stop the agent and OpenVPN so no hook or poll can write), then restore the verified matching pre-update state snapshot taken by `ovnode update`; do not carry v2 usage files back to the older binary. Restoring an older snapshot discards any accounting recorded after that snapshot (a post-snapshot gap: those bytes are not recovered, and the panel's held baselines/epochs treat the rollback as an unexplained decrease until a reset reseeds).
 - `ovnode backup` archives the node data and PKI into root-only tarballs, on demand or through a daily system timer, with retention you set.
 - Log rotation, disk-space checks and a stable set of exit codes, so `ovnode` is scriptable rather than menu-only.
 
@@ -191,6 +192,12 @@ If the card shows a private address (`10.x`, `192.168.x`), the server is behind 
 | `/var/backups` | Backup archives written by `ovnode backup` |
 
 The agent's runtime settings use `OVNODE_*` names and live in `/opt/ovnode/.env`; they are separate from the installer's `OVN_*` variables above. Every one is documented in [.env.example](.env.example).
+
+Fresh managed installs create the `ovnode-vpn` system user/group unless a runtime identity was chosen. `OVN_RUNTIME_USER` and `OVN_RUNTIME_GROUP` select an existing identity at install time; a user-only override uses that user's primary group. Identity-creation failures stop installation.
+
+Updates preserve explicit `OVNODE_RUNTIME_USER`/`OVNODE_RUNTIME_GROUP` settings and existing OpenVPN `user`/`group` directives. Legacy `nobody`/`nogroup` installations are not silently moved to `ovnode-vpn`. They still share their runtime access with other services using that identity; choose a dedicated identity explicitly when migrating. On systems where the legacy group is named `nobody`, retain that group setting rather than assuming `nogroup` exists.
+
+Hooks receive their effective data, log and management paths through OpenVPN `setenv` directives. They do not need access to the private `.env`. Startup repairs policy to root-owned, runtime-group-readable `0640` files and shared session/usage files to `0660`, with setgid directories preserving group access after API writes. The owned hook log uses `0660` and its runtime group on creation and rotation; existing shared log parents and unrelated files are left unchanged. Private keys and profiles remain `0600`.
 
 ## 🔌 Sync API
 
@@ -331,6 +338,13 @@ go build ./cmd/ovnode
 ```
 
 The production installer consumes verified release archives only, so a source checkout is a development path rather than a deployment one. Manual mode runs the API alone: TLS (through `ssl_certfile`/`ssl_keyfile` in `.env`), IP forwarding and NAT, the firewall, service supervision and the OpenVPN daemon are yours to configure — the installer does all of that.
+
+## Operating guarantees (Task 12 corrections)
+
+- **Runtime permissions:** dropped-UID hooks can read policy and write accounting/session state, but cannot read private credentials or modify policy; secrets and profiles stay root-only.
+- **NAT enrollment/reboot:** native NAT is applied from the owned systemd unit at boot; `VPN_NAT_ENABLED=0`/`1` in `/etc/default/ovnode-nat` records opt-out; legacy enrolled means enrolled, absent file means not enrolled; opted-out nodes perform no NAT writes. Config changes propagate errors instead of false success.
+- **Counter/reset rules:** per-session increments are counted once across polls, disconnects, replay, restart, and reset; reset rotates the epoch and preserves live-session offsets; legacy unsigned counter files are accepted as the starting total. A corrupt/unknown-version counter file is an unavailable sample, not zero.
+- **Counter-format migration and safe downgrade:** v2 counter JSON is not readable by older binaries; downgrade uses the verified pre-update state snapshot while traffic is quiesced. Never blindly replace binaries across counter formats.
 
 ## 📄 License
 

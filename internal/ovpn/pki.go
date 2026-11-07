@@ -6,144 +6,118 @@ package ovpn
 import (
 	"fmt"
 	"os"
-
-	"ovnode/internal/fsx"
 	"path/filepath"
+	"strings"
 
 	"ovnode/internal/pki"
 )
 
-// DebugEnabled gates the (potentially noisy) PKI debug output.
-var DebugEnabled bool
-
-// InitPKI is the idempotent entrypoint.
 func InitPKI() error {
-	// Create required directories first
-	for _, d := range pki.RequiredDirs() {
-		os.MkdirAll(d, 0o755)
-	}
-	// Ensure scripts dir exists
-	os.MkdirAll(pki.OVNodeDir(), 0o755)
-
-	// Setup easy-rsa
-	pki.SetupEasyRSA()
-
-	// Check if CA already exists (both cert and private key)
-	caPath := pki.CACert()
-	caKeyPath := filepath.Join(pki.PKIDir(), "private", "ca.key")
-	if DebugEnabled || fsx.Env("DEBUG", "") != "" {
-		fmt.Fprintf(os.Stderr, "DEBUG: checking CA at %s\n", caPath)
-	}
-	caCertExists := false
-	caKeyExists := false
-	if _, err := os.Stat(caPath); err == nil {
-		caCertExists = true
-		if DebugEnabled || fsx.Env("DEBUG", "") != "" {
-			fmt.Fprintf(os.Stderr, "DEBUG: CA cert exists at %s\n", caPath)
+	for _, d := range append(pki.RequiredDirs(), pki.OVNodeDir()) {
+		if err := os.MkdirAll(d, 0o755); err != nil {
+			return err
 		}
 	}
-	if _, err := os.Stat(caKeyPath); err == nil {
-		caKeyExists = true
-		if DebugEnabled || fsx.Env("DEBUG", "") != "" {
-			fmt.Fprintf(os.Stderr, "DEBUG: CA key exists at %s\n", caKeyPath)
-		}
+	if err := pki.SetupEasyRSA(); err != nil {
+		return err
 	}
-	if caCertExists && caKeyExists {
-		if _, err := os.Stat(pki.ServerCert()); err == nil {
-			// PKI fully exists
-			pki.GenTLSKey()
-			if !pki.EnsureCRL() {
-				return fmt.Errorf("Certificate revocation list is unavailable")
+	if err := pki.EnsureDirTree(); err != nil {
+		return err
+	}
+	if err := pki.WithPKILock(func() error {
+		caCert, err := materialExists(pki.CACert())
+		if err != nil {
+			return err
+		}
+		caKey, err := materialExists(filepath.Join(pki.PKIDir(), "private", "ca.key"))
+		if err != nil {
+			return err
+		}
+		if caCert != caKey {
+			return fmt.Errorf("incomplete CA identity: restore the missing certificate or key")
+		}
+		if !caCert {
+			for _, subdir := range []string{"private", "issued", "reqs", "certs_by_serial"} {
+				entries, err := os.ReadDir(filepath.Join(pki.PKIDir(), subdir))
+				if err != nil {
+					return err
+				}
+				if len(entries) != 0 {
+					return fmt.Errorf("missing CA identity with existing %s material", subdir)
+				}
 			}
-			EnsureServerConf()
-			EnsureClientTemplate()
-			return nil
-		}
-		if DebugEnabled || fsx.Env("DEBUG", "") != "" {
-			fmt.Fprintf(os.Stderr, "DEBUG: CA exists but server cert missing, building server cert\n")
-		}
-	} else {
-		if !caCertExists {
-			if DebugEnabled || fsx.Env("DEBUG", "") != "" {
-				fmt.Fprintf(os.Stderr, "DEBUG: CA cert NOT found at %s\n", caPath)
+			index, err := os.ReadFile(filepath.Join(pki.PKIDir(), "index.txt"))
+			if err != nil {
+				return err
+			}
+			if strings.TrimSpace(string(index)) != "" {
+				return fmt.Errorf("missing CA identity with an existing certificate index")
+			}
+			if err := pki.RunEasyRSAChecked("build-ca", "nopass"); err != nil {
+				return err
 			}
 		}
-		if !caKeyExists {
-			if DebugEnabled || fsx.Env("DEBUG", "") != "" {
-				fmt.Fprintf(os.Stderr, "DEBUG: CA key NOT found at %s\n", caKeyPath)
+		serverCert, err := materialExists(pki.ServerCert())
+		if err != nil {
+			return err
+		}
+		serverKey, err := materialExists(pki.ServerKey())
+		if err != nil {
+			return err
+		}
+		if serverCert != serverKey {
+			return fmt.Errorf("incomplete server identity: restore the missing certificate or key")
+		}
+		if !serverCert {
+			if err := pki.RunEasyRSAChecked("--subject-alt-name=DNS:server,DNS:localhost", "build-server-full", "server", "nopass"); err != nil {
+				return err
 			}
 		}
-	}
-
-	// Create required directories for easy-rsa (including private dir for CA keys)
-	os.MkdirAll(pki.PKIDir(), 0o755)
-	os.MkdirAll(filepath.Join(pki.PKIDir(), "private"), 0o755)
-	// Debug: check if private dir exists
-	privateDir := filepath.Join(pki.PKIDir(), "private")
-	if _, err := os.Stat(privateDir); err != nil {
-		if DebugEnabled || fsx.Env("DEBUG", "") != "" {
-			fmt.Fprintf(os.Stderr, "DEBUG: private dir missing: %v\n", err)
+		ca, err := os.ReadFile(pki.CACert())
+		if err != nil {
+			return err
 		}
-	} else {
-		if DebugEnabled || fsx.Env("DEBUG", "") != "" {
-			fmt.Fprintf(os.Stderr, "DEBUG: private dir exists\n")
+		cert, err := os.ReadFile(pki.ServerCert())
+		if err != nil {
+			return err
 		}
-	}
-	// Debug: list PKI dir contents
-	if entries, err := os.ReadDir(pki.PKIDir()); err == nil {
-		for _, e := range entries {
-			if DebugEnabled || fsx.Env("DEBUG", "") != "" {
-				fmt.Fprintf(os.Stderr, "DEBUG PKI entry: %s\n", e.Name())
-			}
+		key, err := os.ReadFile(pki.ServerKey())
+		if err != nil {
+			return err
 		}
-	}
-
-	// Build CA if it doesn't exist
-	if !caCertExists || !caKeyExists {
-		if DebugEnabled || fsx.Env("DEBUG", "") != "" {
-			fmt.Fprintf(os.Stderr, "DEBUG: CA cert or key NOT found, building CA\n")
+		if err := pki.ValidateServerCert(string(ca), string(cert), string(key)); err != nil {
+			return fmt.Errorf("invalid existing PKI identity: %w", err)
 		}
-		// Clean up any existing partial CA files
-		os.Remove(filepath.Join(pki.PKIDir(), "private", "ca.key"))
-		os.Remove(caPath)
-		if !pki.RunEasyRSA("build-ca", "nopass") {
-			return fmt.Errorf("CA creation failed")
+		if err := pki.EnsureCRLChecked(); err != nil {
+			return err
 		}
+		return nil
+	}); err != nil {
+		return err
 	}
-
-	// Ensure directory tree exists before building server cert (creates reqs dir etc.)
-	pki.EnsureDirTree()
-	// Debug: check if reqs dir exists
-	reqsDir := filepath.Join(pki.PKIDir(), "reqs")
-	if _, err := os.Stat(reqsDir); err != nil {
-		if DebugEnabled || fsx.Env("DEBUG", "") != "" {
-			fmt.Fprintf(os.Stderr, "DEBUG: reqs dir missing: %v\n", err)
-		}
-	} else {
-		if DebugEnabled || fsx.Env("DEBUG", "") != "" {
-			fmt.Fprintf(os.Stderr, "DEBUG: reqs dir exists\n")
-		}
+	if err := pki.GenTLSKey(); err != nil {
+		return err
 	}
-
-	// Clean up any existing server request/key files to avoid "already exists" errors
-	os.Remove(filepath.Join(pki.PKIDir(), "reqs", "server.req"))
-	os.Remove(filepath.Join(pki.PKIDir(), "private", "server.key"))
-
-	// Build server cert with SANs (global option must come before command)
-	// shortcut: omit hardcoded IP SAN; panel pins the CA certificate directly
-	if !pki.RunEasyRSA("--subject-alt-name=DNS:server,DNS:localhost", "build-server-full", "server", "nopass") {
-		return fmt.Errorf("Server certificate creation failed")
+	if _, err := ensureServerConf(); err != nil {
+		return err
 	}
-
-	// Now create the directory tree with index.txt and serial
-	pki.EnsureDirTree()
-
-	if !pki.EnsureCRL() {
-		return fmt.Errorf("PKI initialization cannot continue without a CRL")
+	if err := EnsureClientTemplate(); err != nil {
+		return err
 	}
-	pki.GenTLSKey()
-	EnsureServerConf()
-	EnsureClientTemplate()
 	pki.EnsureSecretPerms()
 	return nil
+}
+
+func materialExists(path string) (bool, error) {
+	info, err := os.Lstat(path)
+	if os.IsNotExist(err) {
+		return false, nil
+	}
+	if err != nil {
+		return false, err
+	}
+	if !info.Mode().IsRegular() {
+		return false, fmt.Errorf("non-regular PKI material at %s", path)
+	}
+	return true, nil
 }

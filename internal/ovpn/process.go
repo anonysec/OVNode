@@ -102,7 +102,12 @@ func ReloadOpenVPN() bool {
 // bounce the installed node's tunnels. A relocated tree is restarted through
 // its own pid file instead.
 func RestartOpenVPN() bool {
-	store.FixRuntimePermissions(openvpnRoot())
+	if _, err := os.Stat(settingFile()); err != nil {
+		return false
+	}
+	if err := store.FixRuntimePermissions(openvpnRoot()); err != nil {
+		return false
+	}
 	pki.EnsureSecretPerms()
 	if pki.IsInstalledTree() {
 		// systemctl

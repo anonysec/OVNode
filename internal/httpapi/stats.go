@@ -11,14 +11,23 @@ import (
 )
 
 // handleUsage answers the per-user traffic counters.
-//
-// The panel's traffic collector resolves the keys by display name, so the
-// totals are keyed by the name where the node knows it.
 func (s *Server) handleUsage(w http.ResponseWriter, r *http.Request) {
 	if !s.authorize(w, r, false) {
 		return
 	}
-	usage := ovpn.UsersUsage()
+	usage, err := ovpn.UsersUsage()
+	if err != nil {
+		writeOK(w, "Usage sample unavailable", map[string]any{
+			"usage_available": false,
+			"sample":          "unavailable",
+			"users":           map[string]uint64{},
+			"sessions":        map[string]any{},
+			"totals":          map[string]uint64{},
+			"totals_epochs":   map[string]string{},
+			"error":           err.Error(),
+		})
+		return
+	}
 	users, _ := usage["users"].(map[string]uint64)
 	if len(users) == 0 {
 		writeOK(w, "No user is using it.", usage)

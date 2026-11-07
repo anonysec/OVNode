@@ -193,22 +193,59 @@ func PortsEffective(defaultPorts []int) []int {
 	return defaultPorts
 }
 
-// SyncNATConfig updates /etc/default/ovnode-nat and executes ovnode-nat.sh apply
-// so that iptables REDIRECT rules for extra ports take effect immediately.
-func SyncNATConfig(primaryPort int, extraPorts []int) {
-	natConf := "/etc/default/ovnode-nat"
-	natScript := "/usr/local/sbin/ovnode-nat.sh"
-	if _, err := os.Stat(natScript); err != nil {
-		return
+// SyncNATConfig updates the owned NAT configuration and applies it through the
+// native node binary. A node that is not enrolled for NAT (VPN_NAT_ENABLED=0,
+// or no owned config file) is left untouched so an opt-out survives updates.
+// Errors are returned to the caller instead of being logged as success.
+func natConfigPath() string {
+	if v := os.Getenv("OVNODE_NAT_CONF"); v != "" {
+		return v
 	}
-	content := fmt.Sprintf("# OVNode NAT configuration\nVPN_PRIMARY_PORT=%d\nVPN_EXTRA_PORTS=%s\n", primaryPort, joinInts(extraPorts))
+	return "/etc/default/ovnode-nat"
+}
+
+func SyncNATConfig(primaryPort int, extraPorts []int) error {
+	natConf := natConfigPath()
+	data, err := os.ReadFile(natConf)
+	if err != nil {
+		// No owned config file means not enrolled: do not create one here.
+		return nil
+	}
+	enabled := true
+	keySeen := false
+	for _, line := range strings.Split(string(data), "\n") {
+		kv := strings.SplitN(strings.TrimSpace(line), "=", 2)
+		if len(kv) == 2 && strings.TrimSpace(kv[0]) == "VPN_NAT_ENABLED" {
+			keySeen = true
+			v := strings.TrimSpace(kv[1])
+			enabled = v == "1" || strings.EqualFold(v, "true") || strings.EqualFold(v, "yes")
+		}
+	}
+	if !keySeen {
+		enabled = true
+	}
+	enabledStr := "0"
+	if enabled {
+		enabledStr = "1"
+	}
+	content := fmt.Sprintf("# OVNode NAT configuration\nVPN_NAT_ENABLED=%s\nVPN_PRIMARY_PORT=%d\nVPN_EXTRA_PORTS=%s\n", enabledStr, primaryPort, joinInts(extraPorts))
+	// preserve previous desired config on apply failure
 	if err := fsx.WriteFileAtomic(natConf, []byte(content), 0o644); err != nil {
-		// log via stderr; policy has no logger import
-		fmt.Fprintf(os.Stderr, "policy: write nat config: %v\n", err)
+		return fmt.Errorf("policy: write nat config: %w", err)
 	}
-	if err := exec.Command(natScript, "apply").Run(); err != nil {
-		fmt.Fprintf(os.Stderr, "policy: nat apply: %v\n", err)
+	if !enabled {
+		return nil
 	}
+	if err := exec.Command(fsx.AgentBin(), "nat", "apply").Run(); err != nil {
+		// restore previous desired config
+		perm := os.FileMode(0o644)
+		if st, statErr := os.Stat(natConf); statErr == nil {
+			perm = st.Mode().Perm()
+		}
+		_ = fsx.WriteFileAtomic(natConf, data, perm)
+		return fmt.Errorf("policy: nat apply: %w", err)
+	}
+	return nil
 }
 
 // ── DNS ──────────────────────────────────────────────────────────────

@@ -433,6 +433,83 @@ expect_eq bootstrap "$(state_of "$probe/truncated")"      "a truncated, non-exec
 expect_eq node-data "$(state_of "$probe/withdata")"       "node data with no node is node-data"
 expect_eq not-a-directory "$(state_of "$probe/afile")"    "a file at APP_DIR is not an install"
 
+section "runtime identity and hook log rotation"
+RUNTIME_DRIVER="$WORK/runtime-driver.sh"
+cat > "$RUNTIME_DRIVER" << 'DRIVER'
+#!/usr/bin/env bash
+. "$INSTALL_SH"
+. "$ROOT_DIR/lib.sh"
+OPENVPN_ROOT="$RUNTIME_ROOT"
+GROUP_CREATED=0 USER_CREATED=0
+getent() {
+    [[ "$1" == group ]] || return 1
+    [[ "$2" != ovnode-vpn || "$GROUP_CREATED" == 1 ]]
+}
+id() {
+    if [[ "$1" == -gn ]]; then printf 'primary-group\n'; return 0; fi
+    [[ "$2" != ovnode-vpn || "$USER_CREATED" == 1 ]] || return 1
+    printf '65533\n'
+}
+groupadd() {
+    printf 'groupadd %s\n' "$*"
+    [[ "${FAIL_ACCOUNT:-}" != group ]] || return 1
+    GROUP_CREATED=1
+}
+useradd() {
+    printf 'useradd %s\n' "$*"
+    [[ "${FAIL_ACCOUNT:-}" != user ]] || return 1
+    USER_CREATED=1
+}
+check_root() { :; }
+check_deps() { :; }
+preflight_summary() { :; }
+fetch_release_binary() {
+    printf 'runtime=%s:%s\n' "${RUNTIME_USER:-unset}" "${RUNTIME_GROUP:-unset}"
+    exit 0
+}
+logrotate() { :; }
+if [[ "${RUNTIME_ACTION:-install}" == rotate ]]; then
+    LOGROTATE_CONF="$RUNTIME_ROTATE_CONF"
+    setup_logrotate
+else
+    do_install
+fi
+DRIVER
+chmod 0755 "$RUNTIME_DRIVER"
+runtime_case() {
+    local name="$1"; shift
+    env INSTALL_SH="$INSTALL_SH" ROOT_DIR="$ROOT_DIR" OVN_APP_DIR="$WORK/runtime-$name/app" \
+        RUNTIME_ROOT="$WORK/runtime-$name/vpn" OVN_VERSION=2.0.0 "$@" \
+        bash "$RUNTIME_DRIVER" > "$WORK/runtime-$name.log" 2>&1
+    RC=$?
+}
+runtime_case fresh
+expect_status 0 "$RC" "fresh runtime identity is created with checked commands"
+expect_in "$WORK/runtime-fresh.log" 'runtime=ovnode-vpn:ovnode-vpn' "fresh managed install selects a dedicated identity"
+runtime_case explicit OVN_RUNTIME_USER=chosen-user OVN_RUNTIME_GROUP=chosen-group
+expect_status 0 "$RC" "explicit runtime identity is accepted"
+expect_in "$WORK/runtime-explicit.log" 'runtime=chosen-user:chosen-group' "explicit identity is preserved"
+expect_not_in "$WORK/runtime-explicit.log" 'groupadd ' "explicit identity does not create an unused group"
+expect_not_in "$WORK/runtime-explicit.log" 'useradd ' "explicit identity does not create an unused user"
+runtime_case user-only OVN_RUNTIME_USER=chosen-user
+expect_in "$WORK/runtime-user-only.log" 'runtime=chosen-user:primary-group' "user-only override uses its existing primary group"
+for failure in group user; do
+    runtime_case "fail-$failure" "FAIL_ACCOUNT=$failure"
+    expect_status 1 "$RC" "$failure creation failure stops installation"
+    expect_not_in "$WORK/runtime-fail-$failure.log" 'runtime=' "failed identity creation cannot reach activation"
+done
+mkdir -p "$WORK/runtime-legacy/vpn/server"
+printf 'user nobody\ngroup nogroup\n' > "$WORK/runtime-legacy/vpn/server/server.conf"
+runtime_case legacy
+expect_in "$WORK/runtime-legacy.log" 'runtime=nobody:nogroup' "legacy OpenVPN identity is preserved"
+expect_not_in "$WORK/runtime-legacy.log" 'useradd ' "legacy identity is not silently replaced"
+rotate_conf="$WORK/runtime-rotate.conf"
+hook_log="$WORK/custom-logs/hook-events.log"
+runtime_case rotate RUNTIME_ACTION=rotate "RUNTIME_ROTATE_CONF=$rotate_conf" \
+    OVNODE_RUNTIME_GROUP=chosen-group "OVNODE_LOG_DIR=$WORK/custom-logs" "OVNODE_LOG_FILE=$hook_log"
+expect_status 0 "$RC" "isolated log rotation generation succeeds"
+expect_in "$rotate_conf" "$hook_log" "rotation uses the effective hook log path"
+expect_in "$rotate_conf" 'create 0660 root chosen-group' "rotation preserves configured runtime-group append access"
 
 # ── Summary ────────────────────────────────────────────────────────────
 printf '\n%s passed, %s failed\n' "$PASS" "$FAIL"

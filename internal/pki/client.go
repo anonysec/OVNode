@@ -13,6 +13,7 @@ import (
 	"ovnode/internal/fsx"
 	"strings"
 	"syscall"
+	"time"
 )
 
 // The client-certificate lifecycle: issuing, revoking and reporting.
@@ -78,7 +79,18 @@ func IssueClientCertToTree(cn string) (string, string, error) {
 	}
 	defer unlock()
 
-	certPEM, keyPEM, err := IssueClientCert(cn)
+	existingKey, err := os.ReadFile(ClientKeyPath(cn))
+	if err != nil && !os.IsNotExist(err) {
+		return "", "", err
+	}
+	if os.IsNotExist(err) {
+		if _, err := os.Lstat(IssuedCertPath(cn)); err == nil {
+			return "", "", fmt.Errorf("existing certificate for %q has no private key", cn)
+		} else if !os.IsNotExist(err) {
+			return "", "", err
+		}
+	}
+	certPEM, keyPEM, err := issueClientCert(cn, existingKey)
 	if err != nil {
 		return "", "", err
 	}
@@ -98,8 +110,10 @@ func IssueClientCertToTree(cn string) (string, string, error) {
 	if err := fsx.WriteFileAtomic(IssuedCertPath(cn), []byte(certPEM), 0o600); err != nil {
 		return "", "", err
 	}
-	if err := fsx.WriteFileAtomic(ClientKeyPath(cn), []byte(keyPEM), 0o600); err != nil {
-		return "", "", err
+	if existingKey == nil {
+		if err := fsx.WriteFileAtomic(ClientKeyPath(cn), []byte(keyPEM), 0o600); err != nil {
+			return "", "", err
+		}
 	}
 	bundle := "# OVNode inline bundle\n# commonName: " + cn + "\n\n" +
 		"<cert>\n" + strings.TrimSpace(certPEM) + "\n</cert>\n\n" +
@@ -129,25 +143,104 @@ func RevokeCertByCN(cn string) error {
 		return err
 	}
 	defer unlock()
-	serials, err := validSerialsForCN(cn)
+	return revokeCertByCN(cn)
+}
+
+func revokeCertByCN(cn string) error {
+	ca, _, err := loadCASigner()
 	if err != nil {
 		return err
 	}
-	if len(serials) == 0 {
-		// Already revoked or unknown: make sure the CRL covers it.
-		return GenerateCRL()
-	}
-	// The CRL must be regenerable before the index says "R": a mark
-	// without a CRL leaves the certificate valid.
-	if err := GenerateCRL(); err != nil {
+	rows, err := readIndex()
+	if err != nil {
 		return err
 	}
-	for _, serial := range serials {
-		if err := RevokeCert(serial); err != nil {
+	serials := map[string]bool{}
+	for _, row := range rows {
+		if indexHasCN(row, cn) {
+			n, _ := hexNumber(row[3])
+			serials[n.Text(16)] = true
+		}
+	}
+	for _, path := range []string{IssuedCertPath(cn), filepath.Join(UsersDir(), cn, "cert.pem"), filepath.Join(UsersDir(), cn, "client.ovpn")} {
+		data, err := os.ReadFile(path)
+		if os.IsNotExist(err) {
+			continue
+		}
+		if err != nil {
+			return err
+		}
+		if filepath.Ext(path) == ".ovpn" {
+			_, body, ok := strings.Cut(string(data), "<cert>")
+			if !ok {
+				return fmt.Errorf("cached profile has no certificate for %q", cn)
+			}
+			body, _, ok = strings.Cut(body, "</cert>")
+			if !ok {
+				return fmt.Errorf("cached profile has an incomplete certificate for %q", cn)
+			}
+			data = []byte(body)
+		}
+		block, _ := pem.Decode(data)
+		if block == nil || block.Type != "CERTIFICATE" {
+			return fmt.Errorf("invalid certificate at %s", path)
+		}
+		cert, err := x509.ParseCertificate(block.Bytes)
+		if err != nil {
+			return err
+		}
+		if cert.Subject.CommonName != cn {
+			return fmt.Errorf("certificate at %s does not belong to %q", path, cn)
+		}
+		if err := cert.CheckSignatureFrom(ca); err != nil {
+			return fmt.Errorf("cannot revoke foreign certificate at %s locally: %w", path, err)
+		}
+		if !serials[cert.SerialNumber.Text(16)] {
+			return fmt.Errorf("certificate at %s is absent from the local index", path)
+		}
+	}
+	if len(serials) == 0 {
+		return fmt.Errorf("no certificate index records for %q", cn)
+	}
+	changed := false
+	now := time.Now().UTC().Format("060102150405Z")
+	for _, row := range rows {
+		if indexHasCN(row, cn) && row[0] != "R" {
+			row[0], row[2] = "R", now
+			changed = true
+		}
+	}
+	if changed {
+		if err := writeIndex(rows); err != nil {
 			return err
 		}
 	}
+	if err := GenerateCRL(); err != nil {
+		return err
+	}
+	list, err := readCRL()
+	if err != nil {
+		return err
+	}
+	if err := list.CheckSignatureFrom(ca); err != nil {
+		return err
+	}
+	for _, entry := range list.RevokedCertificateEntries {
+		delete(serials, entry.SerialNumber.Text(16))
+	}
+	if len(serials) != 0 {
+		return fmt.Errorf("persisted CRL does not cover every certificate for %q", cn)
+	}
 	return nil
+}
+
+func indexHasCN(row []string, cn string) bool {
+	for _, field := range strings.Split(row[5], "/") {
+		if field == "CN="+cn {
+			return true
+		}
+	}
+	return false
 }
 
 // RefreshCRL regenerates the CRL under the PKI lock. It is safe to call
@@ -171,51 +264,6 @@ func RegenerateCRL() bool {
 	return GenerateCRL() == nil
 }
 
-// validSerialsForCN returns the serials of every still-valid certificate for
-// cn, in index.txt order. A CN may appear more than once after a delete and
-// re-issue, and revoking by CN must cover all of them.
-func validSerialsForCN(cn string) ([]string, error) {
-	data, err := os.ReadFile(filepath.Join(PKIDir(), "index.txt"))
-	if err != nil {
-		return nil, err
-	}
-	var serials []string
-	for _, ln := range strings.Split(string(data), "\n") {
-		fields := strings.Split(ln, "\t")
-		if len(fields) < 6 {
-			continue
-		}
-		if fields[0] != "V" {
-			continue
-		}
-		if fields[5] != "/CN="+cn {
-			continue
-		}
-		serials = append(serials, fields[3])
-	}
-	return serials, nil
-}
-
-// serialForCN returns the serial of the certificate of cn and whether it is
-// still valid.
-func serialForCN(cn string) (string, bool, error) {
-	data, err := os.ReadFile(filepath.Join(PKIDir(), "index.txt"))
-	if err != nil {
-		return "", false, err
-	}
-	for _, ln := range strings.Split(string(data), "\n") {
-		fields := strings.Split(ln, "\t")
-		if len(fields) < 6 {
-			continue
-		}
-		if fields[5] != "/CN="+cn {
-			continue
-		}
-		return fields[3], fields[0] == "V", nil
-	}
-	return "", false, fmt.Errorf("no valid certificate for cn %q", cn)
-}
-
 // WithPKILock runs fn while holding the PKI write lock.
 func WithPKILock(fn func() error) error {
 	unlock, err := lockPKI()
@@ -226,18 +274,25 @@ func WithPKILock(fn func() error) error {
 	return fn()
 }
 
-// RemoveClientMaterial deletes the certificate, key and inline bundle of a
-// client from the PKI tree.
-//
-// The CRL already refuses the certificate; this only clears the dead
-// material so nobody can read a revoked key off the disk.
-func RemoveClientMaterial(cn string) {
+// Hold the PKI lock through verified revocation and material removal.
+func RemoveClientMaterial(cn string) error {
 	if _, err := fsx.SafeCN(cn); err != nil {
-		return
+		return err
+	}
+	unlock, err := lockPKI()
+	if err != nil {
+		return err
+	}
+	defer unlock()
+	if err := revokeCertByCN(cn); err != nil {
+		return err
 	}
 	for _, p := range []string{IssuedCertPath(cn), ClientKeyPath(cn), InlineBundlePath(cn)} {
-		_ = os.Remove(p)
+		if err := os.Remove(p); err != nil && !os.IsNotExist(err) {
+			return err
+		}
 	}
+	return nil
 }
 
 // Healthy reports whether the local PKI is usable.

@@ -56,9 +56,3 @@ func HookCNValid(safe string) bool {
 	}
 	return HookCNRe.MatchString(safe)
 }
-
-// StoreCNValid reports whether a CN may be used as a store path component.
-func StoreCNValid(cn string) bool {
-	_, err := SafeCN(cn)
-	return err == nil
-}

@@ -31,6 +31,7 @@ import (
 	"ovnode/internal/logging"
 	"ovnode/internal/pki"
 	"ovnode/internal/ratelimit"
+	"ovnode/internal/store"
 	"ovnode/internal/version"
 )
 
@@ -295,6 +296,9 @@ func markSetupPrinted() {
 
 // Run starts the agent.
 func Run() error {
+	if err := store.FixRuntimePermissions(pki.OpenVPNRoot()); err != nil {
+		return fmt.Errorf("runtime permissions: %w", err)
+	}
 	pki.EnsureSecretPerms()
 	if src := fsx.EnvFileSource(); src != "" {
 		logging.Info(".env loaded from %s (.env wins over process env)", src)

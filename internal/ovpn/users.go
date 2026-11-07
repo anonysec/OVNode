@@ -4,6 +4,7 @@
 package ovpn
 
 import (
+	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -26,10 +27,23 @@ import (
 // without a CA (the panel owns the PKI) keeps the user directory and its
 // state, so the limits are still tracked, but the user cannot connect.
 func CreateUser(cn, name string, maxLogins int, disabled *bool) error {
+	return withUserLifecycle(cn, func() error {
+		return createUserLocked(cn, name, maxLogins, disabled)
+	})
+}
+
+func createUserLocked(cn, name string, maxLogins int, disabled *bool) error {
 	if err := store.CreateUser(pki.UsersDir(), cn); err != nil {
 		return err
 	}
 	if !hasCertMaterial(cn) {
+		dir, err := store.UserDir(pki.UsersDir(), cn)
+		if err != nil {
+			return err
+		}
+		if fileExists(filepath.Join(dir, "cert.pem")) || fileExists(filepath.Join(dir, "key.pem")) {
+			return fmt.Errorf("incomplete pushed credentials for %q", cn)
+		}
 		if _, err := os.Stat(pki.CACert()); err != nil {
 			return fmt.Errorf("no PKI and no pushed certificate for %q", cn)
 		}
@@ -37,21 +51,19 @@ func CreateUser(cn, name string, maxLogins int, disabled *bool) error {
 			return err
 		}
 	}
-	if _, err := BuildUserProfile(cn); err != nil {
+	if _, err := buildUserProfileLocked(cn); err != nil {
 		return err
 	}
+	var namePtr *string
 	if name != "" {
-		if err := store.WriteName(pki.UsersDir(), cn, name); err != nil {
-			return err
-		}
+		namePtr = &name
 	}
-	if err := store.SetLimit(pki.UsersDir(), cn, maxLogins); err != nil {
+	var limitPtr *int
+	if maxLogins >= 0 {
+		limitPtr = &maxLogins
+	}
+	if err := store.WriteUserPolicy(pki.UsersDir(), cn, namePtr, limitPtr, disabled); err != nil {
 		return err
-	}
-	if disabled != nil {
-		if err := store.SetDisabled(pki.UsersDir(), cn, *disabled); err != nil {
-			return err
-		}
 	}
 	store.InvalidateNameCache()
 	return nil
@@ -62,7 +74,13 @@ func CreateUser(cn, name string, maxLogins int, disabled *bool) error {
 //
 // The panel owns the PKI: it signs the user certificate and pushes it here.
 // The node stores it passively and never invokes a local CA.
-func CreateUserWithCredentials(cn, certPEM, keyPEM, caPEM string, maxLogins int, disabled *bool) error {
+func CreateUserWithCredentials(cn, certPEM, keyPEM, caPEM string, maxLogins *int, disabled *bool) error {
+	return withUserLifecycle(cn, func() error {
+		return createUserWithCredentialsLocked(cn, certPEM, keyPEM, caPEM, maxLogins, disabled)
+	})
+}
+
+func createUserWithCredentialsLocked(cn, certPEM, keyPEM, caPEM string, maxLogins *int, disabled *bool) error {
 	if certPEM == "" || keyPEM == "" {
 		return fmt.Errorf("cert_pem and key_pem are required")
 	}
@@ -113,53 +131,73 @@ func CreateUserWithCredentials(cn, certPEM, keyPEM, caPEM string, maxLogins int,
 			_ = fsx.WriteFileAtomic(filepath.Join(dir, "ca.pem"), body, 0o644)
 		}
 	}
-	if err := store.SetLimit(pki.UsersDir(), cn, maxLogins); err != nil {
+	if err := store.WriteUserPolicy(pki.UsersDir(), cn, nil, maxLogins, disabled); err != nil {
 		return err
 	}
-	if disabled != nil {
-		if err := store.SetDisabled(pki.UsersDir(), cn, *disabled); err != nil {
-			return err
-		}
-	}
-	if _, err := BuildUserProfile(cn); err != nil {
+	if _, err := buildUserProfileLocked(cn); err != nil {
 		return err
 	}
 	store.InvalidateNameCache()
 	return nil
 }
 
-// DeleteUser revokes the user's certificate, regenerates the CRL and
-// removes the user's tree.
-//
-// It reports whether the user existed. A certificate the panel pushed was
-// never issued by this CA, so only the local material is revoked: revoking a
-// serial the local index never knew would produce a CRL the OpenVPN server
-// cannot use.
+// Unverifiable revocation keeps the disabled tombstone and recoverable material.
 func DeleteUser(cn string) (bool, error) {
+	var found bool
+	err := withUserLifecycle(cn, func() error {
+		var err error
+		found, err = deleteUserLocked(cn)
+		return err
+	})
+	if errors.Is(err, errUserGenerationChanged) {
+		return false, nil
+	}
+	return found, err
+}
+
+func deleteUserLocked(cn string) (bool, error) {
 	usersDir := pki.UsersDir()
 	dir, err := store.UserDir(usersDir, cn)
 	if err != nil {
 		return false, err
 	}
-	hasLocalCert := fileExists(pki.IssuedCertPath(cn))
-	hasPushedCert := fileExists(filepath.Join(dir, "cert.pem"))
-	hasProfile := fileExists(filepath.Join(dir, "client.ovpn"))
-	if !hasLocalCert && !hasPushedCert && !hasProfile {
-		store.DeleteUser(usersDir, pki.SessionsDir(), pki.UsageDir(), cn)
-		return false, nil
-	}
-	if hasLocalCert {
-		if err := pki.RevokeCertByCN(cn); err != nil {
+	hasMaterial := false
+	for _, path := range []string{pki.IssuedCertPath(cn), filepath.Join(dir, "cert.pem"), filepath.Join(dir, "client.ovpn")} {
+		present, err := materialExists(path)
+		if err != nil {
+			if disableErr := store.SetDisabled(usersDir, cn, true); disableErr != nil {
+				return true, disableErr
+			}
+			DisconnectUser(cn, false)
 			return true, err
 		}
-	} else if err := pki.GenerateCRL(); err != nil {
-		// The CRL must still cover the local index, but the certificate was
-		// not ours: a failure here is not a failed delete.
-		return true, fmt.Errorf("could not regenerate the CRL: %w", err)
+		hasMaterial = hasMaterial || present
 	}
-	pki.RemoveClientMaterial(cn)
-	_ = os.Remove(filepath.Join(pki.OpenVPNRoot(), "ccd", cn))
-	store.DeleteUser(usersDir, pki.SessionsDir(), pki.UsageDir(), cn)
+	if !hasMaterial {
+		state, err := store.ReadUserState(usersDir, cn)
+		if err != nil {
+			return false, err
+		}
+		if !state.Disabled {
+			return false, store.DeleteUser(usersDir, "", "", cn)
+		}
+	}
+	// Disable and disconnect before any destructive step, so a failed
+	// revocation leaves a disabled tombstone instead of live access.
+	if err := store.SetDisabled(usersDir, cn, true); err != nil {
+		return true, err
+	}
+	DisconnectUser(cn, false)
+
+	if err := pki.RemoveClientMaterial(cn); err != nil {
+		return true, err
+	}
+	if err := os.Remove(filepath.Join(pki.OpenVPNRoot(), "ccd", cn)); err != nil && !os.IsNotExist(err) {
+		return true, err
+	}
+	if err := store.DeleteUser(usersDir, "", "", cn); err != nil {
+		return true, err
+	}
 	store.InvalidateNameCache()
 	return true, nil
 }
@@ -171,15 +209,9 @@ func DeleteUser(cn string) (bool, error) {
 func SetUserStatus(cn, status string) error {
 	switch status {
 	case "deactivate":
-		if err := store.SetDisabled(pki.UsersDir(), cn, true); err != nil {
-			return err
-		}
-		// Best effort: the disabled marker blocks the reconnects even when
-		// the management socket is unavailable.
-		DisconnectUser(cn, false)
-		return nil
+		return ApplyUserPolicy(cn, "", -1, true)
 	case "activate":
-		return store.SetDisabled(pki.UsersDir(), cn, false)
+		return ApplyUserPolicy(cn, "", -1, false)
 	}
 	return fmt.Errorf("unknown status %q", status)
 }
@@ -196,7 +228,42 @@ func SetUserLimit(ident string, maxLogins int) error {
 			cn = resolved
 		}
 	}
-	return store.SetLimit(pki.UsersDir(), cn, maxLogins)
+	var limit *int
+	if maxLogins >= 0 {
+		limit = &maxLogins
+	}
+	return withUserLifecycle(cn, func() error {
+		return store.WriteUserState(pki.UsersDir(), cn, limit, nil)
+	})
+}
+
+// ApplyUserPolicy applies name, limit and disabled state as one checked
+// operation. A negative maxLogins keeps the current limit untouched, so a
+// status-only or name-only request cannot reset an existing device limit.
+func ApplyUserPolicy(cn, name string, maxLogins int, disabled bool) error {
+	return withUserLifecycle(cn, func() error {
+		return applyUserPolicyLocked(cn, name, maxLogins, disabled)
+	})
+}
+
+func applyUserPolicyLocked(cn, name string, maxLogins int, disabled bool) error {
+	usersDir := pki.UsersDir()
+	var namePtr *string
+	if name != "" {
+		namePtr = &name
+	}
+	var limitPtr *int
+	if maxLogins >= 0 {
+		limitPtr = &maxLogins
+	}
+	if err := store.WriteUserPolicy(usersDir, cn, namePtr, limitPtr, &disabled); err != nil {
+		return err
+	}
+	store.InvalidateNameCache()
+	if disabled {
+		DisconnectUser(cn, false)
+	}
+	return nil
 }
 
 // BuildUserProfile builds the .ovpn profile of a user and caches it.
@@ -211,6 +278,16 @@ func SetUserLimit(ident string, maxLogins int) error {
 // profile built from a hardcoded preamble would ignore a template the
 // operator edited.
 func BuildUserProfile(cn string) (string, error) {
+	var path string
+	err := withUserLifecycle(cn, func() error {
+		var err error
+		path, err = buildUserProfileLocked(cn)
+		return err
+	})
+	return path, err
+}
+
+func buildUserProfileLocked(cn string) (string, error) {
 	usersDir := pki.UsersDir()
 	dir, err := store.UserDir(usersDir, cn)
 	if err != nil {
@@ -246,6 +323,26 @@ func BuildUserProfile(cn string) (string, error) {
 // UserProfilePath returns the path of the cached profile of a user.
 func UserProfilePath(cn string) (string, error) {
 	return store.OVPNPath(pki.UsersDir(), cn)
+}
+
+func ReadUserProfile(cn string) ([]byte, error) {
+	var data []byte
+	err := withUserLifecycle(cn, func() error {
+		path, err := UserProfilePath(cn)
+		if err != nil {
+			return err
+		}
+		if _, err := os.Stat(path); os.IsNotExist(err) {
+			if err := createUserLocked(cn, "", -1, nil); err != nil {
+				return err
+			}
+		} else if err != nil {
+			return err
+		}
+		data, err = os.ReadFile(path)
+		return err
+	})
+	return data, err
 }
 
 // hasCertMaterial reports whether a user has a certificate the node can

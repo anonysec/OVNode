@@ -4,6 +4,7 @@
 package pki
 
 import (
+	"context"
 	"fmt"
 	"os"
 
@@ -18,32 +19,42 @@ import (
 var DebugEnabled bool
 
 func RunEasyRSA(args ...string) bool {
-	return RunEasyRSAWithTimeout(120, "", args...)
+	return RunEasyRSAChecked(args...) == nil
+}
+
+func RunEasyRSAChecked(args ...string) error {
+	return runEasyRSAWithTimeout(120, "", args...)
 }
 
 // RunEasyRSAWithTimeout runs easyrsa with a timeout and optional pki dir.
 func RunEasyRSAWithTimeout(timeout int, pkiDir string, args ...string) bool {
+	return runEasyRSAWithTimeout(timeout, pkiDir, args...) == nil
+}
+
+func runEasyRSAWithTimeout(timeout int, pkiDir string, args ...string) error {
 	if pkiDir == "" {
 		pkiDir = PKIDir()
 	}
 	bin := filepath.Join(EasyRSADir(), "easyrsa")
 	if _, err := os.Stat(bin); err != nil {
-		return false
+		return err
 	}
 	lockPath := filepath.Join(pkiDir, ".easyrsa.lock")
 	f, err := os.OpenFile(lockPath, os.O_CREATE|os.O_RDWR, 0o600)
 	if err != nil {
-		return false
+		return err
 	}
 	defer f.Close()
 	if err := syscall.Flock(int(f.Fd()), syscall.LOCK_EX); err != nil {
-		return false
+		return err
 	}
 	defer syscall.Flock(int(f.Fd()), syscall.LOCK_UN)
 
 	cmdArgs := []string{"--pki-dir=" + pkiDir}
 	cmdArgs = append(cmdArgs, args...)
-	cmd := exec.Command(bin, cmdArgs...)
+	ctx, cancel := context.WithTimeout(context.Background(), time.Duration(timeout)*time.Second)
+	defer cancel()
+	cmd := exec.CommandContext(ctx, bin, cmdArgs...)
 	cmd.Dir = EasyRSADir()
 	cmd.Env = []string{
 		"PATH=" + os.Getenv("PATH"),
@@ -61,26 +72,19 @@ func RunEasyRSAWithTimeout(timeout int, pkiDir string, args ...string) bool {
 	cmd.Stdout = os.Stdout
 	cmd.Stderr = os.Stderr
 
-	done := make(chan error, 1)
-	go func() { done <- cmd.Run() }()
-	select {
-	case err := <-done:
-		if err != nil {
-			if DebugEnabled || fsx.Env("DEBUG", "") != "" {
-				fmt.Fprintf(os.Stderr, "DEBUG easyrsa run error: %v\n", err)
-			}
-			return false
+	if err := cmd.Run(); err != nil {
+		if ctx.Err() != nil {
+			return fmt.Errorf("easyrsa %v: %w", args, ctx.Err())
 		}
-		return true
-	case <-time.After(time.Duration(timeout) * time.Second):
-		if cmd.Process != nil {
-			cmd.Process.Kill()
-		}
-		return false
+		return fmt.Errorf("easyrsa %v: %w", args, err)
 	}
+	return nil
 }
 
-func EnsureDirTree() {
+func EnsureDirTree() error {
+	if err := os.MkdirAll(PKIDir(), 0o755); err != nil {
+		return err
+	}
 	subdirs := []string{
 		"private",
 		"issued",
@@ -98,26 +102,47 @@ func EnsureDirTree() {
 		if sd == "private" || sd == "inline/private" || sd == "revoked/private" {
 			perm = 0o700
 		}
-		os.MkdirAll(filepath.Join(PKIDir(), sd), perm)
+		if err := os.MkdirAll(filepath.Join(PKIDir(), sd), perm); err != nil {
+			return err
+		}
 	}
 	for _, fname := range []string{"index.txt", "index.txt.attr", "serial", "serial.old", "crlnumber", "crlnumber.old"} {
 		path := filepath.Join(PKIDir(), fname)
-		if _, err := os.Stat(path); err != nil {
-			f, _ := os.Create(path)
-			if f != nil {
-				if fname == "serial" || fname == "crlnumber" {
-					f.WriteString("1000\n")
-				}
-				f.Close()
+		if info, err := os.Lstat(path); err == nil {
+			if !info.Mode().IsRegular() {
+				return fmt.Errorf("non-regular PKI file at %s", path)
+			}
+			continue
+		} else if !os.IsNotExist(err) {
+			return err
+		}
+		if fname == "index.txt" {
+			if _, err := os.Lstat(CACert()); err == nil {
+				return fmt.Errorf("certificate index is missing for an existing CA")
+			} else if !os.IsNotExist(err) {
+				return err
 			}
 		}
+		f, err := fsx.OpenFileNoFollow(path, os.O_CREATE|os.O_EXCL|os.O_WRONLY, 0o644)
+		if err != nil {
+			return err
+		}
+		if fname == "serial" || fname == "crlnumber" {
+			if _, err := f.WriteString("1000\n"); err != nil {
+				f.Close()
+				return err
+			}
+		}
+		if err := f.Close(); err != nil {
+			return err
+		}
 	}
+	return nil
 }
 
 // EnsureSecretPerms repairs permissions on secret material.
 func EnsureSecretPerms() {
-	os.Chmod(filepath.Join(PKIDir(), "private"), 0o700)
-	os.MkdirAll(filepath.Join(PKIDir(), "private"), 0o700)
+	_ = fsx.SetPermissions(filepath.Join(PKIDir(), "private"), 0o700, -1, -1)
 	_ = filepath.Walk(PKIDir(), func(path string, info os.FileInfo, err error) error {
 		if err != nil || info == nil || info.IsDir() {
 			return nil
@@ -126,27 +151,14 @@ func EnsureSecretPerms() {
 			return nil
 		}
 		if info.Name() == "ca.key" || filepath.Ext(path) == ".key" {
-			_ = os.Chmod(path, 0o600)
+			_ = fsx.SetPermissions(path, 0o600, -1, -1)
 		}
 		if info.Name() == "tls.key" {
-			_ = os.Chmod(path, 0o600)
+			_ = fsx.SetPermissions(path, 0o600, -1, -1)
 		}
 		return nil
 	})
-	// per-user dirs
-	if ud := UsersDir(); ud != "" {
-		entries, _ := os.ReadDir(ud)
-		for _, e := range entries {
-			if e.IsDir() {
-				p := filepath.Join(ud, e.Name())
-				if st, err := os.Lstat(p); err != nil || st.Mode()&os.ModeSymlink != 0 {
-					continue
-				}
-				_ = os.Chmod(p, 0o700)
-			}
-		}
-	}
-	_ = os.Chmod(TLSKey(), 0o600)
+	_ = fsx.SetPermissions(TLSKey(), 0o600, -1, -1)
 }
 
 func homeDir() string {
@@ -159,10 +171,18 @@ func homeDir() string {
 // GenTLSKey generates OpenVPN tls-crypt key at /etc/openvpn/server/tls.key (idempotent).
 func GenTLSKey() error {
 	path := TLSKey()
-	if _, err := os.Stat(path); err == nil {
-		return nil
+	if info, err := os.Lstat(path); err == nil {
+		if !info.Mode().IsRegular() || info.Size() == 0 {
+			return fmt.Errorf("invalid TLS key at %s", path)
+		}
+		_, err := os.ReadFile(path)
+		return err
+	} else if !os.IsNotExist(err) {
+		return err
 	}
-	os.MkdirAll(filepath.Dir(path), 0o755)
+	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
+		return err
+	}
 	cmd := exec.Command("openvpn", "--genkey", "secret", path)
 	if err := cmd.Run(); err != nil {
 		// Fallback for older openvpn versions with --secret flag

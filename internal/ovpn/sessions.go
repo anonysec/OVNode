@@ -11,6 +11,7 @@ import (
 	"sync"
 	"time"
 
+	"ovnode/internal/fsx"
 	"ovnode/internal/logging"
 	"ovnode/internal/pki"
 	"ovnode/internal/store"
@@ -24,7 +25,7 @@ import (
 
 // StatusFile returns the path of the OpenVPN status file.
 func StatusFile() string {
-	return filepath.Join(openvpnRoot(), "server", "status.log")
+	return fsx.StatusFile()
 }
 
 // marker is one session marker on disk.
@@ -35,6 +36,8 @@ type marker struct {
 	trustedPort string
 	poolIP      string
 	created     int64
+	sessionID   string
+	connectedAt int64
 }
 
 // readMarkers returns the session markers of the tree.
@@ -71,7 +74,15 @@ func readMarkers() []marker {
 			trustedPort: m.TrustedPort,
 			poolIP:      m.PoolIP,
 			created:     m.Created,
+			sessionID:   m.SessionID,
+			connectedAt: m.ConnectedAt,
 		})
+		if out[len(out)-1].sessionID == "" {
+			out[len(out)-1].sessionID = out[len(out)-1].key
+		}
+		if out[len(out)-1].connectedAt == 0 {
+			out[len(out)-1].connectedAt = m.Created
+		}
 	}
 	sort.Slice(out, func(i, j int) bool { return out[i].key < out[j].key })
 	return out

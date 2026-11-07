@@ -228,6 +228,25 @@ node_data_dir() {
     printf '%s' "${declared:-$DATA_BASE}"
 }
 
+# has_incompatible_usage_counters: true when any per-CN usage file is not a
+# legacy unsigned integer (v2 JSON, empty, or corrupt). A pre-v2 binary
+# cannot decode those files and would treat them as an unreadable digit
+# file, overwriting history on its next write. Code-only downgrade paths
+# must refuse while this is true; state-restoring paths (verified snapshot
+# restore) replace the files and are not gated by this check.
+has_incompatible_usage_counters() {
+    local dir f content trimmed
+    dir="$(node_data_dir)/usage"
+    [[ -d "$dir" ]] || return 1
+    for f in "$dir"/*; do
+        [[ -f "$f" ]] || continue
+        content="$(cat "$f" 2>/dev/null)" || return 0
+        trimmed="${content//[[:space:]]/}"
+        [[ "$trimmed" =~ ^[0-9]+$ ]] || return 0
+    done
+    return 1
+}
+
 # The pre-flatten location, when it holds anything. An install from before the
 # change has its data one level down and says so here, which is how the
 # migration finds it without a flag file.

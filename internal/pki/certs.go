@@ -6,6 +6,7 @@ package pki
 import (
 	"crypto/x509"
 	"encoding/pem"
+	"fmt"
 	"os"
 	"os/exec"
 	"strconv"
@@ -77,30 +78,45 @@ func RenewServerCertificate() bool {
 
 // EnsureCRL generates/renews CRL as needed.
 func EnsureCRL() bool {
-	if _, err := os.Stat(CRLFile()); err == nil {
-		days := CRLDaysRemaining()
-		if days >= 0 && days > CRLRenewThresholdDays {
-			os.Chmod(CRLFile(), 0o644)
-			return true
+	return EnsureCRLChecked() == nil
+}
+
+func EnsureCRLChecked() error {
+	if _, err := readIndex(); err != nil {
+		return err
+	}
+	caPEM, err := os.ReadFile(CACert())
+	if err != nil {
+		return err
+	}
+	ca, err := ValidateCA(string(caPEM))
+	if err != nil {
+		return err
+	}
+	list, err := readCRL()
+	if err == nil {
+		if err := list.CheckSignatureFrom(ca); err != nil {
+			return fmt.Errorf("existing CRL does not match the CA: %w", err)
 		}
-		// regenerate
-		if !RunEasyRSA("gen-crl") {
-			if days >= 0 && days > 0 {
-				return true
-			}
-			return false
+		if time.Until(list.NextUpdate) > CRLRenewThresholdDays*24*time.Hour {
+			return os.Chmod(CRLFile(), 0o644)
 		}
-		os.Chmod(CRLFile(), 0o644)
-		return true
+		return GenerateCRL()
 	}
-	if !RunEasyRSA("gen-crl") {
-		return false
+	if !os.IsNotExist(err) {
+		return err
 	}
-	if _, err := os.Stat(CRLFile()); err != nil {
-		return false
+	if err := RunEasyRSAChecked("gen-crl"); err != nil {
+		return err
 	}
-	os.Chmod(CRLFile(), 0o644)
-	return true
+	list, err = readCRL()
+	if err != nil {
+		return err
+	}
+	if err := list.CheckSignatureFrom(ca); err != nil {
+		return err
+	}
+	return os.Chmod(CRLFile(), 0o644)
 }
 
 // CRLMatchesCA reports whether the local CRL was signed by the current CA.
@@ -110,10 +126,7 @@ func EnsureCRL() bool {
 // keeps a fresh node from being reported as mismatched.
 func CRLMatchesCA() bool {
 	if _, err := os.Stat(CRLFile()); err != nil {
-		if os.IsNotExist(err) {
-			return true
-		}
-		return false
+		return os.IsNotExist(err)
 	}
 	crlPEM, err := os.ReadFile(CRLFile())
 	if err != nil {

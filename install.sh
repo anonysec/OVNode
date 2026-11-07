@@ -50,6 +50,7 @@ DEFAULT_VPN=1194
 SYSTEMD_DIR="${OVN_SYSTEMD_DIR:-/etc/systemd/system}"
 SYSTEMD_SERVICE="ovnode.service"
 OPENVPN_SERVICE="ovnode-openvpn.service"
+NAT_SERVICE="ovnode-nat.service"
 NAT_CONF="/etc/default/ovnode-nat"
 SYSCTL_CONF="/etc/sysctl.d/99-ovnode.conf"
 LOGROTATE_CONF="/etc/logrotate.d/ovnode"
@@ -596,6 +597,8 @@ SERVICE_PORT=${PORT}
 API_KEY=${API_KEY}
 OPENVPN_PORT=${VPN_PORT}
 OVNODE_PROTO=${VPN_PROTO:-tcp}
+OVNODE_RUNTIME_USER=${RUNTIME_USER}
+OVNODE_RUNTIME_GROUP=${RUNTIME_GROUP}
 TLS_METHOD=${TLS_METHOD}
 $( if [[ -n "$EXTRA_PORTS" ]]; then echo "OVNODE_EXTRA_PORTS=${EXTRA_PORTS}"; fi )
 $( if [[ "$IPV6" -eq 1 ]]; then echo "OVNODE_ENABLE_IPV6=1"; fi )
@@ -655,9 +658,10 @@ install_agent_binary() {
 
 # ── OpenVPN scaffolding ────────────────────────────────────────────────
 ensure_openvpn_dirs() {
+    local data; data="$(node_data_dir)"
     mkdir -p "$OPENVPN_ROOT/server" "$OPENVPN_ROOT/ccd" \
-             "/var/lib/ovnode/users" "/var/lib/ovnode/sessions" \
-             "/var/lib/ovnode" "/var/lib/ovnode/usage" "/var/lib/ovnode/state"
+             "${OVNODE_USERS_DIR:-$data/users}" "${OVNODE_SESSIONS_DIR:-$data/sessions}" \
+             "$data" "${OVNODE_USAGE_DIR:-$data/usage}" "$data/state"
 }
 
 write_openvpn_unit() {
@@ -726,6 +730,32 @@ UNIT
     render_ok "systemd unit written: $SYSTEMD_DIR/$SYSTEMD_SERVICE"
 }
 
+write_nat_unit() {
+    # Owned oneshot that applies native NAT rules at boot. Gated by the
+    # presence of the owned NAT config file, so a node that is not enrolled
+    # (or was opted out) does not get NAT merely because the binary starts.
+    cat > "$SYSTEMD_DIR/$NAT_SERVICE" << UNIT
+[Unit]
+Description=OVNode native NAT
+ConditionPathExists=/etc/default/ovnode-nat
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=oneshot
+EnvironmentFile=-/etc/default/ovnode-nat
+ExecStart=${AGENT_BIN} nat apply
+ExecStop=${AGENT_BIN} nat cleanup
+RemainAfterExit=yes
+
+[Install]
+WantedBy=multi-user.target
+UNIT
+    systemctl daemon-reload >/dev/null 2>&1
+    systemctl enable "$NAT_SERVICE" >/dev/null 2>&1 || true
+    render_ok "systemd unit written: $SYSTEMD_DIR/$NAT_SERVICE"
+}
+
 # ── Forwarding / NAT / multi-port redirects ────────────────────────────
 # IP forwarding is a host sysctl in both modes (a container usually cannot
 # write /proc/sys). The iptables rules live in one idempotent script owned by a
@@ -743,17 +773,41 @@ SYSCTL
 }
 
 setup_nat() {
-    if [[ "$NO_NAT" -eq 1 ]]; then render_line "Skipping NAT setup (--no-nat)"; return 0; fi
+    # Preserve an existing opt-out: a file that says VPN_NAT_ENABLED=0 stays
+    # opted out across updates/repair, even though NO_NAT defaults to 0.
+    local nat_enabled=1
+    if [[ "$NO_NAT" -eq 1 ]]; then
+        nat_enabled=0
+    elif [[ -f /etc/default/ovnode-nat ]]; then
+        local existing
+        existing="$(grep -E '^VPN_NAT_ENABLED=' /etc/default/ovnode-nat 2>/dev/null | head -1 | cut -d= -f2- | tr -d '"' || true)"
+        if [[ "$existing" == "0" || "${existing,,}" == "false" || "${existing,,}" == "no" ]]; then
+            nat_enabled=0
+        fi
+    fi
+
+    if [[ "$nat_enabled" -eq 0 ]]; then
+        render_line "Skipping NAT setup (opted out)"
+        cat > /etc/default/ovnode-nat << CONF
+# OVNode NAT configuration (managed by install.sh)
+VPN_NAT_ENABLED=0
+VPN_PRIMARY_PORT=${VPN_PORT}
+VPN_EXTRA_PORTS=${EXTRA_PORTS}
+CONF
+        return 0
+    fi
+
     write_sysctl
     if ! command -v iptables >/dev/null 2>&1; then
         pkg_install iptables iproute2
     fi
     cat > /etc/default/ovnode-nat << CONF
 # OVNode NAT configuration (managed by install.sh)
+VPN_NAT_ENABLED=1
 VPN_PRIMARY_PORT=${VPN_PORT}
 VPN_EXTRA_PORTS=${EXTRA_PORTS}
 CONF
-    "$AGENT_BIN" nat apply >/dev/null 2>&1 || true
+    "$AGENT_BIN" nat apply
 }
 
 # ── Firewall ───────────────────────────────────────────────────────────
@@ -832,18 +886,25 @@ ${OPENVPN_ROOT}/server/openvpn.log {
     endscript
 }
 ROTATE
-    cat >> "$LOGROTATE_CONF" << 'ROTATE'
+    resolve_runtime_identity
+    local log_dir log_file
+    log_dir="$(env_get_after OVNODE_LOG_DIR)"
+    log_dir="${log_dir:-${OVNODE_LOG_DIR:-/var/log/ovnode}}"
+    log_file="$(env_get_after OVNODE_LOG_FILE)"
+    log_file="${log_file:-${OVNODE_LOG_FILE:-$log_dir/hook-events.log}}"
+    [[ "$log_file" != *$'\n'* && "$log_file" != *$'\r'* ]] || die "Invalid hook log path" "$EX_ERROR"
+    log_file="${log_file//\\/\\\\}"
+    log_file="${log_file//\"/\\\"}"
+    cat >> "$LOGROTATE_CONF" << ROTATE
 
-/var/log/ovnode/hook-events.log {
+"$log_file" {
     daily
     rotate 7
     compress
     missingok
     notifempty
-    create 0640 root root
-    postrotate
-        # OpenVPN hooks continue to append to the new file; no signal needed
-    endscript
+    su root $RUNTIME_GROUP
+    create 0660 root $RUNTIME_GROUP
 }
 ROTATE
     render_ok "Log rotation configured ($LOGROTATE_CONF)"
@@ -930,10 +991,56 @@ load_helpers() {
 }
 
 # ── Main install ───────────────────────────────────────────────────────
+resolve_runtime_identity() {
+    local saved_user saved_group
+    saved_user="$(env_get_after OVNODE_RUNTIME_USER)"
+    saved_group="$(env_get_after OVNODE_RUNTIME_GROUP)"
+    RUNTIME_USER="${saved_user:-${RUNTIME_USER:-${OVN_RUNTIME_USER:-${OVNODE_RUNTIME_USER:-}}}}"
+    RUNTIME_GROUP="${saved_group:-${RUNTIME_GROUP:-${OVN_RUNTIME_GROUP:-${OVNODE_RUNTIME_GROUP:-}}}}"
+    if [[ -f "$OPENVPN_ROOT/server/server.conf" ]]; then
+        [[ -n "$RUNTIME_USER" ]] || RUNTIME_USER="$(awk '$1 == "user" {gsub(/["\047]/, "", $2); print $2; exit}' "$OPENVPN_ROOT/server/server.conf")"
+        [[ -n "$RUNTIME_GROUP" ]] || RUNTIME_GROUP="$(awk '$1 == "group" {gsub(/["\047]/, "", $2); print $2; exit}' "$OPENVPN_ROOT/server/server.conf")"
+    fi
+    if [[ -z "$RUNTIME_USER" && -z "$RUNTIME_GROUP" ]]; then
+        if [[ -f "$APP_DIR/.env" ]]; then
+            RUNTIME_USER=nobody RUNTIME_GROUP=nogroup
+        else
+            RUNTIME_USER=ovnode-vpn RUNTIME_GROUP=ovnode-vpn
+        fi
+    elif [[ -z "$RUNTIME_USER" ]]; then
+        RUNTIME_USER=nobody
+    elif [[ -z "$RUNTIME_GROUP" ]]; then
+        RUNTIME_GROUP="$(id -gn "$RUNTIME_USER")" || die "Unknown runtime user: $RUNTIME_USER" "$EX_ERROR"
+    fi
+}
+
+ensure_runtime_identity() {
+    resolve_runtime_identity
+    if ! getent group "$RUNTIME_GROUP" >/dev/null 2>&1; then
+        [[ "$RUNTIME_GROUP" == ovnode-vpn ]] || die "Unknown runtime group: $RUNTIME_GROUP" "$EX_ERROR"
+        if command -v groupadd >/dev/null 2>&1; then
+            groupadd --system "$RUNTIME_GROUP" || die "Could not create runtime group" "$EX_ERROR"
+        else
+            addgroup -S "$RUNTIME_GROUP" || die "Could not create runtime group" "$EX_ERROR"
+        fi
+    fi
+    if ! id -u "$RUNTIME_USER" >/dev/null 2>&1; then
+        [[ "$RUNTIME_USER" == ovnode-vpn ]] || die "Unknown runtime user: $RUNTIME_USER" "$EX_ERROR"
+        if command -v useradd >/dev/null 2>&1; then
+            useradd --system --no-create-home --shell /usr/sbin/nologin -g "$RUNTIME_GROUP" "$RUNTIME_USER" \
+                || die "Could not create runtime user" "$EX_ERROR"
+        else
+            adduser -S -H -s /sbin/nologin -G "$RUNTIME_GROUP" "$RUNTIME_USER" \
+                || die "Could not create runtime user" "$EX_ERROR"
+        fi
+    fi
+}
+
 do_install() {
     render_stage "[1/7] Preflight"
     check_root
     check_deps
+    ensure_runtime_identity
     render_ok "$(preflight_summary)"
 
     render_stage "[2/7] Download"
@@ -969,6 +1076,7 @@ do_install() {
             render_warn "systemd not found, start the agent manually: $AGENT_BIN serve"
         else
             write_systemd_unit
+            write_nat_unit
             render_note "$SYSTEMD_SERVICE"
             systemctl_bounded restart "$SYSTEMD_SERVICE" >/dev/null 2>&1 \
                 || die "Could not start $SYSTEMD_SERVICE"
@@ -1051,7 +1159,11 @@ write_setup_info() {
 }
 
 node_success_card() {
-    local scheme="$1" host="$2" key_note where
+    local scheme="$1" host="$2" key_note where cert_file
+    cert_file="${TLS_CERT:-}"
+    if [[ -z "$cert_file" || ! -f "$cert_file" ]]; then
+        cert_file="$(env_get "$APP_DIR/.env" SSL_CERTFILE 2>/dev/null || true)"
+    fi
     # Name what the panel will reach: the public IP, or the domain when the
     # certificate names one. A node has no URL of its own, it is an address, a
     # key, and a place to read logs, so the card says exactly that.
@@ -1247,6 +1359,7 @@ do_update() {
         start_ok=1
     else
         has_systemd && write_systemd_unit
+        has_systemd && write_nat_unit
         # The ovnode binary lives outside the app dir, so a release must
         # refresh it explicitly, otherwise the node keeps running the
         # previous version's hook. A failure here is not fatal: the old
@@ -1472,6 +1585,7 @@ do_repair_unit() {
     DOCKER=0
     has_systemd || die "systemd not found, cannot install the agent unit" "$EX_ERROR"
     write_systemd_unit
+    write_nat_unit
     write_openvpn_unit
     run "Generating node PKI" "$AGENT_BIN" ca init
     setup_nat
@@ -1513,10 +1627,12 @@ do_uninstall() {
 
     render_stage "[1/1] Uninstall"
     # Stopping the NAT unit runs its ExecStop cleanup (rules removed).
+    systemctl_bounded stop "$NAT_SERVICE" 2>/dev/null || true
     systemctl_bounded stop "$SYSTEMD_SERVICE"
     systemctl_bounded stop "$OPENVPN_SERVICE"
-    systemctl disable "$SYSTEMD_SERVICE" "$OPENVPN_SERVICE" 2>/dev/null || true
-    rm -f "$SYSTEMD_DIR/$SYSTEMD_SERVICE" \
+    systemctl disable "$NAT_SERVICE" "$SYSTEMD_SERVICE" "$OPENVPN_SERVICE" 2>/dev/null || true
+    rm -f "$SYSTEMD_DIR/$NAT_SERVICE" \
+          "$SYSTEMD_DIR/$SYSTEMD_SERVICE" \
           "$SYSTEMD_DIR/$OPENVPN_SERVICE" \
           /etc/cron.d/ovnode-purge
     systemctl daemon-reload 2>/dev/null || true

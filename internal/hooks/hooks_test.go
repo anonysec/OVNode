@@ -129,15 +129,15 @@ func TestConnectWritesTheGoldenMarker(t *testing.T) {
 			t.Fatalf("marker line %d = %q, want %q (marker: %q)", i, lines[i], w, string(data))
 		}
 	}
-	if len(lines) != 5 || !strings.HasPrefix(lines[4], "created=") {
-		t.Fatalf("marker = %q, want a created= line last", string(data))
+	if len(lines) != 7 || !strings.HasPrefix(lines[4], "created=") || !strings.HasPrefix(lines[5], "session_id=") || !strings.HasPrefix(lines[6], "connection_started=") {
+		t.Fatalf("marker = %q, want created/session_id/connection_started lines", string(data))
 	}
 	info, err := os.Stat(marker)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if perm := info.Mode().Perm(); perm != 0o600 {
-		t.Fatalf("marker mode = %o, want 600", perm)
+	if perm := info.Mode().Perm(); perm != 0o660 {
+		t.Fatalf("marker mode = %o, want 660", perm)
 	}
 }
 
@@ -180,6 +180,18 @@ func TestConnectRefusesDisabledUser(t *testing.T) {
 		if !strings.HasPrefix(e.Name(), ".") {
 			t.Fatalf("marker %q written for a disabled user", e.Name())
 		}
+	}
+}
+
+func TestConnectRejectsMalformedDisabledFlag(t *testing.T) {
+	tr := newTree(t)
+	tr.user(t, "alice", "limit=0\ndisabled=garbage\n")
+	setClientEnv(t, "alice", "10.66.0.2")
+	if exit := Connect(tr.config(), "alice"); exit == 0 {
+		t.Fatal("real connect hook admitted a client with a corrupt disabled flag")
+	}
+	if events := tr.events(t); len(events) != 1 || !strings.Contains(events[0], "could not read user state") {
+		t.Fatalf("corrupt state must produce a checked rejection: %v", events)
 	}
 }
 
@@ -250,8 +262,8 @@ func TestDisconnectBanksUsage(t *testing.T) {
 	if err != nil {
 		t.Fatalf("usage file missing: %v", err)
 	}
-	if got := strings.TrimSpace(string(data)); got != "160" {
-		t.Fatalf("usage = %q, want 160", got)
+	if !strings.Contains(string(data), "\"total\":160") {
+		t.Fatalf("usage = %q, want total 160", string(data))
 	}
 	if _, err := os.Stat(filepath.Join(tr.sessions, "u1.10.8.0.5")); !os.IsNotExist(err) {
 		t.Fatalf("marker survived the disconnect")
@@ -275,7 +287,7 @@ func TestPurgeRemovesOnlyStaleDeadMarkers(t *testing.T) {
 	writeMarker("u2.10.8.0.2", "u2", "10.8.0.2", old)
 	writeMarker("u3.10.8.0.3", "u3", "10.8.0.3", old)
 	live := "CLIENT_LIST\tu3\t5.5.5.5:4000\t10.8.0.3\t10\t20\tnow\t1700000000\tu3\t\t9\n"
-	if err := os.WriteFile(tr.status, []byte("HEADER\tX\n"+live), 0o644); err != nil {
+	if err := os.WriteFile(tr.status, []byte("HEADER\tX\n"+live+"END\n"), 0o644); err != nil {
 		t.Fatal(err)
 	}
 
@@ -332,7 +344,7 @@ func TestDisconnectIsIdempotent(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if got := strings.TrimSpace(string(data)); got != "150" {
-		t.Fatalf("usage = %q, want 150", got)
+	if !strings.Contains(string(data), "\"total\":150") {
+		t.Fatalf("usage = %q, want total 150", string(data))
 	}
 }

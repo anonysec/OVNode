@@ -25,9 +25,15 @@ func envInt(name string, defaultVal int) int {
 	return n
 }
 
-func RuntimeUser() string  { return fsx.Env("RUNTIME_USER", "nobody") }
-func RuntimeGroup() string { return fsx.Env("RUNTIME_GROUP", "nogroup") }
-func ManagementPort() int  { return envInt("MANAGEMENT_PORT", 7505) }
+func RuntimeUser() string  { return fsx.RuntimeUser() }
+func RuntimeGroup() string { return fsx.RuntimeGroup() }
+func ManagementPort() int {
+	port := envInt("MANAGEMENT_PORT", 7505)
+	if port < 1 || port > 65535 {
+		return 7505
+	}
+	return port
+}
 
 // VPNNetwork returns the VPN client subnet base (e.g. "10.8.0.0"). When
 // OVNODE_VPN_NETWORK is not set explicitly, a unique subnet is derived from

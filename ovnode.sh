@@ -358,19 +358,38 @@ do_restore() {
     for f in "${safety[@]}"; do render_kv "Safety copy" "$(basename "$f")"; done
 
     # Point of no return: nothing may write while the tree is replaced.
+    # Record who was running so only those come back; verify inactivity
+    # before extracting, or abort without touching the tree.
+    local was_agent=0 was_vpn=0
+    [[ "$(systemctl is-active "$SYSTEMD_SERVICE" 2>/dev/null)" == "active" ]] && was_agent=1
+    [[ "$(systemctl is-active "$OPENVPN_SERVICE" 2>/dev/null)" == "active" ]] && was_vpn=1
     systemctl_bounded stop "$SYSTEMD_SERVICE" >/dev/null 2>&1 || true
     systemctl_bounded stop "$OPENVPN_SERVICE" >/dev/null 2>&1 || true
+    if [[ "$was_agent" -eq 1 && "$(systemctl is-active "$SYSTEMD_SERVICE" 2>/dev/null)" == "active" ]] \
+        || [[ "$was_vpn" -eq 1 && "$(systemctl is-active "$OPENVPN_SERVICE" 2>/dev/null)" == "active" ]]; then
+        die "Restore aborted: service did not stop — the current state is untouched, safety copies hold pre-restore state" "$EX_ERROR"
+    fi
     tar -xzf "$src" -C "$(restore_target_dir "$src")" \
         || die "Restore failed — $name was not fully unpacked; the safety copies above hold the previous state" "$EX_ERROR"
-    node_service_action restart
-    restart_vpn
+    local restart_failed=0
+    [[ "$was_agent" -eq 1 ]] && { node_service_action restart || restart_failed=1; }
+    [[ "$was_vpn" -eq 1 ]] && { restart_vpn || restart_failed=1; }
+    if [[ "$restart_failed" -eq 1 ]]; then
+        render_warn "Restore finished but a previously running service did not restart; safety copies above hold the previous state"
+    fi
 
     render_kv "Restored" "$name"
     for f in "${safety[@]}"; do render_kv "Safety copy" "$(basename "$f")"; done
-    if wait_health "${scheme}://127.0.0.1:${port}/sync/health" 45; then
-        render_ok "Restore finished and the node is healthy"
+    # Health is only a restore gate when we restarted something: a restore
+    # with all services intentionally left stopped is a success, not a die.
+    if [[ "$was_agent" -eq 1 || "$restart_failed" -eq 1 ]]; then
+        if wait_health "${scheme}://127.0.0.1:${port}/sync/health" 45; then
+            render_ok "Restore finished and the node is healthy"
+        else
+            die "Restore finished but the node is not answering health — check: ${CLI_NAME} logs 50" "$EX_ERROR"
+        fi
     else
-        die "Restore finished but the node is not answering health — check: ${CLI_NAME} logs 50" "$EX_ERROR"
+        render_ok "Restore finished; services left stopped as found"
     fi
 }
 
@@ -561,6 +580,12 @@ do_rollback() {
     local snap
     snap="$(latest_snapshot node)"
     [[ -n "$snap" ]] || die "No code snapshot in /var/backups — nothing to roll back to" "$EX_ERROR"
+    # Code-only rollback keeps live state. The previous binary cannot decode
+    # v2 usage counters and would overwrite them, so refuse before touching
+    # any service; a verified state restore replaces those files instead.
+    if has_incompatible_usage_counters; then
+        die "Refusing code-only rollback: v2 usage counters in $(node_data_dir)/usage are not readable by the previous binary. Restore the matching pre-update data backup instead ('ovnode restore' quiesces the services), or keep the current binary." "$EX_ERROR"
+    fi
     check_root
     render_kv "Snapshot" "$snap"
     [[ "$YES" -eq 1 ]] || confirm "Restore the pre-update tree and restart?" || exit "$EX_OK"

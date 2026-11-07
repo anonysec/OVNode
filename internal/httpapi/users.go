@@ -43,13 +43,13 @@ type userStatusRequest struct {
 type userLimitRequest struct {
 	ID        string `json:"id"`
 	Name      string `json:"name"`
-	MaxLogins int    `json:"max_logins"`
+	MaxLogins *int   `json:"max_logins"`
 }
 
 // bulkLimitItem is one entry of POST /sync/users.
 type bulkLimitItem struct {
 	ID        string `json:"id"`
-	MaxLogins int    `json:"max_logins"`
+	MaxLogins *int   `json:"max_logins"`
 }
 
 // bulkLimitsRequest is the body of POST /sync/users.
@@ -132,19 +132,25 @@ func (s *Server) handleUserStatus(w http.ResponseWriter, r *http.Request) {
 		writeFail(w, err.Error())
 		return
 	}
-	if body.MaxLogins != nil && *body.MaxLogins >= 0 {
-		if err := ovpn.SetUserLimit(cn, *body.MaxLogins); err != nil {
-			writeFail(w, "Failed to update user login limit")
-			return
-		}
-	}
 	status := body.Status
 	if status == "" {
 		status = "activate"
 	}
-	if err := ovpn.SetUserStatus(cn, status); err != nil {
-		logging.Error("could not change the status of %q: %v", cn, err)
+	if status != "activate" && status != "deactivate" {
 		writeFail(w, "Failed to change user status")
+		return
+	}
+	maxLogins := -1
+	if body.MaxLogins != nil && *body.MaxLogins >= 0 {
+		maxLogins = *body.MaxLogins
+	}
+	if err := ovpn.ApplyUserPolicy(cn, body.Name, maxLogins, status == "deactivate"); err != nil {
+		logging.Error("could not change the status of %q: %v", cn, err)
+		message := "Failed to change user status"
+		if body.MaxLogins != nil && *body.MaxLogins >= 0 {
+			message = "Failed to update user login limit"
+		}
+		writeFail(w, message)
 		return
 	}
 	logging.Info("user %q status set to %s", cn, status)
@@ -170,14 +176,18 @@ func (s *Server) handleUserLimit(w http.ResponseWriter, r *http.Request) {
 		writeFail(w, errInvalidUserID.Error())
 		return
 	}
-	if err := ovpn.SetUserLimit(ident, body.MaxLogins); err != nil {
+	if body.MaxLogins == nil {
+		writeFail(w, "max_logins is required")
+		return
+	}
+	if err := ovpn.SetUserLimit(ident, *body.MaxLogins); err != nil {
 		writeFail(w, "Failed to update user login limit")
 		return
 	}
 	writeOK(w, "User login limit updated successfully", map[string]any{
 		"id":         ident,
 		"name":       body.Name,
-		"max_logins": body.MaxLogins,
+		"max_logins": *body.MaxLogins,
 	})
 }
 
@@ -267,22 +277,9 @@ func (s *Server) handleDownloadOVPN(w http.ResponseWriter, r *http.Request) {
 		writeFail(w, errInvalidUserID.Error())
 		return
 	}
-	path, err := ovpn.UserProfilePath(cn)
+	data, err := ovpn.ReadUserProfile(cn)
 	if err != nil {
-		writeFail(w, "OVPN file not found")
-		return
-	}
-	if _, err := os.Stat(path); err != nil {
-		// Lazy creation on first download: mint client credentials if not yet present
-		logging.Info("auto-creating user and profile for %q on download", cn)
-		if err := ovpn.CreateUser(cn, "", 1, nil); err != nil {
-			logging.Warn("could not auto-create user and profile for %q: %v", cn, err)
-			writeFail(w, "OVPN file not found")
-			return
-		}
-	}
-	data, err := os.ReadFile(path)
-	if err != nil {
+		logging.Warn("could not read or provision profile for %q: %v", cn, err)
 		writeFail(w, "OVPN file not found")
 		return
 	}
@@ -309,14 +306,14 @@ func (s *Server) handleBulkLimits(w http.ResponseWriter, r *http.Request) {
 	failed := []map[string]any{}
 	for _, item := range body.Users {
 		ident := strings.TrimSpace(item.ID)
-		if ident == "" {
+		if ident == "" || item.MaxLogins == nil {
 			failed = append(failed, map[string]any{
 				"id":  item.ID,
 				"msg": errInvalidUserID.Error(),
 			})
 			continue
 		}
-		if err := ovpn.SetUserLimit(ident, item.MaxLogins); err != nil {
+		if err := ovpn.SetUserLimit(ident, *item.MaxLogins); err != nil {
 			failed = append(failed, map[string]any{
 				"id":  item.ID,
 				"msg": "Failed to update user login limit",
@@ -349,9 +346,10 @@ func (s *Server) handlePushCreds(w http.ResponseWriter, r *http.Request) {
 		writeFail(w, "Invalid credential payload")
 		return
 	}
-	maxLogins := 1
+	var maxLogins *int
 	if body.MaxLogins != nil && *body.MaxLogins >= 0 {
-		maxLogins = *body.MaxLogins
+		v := *body.MaxLogins
+		maxLogins = &v
 	}
 	if err := ovpn.CreateUserWithCredentials(cn, body.CertPEM, body.KeyPEM,
 		body.CAPEM, maxLogins, body.Disabled); err != nil {

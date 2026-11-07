@@ -11,11 +11,15 @@
 package store
 
 import (
+	"fmt"
+	"io"
 	"os"
 	"path/filepath"
 	"strconv"
 	"strings"
 	"syscall"
+
+	"ovnode/internal/fsx"
 )
 
 // UserState is the enforcement state of one user.
@@ -27,6 +31,8 @@ type UserState struct {
 	Limit    int
 	LimitSet bool
 	Disabled bool
+	Name     string
+	NameSet  bool
 }
 
 // ReadUserState reads <usersDir>/<cn>/state.
@@ -37,55 +43,93 @@ type UserState struct {
 //
 // Values are compared exactly, like the bash hook: the file is written by
 // the store as "limit=2" and never with stray whitespace.
-func ReadUserState(usersDir, cn string) UserState {
+func ReadUserState(usersDir, cn string) (UserState, error) {
 	st := UserState{}
-	dir := filepath.Join(usersDir, cn)
+	dir, err := UserDir(usersDir, cn)
+	if err != nil {
+		return UserState{}, err
+	}
+	if _, err := os.ReadDir(dir); err != nil {
+		if os.IsNotExist(err) {
+			return st, nil
+		}
+		return UserState{}, err
+	}
 	// disabledSet records that the merged file spoke about `disabled` at all.
 	// A merged file that says disabled=0 is authoritative: consulting the
 	// legacy marker afterwards would re-disable a user the merge re-enabled.
 	disabledSet := false
-	if data, err := os.ReadFile(filepath.Join(dir, "state")); err == nil {
+	statePath := filepath.Join(dir, "state")
+	if data, err := readPolicyFile(statePath); err == nil {
+		seen := map[string]bool{}
 		for _, line := range strings.Split(string(data), "\n") {
-			k, v, ok := strings.Cut(line, "=")
-			if !ok {
+			if line == "" {
 				continue
 			}
+			k, v, ok := strings.Cut(line, "=")
+			if !ok || seen[k] {
+				return UserState{}, fmt.Errorf("corrupt policy %s", statePath)
+			}
+			seen[k] = true
 			switch k {
 			case "limit":
-				if n, err := strconv.Atoi(v); err == nil && isDigits(v) {
-					st.Limit = n
-					st.LimitSet = true
+				n, err := strconv.Atoi(v)
+				if err != nil || !isDigits(v) {
+					return UserState{}, fmt.Errorf("corrupt policy limit in %s", statePath)
 				}
+				st.Limit = n
+				st.LimitSet = true
 			case "disabled":
-				disabledSet = true
-				if v == "1" {
-					st.Disabled = true
+				if v != "0" && v != "1" {
+					return UserState{}, fmt.Errorf("corrupt policy disabled flag in %s", statePath)
 				}
+				disabledSet = true
+				st.Disabled = v == "1"
+			case "name":
+				if err := validateName(v); err != nil {
+					return UserState{}, fmt.Errorf("corrupt policy name in %s: %w", statePath, err)
+				}
+				st.Name, st.NameSet = v, true
+			default:
+				return UserState{}, fmt.Errorf("unknown policy field in %s", statePath)
 			}
 		}
+		if len(seen) == 0 {
+			return UserState{}, fmt.Errorf("empty policy %s", statePath)
+		}
+	} else if !os.IsNotExist(err) {
+		return UserState{}, err
 	}
 	if !disabledSet {
-		if _, err := os.Stat(filepath.Join(dir, "disabled")); err == nil {
+		if _, err := readPolicyFile(filepath.Join(dir, "disabled")); err == nil {
 			st.Disabled = true
+		} else if !os.IsNotExist(err) {
+			return UserState{}, err
 		}
 	}
 	if !st.LimitSet {
-		if raw, err := os.ReadFile(filepath.Join(dir, "limit")); err == nil {
-			// Only the first line counts, and only its digits: a limit
-			// file is a bare number, and anything else is ignored.
-			line := string(raw)
-			if i := strings.IndexAny(line, "\r\n"); i >= 0 {
-				line = line[:i]
+		if raw, err := readPolicyFile(filepath.Join(dir, "limit")); err == nil {
+			line := strings.TrimSuffix(strings.TrimSuffix(string(raw), "\n"), "\r")
+			n, err := strconv.Atoi(line)
+			if err != nil || !isDigits(line) {
+				return UserState{}, fmt.Errorf("corrupt legacy limit in %s", dir)
 			}
-			if digits := digitsOnly(string(line)); digits != "" {
-				if n, err := strconv.Atoi(digits); err == nil {
-					st.Limit = n
-					st.LimitSet = true
-				}
-			}
+			st.Limit = n
+			st.LimitSet = true
+		} else if !os.IsNotExist(err) {
+			return UserState{}, err
 		}
 	}
-	return st
+	return st, nil
+}
+
+func readPolicyFile(path string) ([]byte, error) {
+	f, err := fsx.OpenFileNoFollow(path, os.O_RDONLY, 0)
+	if err != nil {
+		return nil, err
+	}
+	defer f.Close()
+	return io.ReadAll(f)
 }
 
 func isDigits(s string) bool {
@@ -100,23 +144,13 @@ func isDigits(s string) bool {
 	return true
 }
 
-func digitsOnly(s string) string {
-	var b strings.Builder
-	for _, c := range s {
-		if c >= '0' && c <= '9' {
-			b.WriteRune(c)
-		}
-	}
-	return b.String()
-}
-
 // Lock runs fn while holding an exclusive flock on path.
 //
 // The lock file is per-CN, so two sessions of the same user serialize while
 // different users never block each other. A global lock would turn a
 // reconnect storm into a queue.
-func Lock(path string, fn func() error) error {
-	f, err := os.OpenFile(path, os.O_CREATE|os.O_RDWR, 0o600)
+func Lock(path string, perm os.FileMode, fn func() error) error {
+	f, err := fsx.OpenFileNoFollow(path, os.O_CREATE|os.O_RDWR, perm)
 	if err != nil {
 		return err
 	}
@@ -125,5 +159,14 @@ func Lock(path string, fn func() error) error {
 		return err
 	}
 	defer syscall.Flock(int(f.Fd()), syscall.LOCK_UN)
+	info, err := f.Stat()
+	if err != nil {
+		return err
+	}
+	if info.Mode()&(os.ModePerm|os.ModeSetuid|os.ModeSetgid|os.ModeSticky) != perm {
+		if err := f.Chmod(perm); err != nil {
+			return err
+		}
+	}
 	return fn()
 }

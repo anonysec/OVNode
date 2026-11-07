@@ -60,6 +60,8 @@ var contract = []contractRow{
 	{Method: http.MethodPost, Path: "/sync/update"},
 	{Method: http.MethodPost, Path: "/sync/user",
 		Request: []string{"name", "max_logins", "id"}},
+	{Method: http.MethodPut, Path: "/sync/user",
+		Request: []string{"id", "name", "max_logins", "status"}},
 	{Method: http.MethodDelete, Path: "/sync/user/{uid}"},
 	{Method: http.MethodPost, Path: "/sync/user/{uid}/disconnect",
 		Response: []string{"removed_markers", "killed_sessions"}},
@@ -79,10 +81,7 @@ func TestContractRowsAreServed(t *testing.T) {
 	s := testServer(t)
 	mux := s.routes()
 	for _, row := range contract {
-		path := row.Path
-		if strings.Contains(path, "{uid}") {
-			path = strings.Replace(path, "{uid}", "contract-probe", 1)
-		}
+		path := strings.Replace(row.Path, "{uid}", "contract-probe", 1)
 		rec := do(t, s, row.Method, path, "")
 		if rec.Code == http.StatusNotFound {
 			t.Errorf("the node does not serve %s %s", row.Method, row.Path)
@@ -104,10 +103,7 @@ func TestContractResponseKeys(t *testing.T) {
 		if len(row.Response) == 0 || row.ResponseRaw {
 			continue
 		}
-		path := row.Path
-		if strings.Contains(path, "{uid}") {
-			path = strings.Replace(path, "{uid}", "contract-probe", 1)
-		}
+		path := strings.Replace(row.Path, "{uid}", "contract-probe", 1)
 		body := envelopeOf(t, do(t, s, row.Method, path, ""))
 		if body["success"] != true {
 			// A write route that refuses an unknown user still answers the

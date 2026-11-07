@@ -17,8 +17,12 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"strconv"
+	"strings"
 	"time"
 
+	"crypto/rand"
+	"encoding/hex"
 	"ovnode/internal/config"
 	"ovnode/internal/fsx"
 	"ovnode/internal/logging"
@@ -73,13 +77,16 @@ func Connect(cfg config.Hook, arg string) int {
 			safeCN, safeIP, safePort)
 		return 1
 	}
-	if err := os.MkdirAll(cfg.SessionsDir, 0o755); err == nil { // #nosec G301 -- sessions dir is world-traversable by design
-
-		_ = os.Chmod(cfg.SessionsDir, 0o755) // #nosec G302 -- sessions dir is world-traversable by design
-
+	if err := fsx.MkdirAllNoFollow(cfg.SessionsDir, 0o770); err != nil {
+		logging.Event(cfg.LogFile, "CN=%s could not prepare session directory: %v; REJECT", safeCN, err)
+		return 1
 	}
 
-	state := store.ReadUserState(cfg.UsersDir, safeCN)
+	state, err := store.ReadUserState(cfg.UsersDir, safeCN)
+	if err != nil {
+		logging.Event(cfg.LogFile, "CN=%s could not read user state: %v; REJECT", safeCN, err)
+		return 1
+	}
 	limit := config.DefaultLimit
 	if state.LimitSet {
 		limit = state.Limit
@@ -89,11 +96,6 @@ func Connect(cfg config.Hook, arg string) int {
 			safeCN, safeIP, safePort)
 		return 1
 	}
-	if limit == 0 {
-		logging.Event(cfg.LogFile, "CN=%s limit=unlimited; LOCAL_ALLOW", safeCN)
-		return 0
-	}
-
 	poolKey := ""
 	if poolIP != "" {
 		poolKey = Sanitize(poolIP)
@@ -101,12 +103,44 @@ func Connect(cfg config.Hook, arg string) int {
 	key := store.SessionKey(safeCN, poolKey,
 		Sanitize(orUnknown(trustedIP)), Sanitize(orUnknown(trustedPort)))
 
+	// Actual hook connection start (OpenVPN time_unix), fallback to now.
+	connStart := hookTimeUnix()
+
+	if limit == 0 {
+		// Unlimited still gets an accounting marker, under the session
+		// lock so a delayed disconnect cannot interleave.
+		gen := newGeneration()
+		marker := store.Marker{
+			CommonName:  safeCN,
+			TrustedIP:   trustedIP,
+			TrustedPort: trustedPort,
+			PoolIP:      poolIP,
+			Created:     time.Now().Unix(),
+			SessionID:   key + "." + gen,
+			ConnectedAt: connStart,
+		}
+		if err := store.Lock(filepath.Join(cfg.SessionsDir, ".lock."+safeCN), 0o660, func() error {
+			// Bank a displaced/crashed old generation before replacing
+			// its marker (same primitive as takeover).
+			sessions := liveRows(ovpn.SessionsForCN(cfg.StatusFile, safeCN))
+			if err := bankDisplacedGeneration(cfg, safeCN, key, poolIP, sessions); err != nil {
+				return err
+			}
+			return store.WriteMarker(filepath.Join(cfg.SessionsDir, key), marker)
+		}); err != nil {
+			logging.Event(cfg.LogFile, "CN=%s could not write the session marker: %v; REJECT", safeCN, err)
+			return 1
+		}
+		logging.Event(cfg.LogFile, "CN=%s limit=unlimited; LOCAL_ALLOW", safeCN)
+		return 0
+	}
+
 	// Every critical section below is CN-scoped: a global lock would
 	// serialize unrelated users behind a reconnect storm.
 	lockPath := filepath.Join(cfg.SessionsDir, ".lock."+safeCN)
 	var exit int
-	if err := store.Lock(lockPath, func() error {
-		exit = connectLocked(cfg, cn, safeCN, trustedIP, trustedPort, poolIP, key, limit)
+	if err := store.Lock(lockPath, 0o660, func() error {
+		exit = connectLocked(cfg, cn, safeCN, trustedIP, trustedPort, poolIP, key, limit, connStart)
 		return nil
 	}); err != nil {
 		// Without the lock two sessions of the same user could pass the
@@ -122,6 +156,7 @@ func connectLocked(
 	cfg config.Hook,
 	cn, safeCN, trustedIP, trustedPort, poolIP, key string,
 	limit int,
+	connStart int64,
 ) int {
 	safeIP := Sanitize(orUnknown(trustedIP))
 	safePort := Sanitize(orUnknown(trustedPort))
@@ -141,17 +176,23 @@ func connectLocked(
 		}
 	}
 
-	if limit == 1 {
-		// One session per user: the new marker replaces the old ones.
-		store.RemoveMarkers(cfg.SessionsDir, safeCN)
-	}
-
+	gen := newGeneration()
 	marker := store.Marker{
 		CommonName:  safeCN,
 		TrustedIP:   trustedIP,
 		TrustedPort: trustedPort,
 		PoolIP:      poolIP,
 		Created:     time.Now().Unix(),
+		SessionID:   key + "." + gen,
+		ConnectedAt: connStart,
+	}
+	// If this key holds a previous generation (takeover/pool reuse), bank
+	// its last observed status bytes as closed before overwriting the
+	// marker: the delayed disconnect of the old generation will be
+	// identity-rejected and must not erase its final accounting.
+	if err := bankDisplacedGeneration(cfg, safeCN, key, poolIP, sessions); err != nil {
+		logging.Event(cfg.LogFile, "CN=%s takeover banking failed: %v; REJECT", safeCN, err)
+		return 1
 	}
 	if err := store.WriteMarker(filepath.Join(cfg.SessionsDir, key), marker); err != nil {
 		logging.Event(cfg.LogFile, "CN=%s could not write the session marker: %v; REJECT", safeCN, err)
@@ -161,6 +202,31 @@ func connectLocked(
 	logging.Event(cfg.LogFile, "CN=%s ip=%s:%s pool=%s limit=%d status=%d; ALLOW session=%s",
 		safeCN, safeIP, safePort, orNone(poolIP), limit, count, key)
 	return 0
+}
+
+// bankDisplacedGeneration closes the previous generation at key with its
+// last observed status bytes, if any, before a new marker replaces it.
+// Callers hold the per-CN session lock (session lock before usage lock).
+// Already-polled bytes are de-duplicated by the session offset.
+func bankDisplacedGeneration(cfg config.Hook, safeCN, key, poolIP string, sessions []ovpn.Session) error {
+	old, ok := store.ReadMarker(filepath.Join(cfg.SessionsDir, key))
+	if !ok || old.SessionID == "" {
+		return nil
+	}
+	var oldBytes uint64
+	found := false
+	for _, s := range sessions {
+		if poolIP != "" && s.VirtualAddress == poolIP {
+			oldBytes = s.BytesReceived + s.BytesSent
+			found = true
+			break
+		}
+	}
+	if !found {
+		return nil
+	}
+	_, err := store.RecordSessionUsage(cfg.UsageDir, safeCN, old.SessionID, oldBytes, true)
+	return err
 }
 
 // takeover kills the old session of a limit=1 user and reports whether the
@@ -200,7 +266,6 @@ func takeover(
 
 	switch result {
 	case ovpn.TakeoverVerified:
-		store.RemoveMarkers(cfg.SessionsDir, safeCN)
 		return true
 	case ovpn.TakeoverTimeout:
 		logging.Event(cfg.LogFile,
@@ -211,7 +276,6 @@ func takeover(
 		logging.Event(cfg.LogFile,
 			"CN=%s ip=%s:%s pool=%s limit=1 status=%d; management unavailable; DEGRADE (markers replaced, corpse reaped by ping-restart)",
 			cn, orUnknown(trustedIP), orUnknown(trustedPort), orNone(poolIP), count)
-		store.RemoveMarkers(cfg.SessionsDir, safeCN)
 		return true
 	}
 }
@@ -266,4 +330,26 @@ func isDigits(s string) bool {
 		}
 	}
 	return true
+}
+
+// hookTimeUnix is the actual connection start OpenVPN passes via time_unix
+// (seconds since epoch); invalid/missing values fall back to now.
+func hookTimeUnix() int64 {
+	v := strings.TrimSpace(os.Getenv("time_unix"))
+	if v != "" {
+		if n, err := strconv.ParseInt(v, 10, 64); err == nil && n > 0 {
+			return n
+		}
+	}
+	return time.Now().Unix()
+}
+
+func newGeneration() string {
+	b := make([]byte, 8)
+	if _, err := rand.Read(b); err != nil {
+		// Entropy failure must not break generation-safe matching ("0" is
+		// not 16-hex); derive an 8-byte value from time + pid instead.
+		return hex.EncodeToString([]byte(fmt.Sprintf("%d-%d-", time.Now().UnixNano(), os.Getpid()) + "x")[:8])
+	}
+	return hex.EncodeToString(b)
 }

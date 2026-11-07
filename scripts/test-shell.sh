@@ -69,6 +69,33 @@ openssl x509 -in "$WORK/tls/fullchain.pem" -noout -text | grep -q "IP Address:" 
 echo "ok: self-signed cert includes IP SAN"
 rm -rf "$WORK"
 
+# ── incompatible usage counters block code-only rollback ────────────────
+echo "=== usage counter rollback gate ==="
+WORK="$(mktemp -d "${TMPDIR:-/tmp}/ovnode-usage-gate-test.XXXXXX")"
+trap 'rm -rf "$WORK"' EXIT
+mkdir -p "$WORK/app" "$WORK/data/usage"
+printf 'DATA_DIR=%s/data\n' "$WORK" > "$WORK/app/.env"
+gate_check() {
+    APP_DIR="$WORK/app" DATA_BASE="$WORK/data" bash -c '. "'"$ROOT_DIR"'/lib.sh"; has_incompatible_usage_counters'
+}
+printf '12345\n' > "$WORK/data/usage/alice"
+gate_check && { echo "FAIL: legacy digits flagged incompatible"; exit 1; }
+printf '999\n' > "$WORK/data/usage/bob"
+gate_check && { echo "FAIL: legacy digits flagged incompatible"; exit 1; }
+printf '{"version":2,"epoch":"e1","total":5,"sessions":{}}\n' > "$WORK/data/usage/alice"
+gate_check || { echo "FAIL: v2 counter not flagged incompatible"; exit 1; }
+rm "$WORK/data/usage/alice"
+: > "$WORK/data/usage/alice"
+gate_check || { echo "FAIL: empty counter not flagged incompatible"; exit 1; }
+printf 'corrupt\n' > "$WORK/data/usage/alice"
+gate_check || { echo "FAIL: corrupt counter not flagged incompatible"; exit 1; }
+rm -rf "$WORK/data/usage"
+gate_check && { echo "FAIL: missing usage dir flagged incompatible"; exit 1; }
+grep -q 'has_incompatible_usage_counters' "$ROOT_DIR/ovnode.sh" \
+    || { echo "FAIL: do_rollback does not enforce the gate"; exit 1; }
+echo "ok: v2/corrupt counters block code-only rollback, legacy digits allowed"
+rm -rf "$WORK"
+
 # ── credentials output ─────────────────────────────────────────────────
 echo "=== credentials ==="
 if [[ $EUID -ne 0 ]]; then

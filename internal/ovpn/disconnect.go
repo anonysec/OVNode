@@ -34,19 +34,20 @@ func DisconnectUser(cn string, onlyStale bool) (removed []string, killed int, mg
 		}
 	}
 
-	for _, m := range readMarkers() {
-		if m.commonName != cn {
-			continue
+	if onlyStale {
+		for _, m := range readMarkers() {
+			if m.commonName != cn {
+				continue
+			}
+			if m.isLive(idx) {
+				continue
+			}
+			path := filepath.Join(pki.SessionsDir(), m.key)
+			if err := os.Remove(path); err != nil && !os.IsNotExist(err) {
+				continue
+			}
+			removed = append(removed, m.key)
 		}
-		// A succeeded kill or a dead marker: either way the marker goes.
-		if !killOK && m.isLive(idx) {
-			continue
-		}
-		path := filepath.Join(pki.SessionsDir(), m.key)
-		if err := os.Remove(path); err != nil && !os.IsNotExist(err) {
-			continue
-		}
-		removed = append(removed, m.key)
 	}
 	return removed, killed, mgmt
 }

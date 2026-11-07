@@ -150,10 +150,3 @@ func split(s string, sep byte) []string {
 	out = append(out, s[start:])
 	return out
 }
-
-func min(a, b int) int {
-	if a < b {
-		return a
-	}
-	return b
-}

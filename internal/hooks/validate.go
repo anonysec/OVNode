@@ -17,6 +17,3 @@ func Sanitize(s string) string { return fsx.Sanitize(s) }
 
 // HookCNValid reports whether a sanitized CN is acceptable to the hook.
 func HookCNValid(safe string) bool { return fsx.HookCNValid(safe) }
-
-// StoreCNValid reports whether a CN may be used as a store path component.
-func StoreCNValid(cn string) bool { return fsx.StoreCNValid(cn) }

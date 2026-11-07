@@ -42,8 +42,3 @@ func RemoteLines(tunnelAddr string, primaryPort int, extraPorts ...int) string {
 	}
 	return strings.Join(lines, "\n")
 }
-
-func itoa(n int) string {
-	// avoid import cycle; use strconv via local
-	return itoaStr(n)
-}

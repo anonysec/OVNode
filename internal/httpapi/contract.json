@@ -23,7 +23,8 @@
     "path": "/sync/usage",
     "request": [],
     "response": [
-      "totals"
+      "totals",
+      "totals_epochs"
     ],
     "response_raw": false,
     "request_at": "internal/node/client.go:GetUsage",
@@ -170,6 +171,20 @@
     "response_raw": false,
     "request_at": "internal/node/client.go:CreateUser",
     "note": "no data key is read; only CreateUserOnAllNodes calls it, and that fan-out is dead code"
+  },
+  {
+    "method": "PUT",
+    "path": "/sync/user",
+    "request": [
+      "id",
+      "name",
+      "max_logins",
+      "status"
+    ],
+    "response": [],
+    "response_raw": false,
+    "request_at": "internal/node/user_policy.go:ApplyUserPolicy",
+    "note": "name, supplied max_logins, and activation state are applied together; omitted status keeps the legacy activate default"
   },
   {
     "method": "DELETE",

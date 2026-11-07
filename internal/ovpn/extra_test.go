@@ -1,8 +1,10 @@
+// Copyright (c) 2026 anonysec
+// SPDX-License-Identifier: MIT
+
 package ovpn
 
 import (
 	"os"
-	"os/exec"
 	"path/filepath"
 	"testing"
 
@@ -11,40 +13,25 @@ import (
 )
 
 func TestDeleteUserRemovesAllCopies(t *testing.T) {
-	if _, err := exec.LookPath("openvpn"); err != nil {
-		t.Skip("openvpn not installed")
-	}
-	if _, err := os.Stat("/usr/share/easy-rsa/easyrsa"); err != nil {
-		t.Skip("easy-rsa not installed")
-	}
-	root := t.TempDir()
-	t.Setenv("OVNODE_OPENVPN_ROOT", root)
-	t.Setenv("OVNODE_DATA_DIR", root+"/ovnode-data")
+	requireProviderPKI(t)
+	providerTree(t)
 	if err := InitPKI(); err != nil {
 		t.Fatal(err)
 	}
-	for _, d := range []string{
-		filepath.Join(root, "server", "pki", "issued"),
-		filepath.Join(root, "server", "pki", "private"),
-		filepath.Join(root, "server", "pki", "inline", "private"),
-		filepath.Join(root, "ovnode-data", "users"),
-		filepath.Join(root, "ovnode-data", "sessions"),
-		filepath.Join(root, "ovnode-data", "usage"),
-	} {
-		os.MkdirAll(d, 0o700)
-	}
 	cn := "testuser"
-	// create pki copies
-	os.WriteFile(pki.ClientKeyPath(cn), []byte("key"), 0o600)
-	os.MkdirAll(filepath.Dir(pki.InlineBundlePath(cn)), 0o700)
-	os.WriteFile(pki.InlineBundlePath(cn), []byte("bundle"), 0o600)
-	// user dir copies
+	if err := CreateUser(cn, "Test user", 3, nil); err != nil {
+		t.Fatal(err)
+	}
 	dir, _ := store.UserDir(pki.UsersDir(), cn)
-	os.MkdirAll(dir, 0o700)
-	os.WriteFile(filepath.Join(dir, "cert.pem"), []byte("cert"), 0o644)
-	os.WriteFile(filepath.Join(dir, "key.pem"), []byte("key"), 0o600)
-	os.WriteFile(filepath.Join(dir, "client.ovpn"), []byte("ovpn"), 0o600)
-	store.CreateUser(pki.UsersDir(), cn)
+	for name, path := range map[string]string{"cert.pem": pki.IssuedCertPath(cn), "key.pem": pki.ClientKeyPath(cn), "ca.pem": pki.CACert()} {
+		data, err := os.ReadFile(path)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(filepath.Join(dir, name), data, 0o600); err != nil {
+			t.Fatal(err)
+		}
+	}
 
 	found, err := DeleteUser(cn)
 	if err != nil {

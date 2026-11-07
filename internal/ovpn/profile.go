@@ -72,28 +72,3 @@ func BuildTemplate(path string, p Parts) (string, error) {
 	}
 	return b.String(), nil
 }
-
-// NormalizeBlocks extracts inline blocks in order for golden comparison.
-func NormalizeBlocks(s string) []string {
-	var blocks []string
-	lines := strings.Split(s, "\n")
-	i := 0
-	for i < len(lines) {
-		line := strings.TrimSpace(lines[i])
-		if strings.HasPrefix(line, "<") && strings.HasSuffix(line, ">") && !strings.HasPrefix(line, "</") {
-			tag := strings.Trim(line, "<>")
-			block := line + "\n"
-			i++
-			for i < len(lines) {
-				block += lines[i] + "\n"
-				if strings.TrimSpace(lines[i]) == "</"+tag+">" {
-					break
-				}
-				i++
-			}
-			blocks = append(blocks, strings.TrimSpace(block))
-		}
-		i++
-	}
-	return blocks
-}

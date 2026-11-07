@@ -385,7 +385,9 @@ func ChangeConfig(req ChangeConfigRequest, classification *ChangeConfigResult) b
 		}
 		if extraProvided {
 			policy.WritePortsState(extraPorts)
-			policy.SyncNATConfig(ovpnPort, extraPorts)
+			if err := policy.SyncNATConfig(ovpnPort, extraPorts); err != nil {
+				return err
+			}
 		}
 		if dnsProvided {
 			if st := policy.ReadDNSState(); st.DNS1 != d1 || st.DNS2 != d2 {
@@ -599,8 +601,7 @@ func restoreSnapshots(snaps []snapshot) {
 }
 
 func invalidateCachedOVPN() {
-	root := openvpnRoot()
-	glob := filepath.Join(root, "ovnode", "users", "*", "client.ovpn")
+	glob := filepath.Join(fsx.UsersDir(), "*", "client.ovpn")
 	matches, _ := filepath.Glob(glob)
 	for _, m := range matches {
 		os.Remove(m)

@@ -1,10 +1,33 @@
+// Copyright (c) 2026 anonysec
+// SPDX-License-Identifier: MIT
+
 package config
 
 import (
 	"os"
 	"path/filepath"
 	"testing"
+
+	"ovnode/internal/fsx"
 )
+
+func TestHookFromEnvUsesEffectiveFSXPaths(t *testing.T) {
+	dir := t.TempDir()
+	t.Setenv("OVNODE_OPENVPN_ROOT", filepath.Join(dir, "vpn"))
+	t.Setenv("OVNODE_DATA_DIR", filepath.Join(dir, "relocated-data"))
+	for _, name := range []string{"OVNODE_USERS_DIR", "OVNODE_SESSIONS_DIR", "OVNODE_USAGE_DIR"} {
+		t.Setenv(name, "")
+	}
+	t.Setenv("OVNODE_LOG_DIR", filepath.Join(dir, "logs"))
+	t.Setenv("OVNODE_STATUS_FILE", filepath.Join(dir, "status"))
+	t.Setenv("OVNODE_MGMT_PASS_FILE", filepath.Join(dir, "password"))
+	cfg := HookFromEnv()
+	for _, pair := range [][2]string{{cfg.UsersDir, fsx.UsersDir()}, {cfg.SessionsDir, fsx.SessionsDir()}, {cfg.UsageDir, fsx.UsageDir()}, {cfg.MgmtPassFile, fsx.MgmtPassFile()}} {
+		if pair[0] != pair[1] {
+			t.Errorf("hook path %q disagrees with fsx path %q", pair[0], pair[1])
+		}
+	}
+}
 
 func TestHookFromEnvValidatesRanges(t *testing.T) {
 	dir := t.TempDir()

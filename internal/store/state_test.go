@@ -20,7 +20,10 @@ func TestWriteUserStateMergesFields(t *testing.T) {
 	if err := SetDisabled(dir, "alice", true); err != nil {
 		t.Fatalf("SetDisabled: %v", err)
 	}
-	st := ReadUserState(dir, "alice")
+	st, err := ReadUserState(dir, "alice")
+	if err != nil {
+		t.Fatal(err)
+	}
 	if !st.LimitSet || st.Limit != 3 {
 		t.Errorf("limit = %d (set=%v), want 3", st.Limit, st.LimitSet)
 	}
@@ -32,7 +35,10 @@ func TestWriteUserStateMergesFields(t *testing.T) {
 	if err := SetLimit(dir, "alice", 5); err != nil {
 		t.Fatalf("SetLimit: %v", err)
 	}
-	st = ReadUserState(dir, "alice")
+	st, err = ReadUserState(dir, "alice")
+	if err != nil {
+		t.Fatal(err)
+	}
 	if st.Limit != 5 {
 		t.Errorf("limit = %d, want 5", st.Limit)
 	}
@@ -47,7 +53,10 @@ func TestWriteUserStateKeepsUnlimitedDistinct(t *testing.T) {
 	if err := SetLimit(dir, "bob", 0); err != nil {
 		t.Fatalf("SetLimit: %v", err)
 	}
-	st := ReadUserState(dir, "bob")
+	st, err := ReadUserState(dir, "bob")
+	if err != nil {
+		t.Fatal(err)
+	}
 	if !st.LimitSet {
 		t.Fatal("LimitSet = false, want true — limit=0 must be recorded")
 	}
@@ -80,7 +89,10 @@ func TestWriteUserStateRemovesLegacyFiles(t *testing.T) {
 			t.Errorf("legacy %s file still present", name)
 		}
 	}
-	st := ReadUserState(dir, "carol")
+	st, err := ReadUserState(dir, "carol")
+	if err != nil {
+		t.Fatal(err)
+	}
 	if st.Limit != 2 {
 		t.Errorf("limit = %d, want 2", st.Limit)
 	}
@@ -96,7 +108,11 @@ func TestWriteUserStateRemovesLegacyFiles(t *testing.T) {
 	if err := SetLimit(dir, "carol", 4); err != nil {
 		t.Fatalf("SetLimit: %v", err)
 	}
-	if st = ReadUserState(dir, "carol"); st.Disabled {
+	st, err = ReadUserState(dir, "carol")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if st.Disabled {
 		t.Error("disabled = true, want false — the merged file was overridden")
 	}
 }
@@ -127,6 +143,32 @@ func TestNameMapResolvesBothDirections(t *testing.T) {
 	}
 	if got := CNForName(dir, "dave@example"); got != "dave" {
 		t.Errorf("CNForName = %q, want dave", got)
+	}
+}
+
+func TestWriteNamePreservesUnspecifiedPolicy(t *testing.T) {
+	dir := t.TempDir()
+	for _, name := range []string{"Alice = 阿丽丝", "", "Alice"} {
+		if err := WriteName(dir, "alice", name); err != nil {
+			t.Fatal(err)
+		}
+		st, err := ReadUserState(dir, "alice")
+		if err != nil || st.LimitSet || st.Disabled || ReadName(dir, "alice") != name {
+			t.Fatalf("name-only write changed unspecified policy: %+v (%v)", st, err)
+		}
+	}
+	if err := SetLimit(dir, "alice", 0); err != nil {
+		t.Fatal(err)
+	}
+	if err := SetDisabled(dir, "alice", true); err != nil {
+		t.Fatal(err)
+	}
+	if err := WriteName(dir, "alice", "Bob"); err != nil {
+		t.Fatal(err)
+	}
+	st, err := ReadUserState(dir, "alice")
+	if err != nil || !st.LimitSet || st.Limit != 0 || !st.Disabled || ReadName(dir, "alice") != "Bob" {
+		t.Fatalf("name-only write changed existing policy: %+v (%v)", st, err)
 	}
 }
 

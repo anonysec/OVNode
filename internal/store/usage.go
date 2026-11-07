@@ -4,44 +4,52 @@
 package store
 
 import (
+	"fmt"
 	"os"
 	"path/filepath"
-
-	"ovnode/internal/fsx"
-	"strconv"
-	"strings"
 )
 
-// BankUsage adds a finished session's byte counters to the user's
-// accumulator and returns the new total.
-//
-// OpenVPN exposes bytes_received/bytes_sent only at disconnect, so without
-// this the traffic of a completed session would be lost between status-file
-// polls. The accumulator is written under its own per-CN lock and through a
-// temporary file, so a connect storm is never head-of-line blocked behind
-// accounting and two simultaneous disconnects cannot lose an update.
+// BankUsage adds delta to a CN's v2 total without touching session offsets.
+// It never rewrites a v2/invalid file as a legacy digit string: an unreadable
+// counter is an error, not a silent zero. Preferred accounting is
+// RecordSessionUsage; BankUsage remains for callers with only a delta.
 func BankUsage(usageDir, safeCN string, delta uint64) (uint64, bool) {
+	safe, err := SafeCN(safeCN)
+	if err != nil {
+		return 0, false
+	}
 	if delta == 0 {
 		return 0, false
 	}
-	dirInfo, err := os.Stat(usageDir)
-	if err != nil || !dirInfo.IsDir() {
+	if err := os.MkdirAll(usageDir, 0o755); err != nil {
 		return 0, false
 	}
-	usageFile := filepath.Join(usageDir, safeCN)
 	var total uint64
-	err = Lock(filepath.Join(usageDir, ".lock."+safeCN), func() error {
-		old := uint64(0)
-		if raw, err := os.ReadFile(usageFile); err == nil {
-			if n, err := strconv.ParseUint(strings.TrimSpace(string(raw)), 10, 64); err == nil {
-				old = n
+	err = Lock(filepath.Join(usageDir, ".lock."+safe), 0o660, func() error {
+		st, err := ReadUsageState(usageDir, safe)
+		if err != nil {
+			return err
+		}
+		if delta > 0 {
+			if st.Total+delta < st.Total {
+				return fmt.Errorf("counter overflow for %q", safeCN)
+			}
+			st.Total += delta
+		}
+		if st.Version != counterVersion {
+			st.Version = counterVersion
+			if st.Epoch == "" {
+				st.Epoch = newEpoch()
 			}
 		}
-		total = old + delta
-		if err := fsx.WriteFileAtomic(usageFile, []byte(strconv.FormatUint(total, 10)+"\n"), 0o644); err != nil {
+		if st.Sessions == nil {
+			st.Sessions = map[string]UsageSession{}
+		}
+		if err := writeUsageState(usageDir, safe, st); err != nil {
 			return err
 		}
 		InvalidateUsageCache()
+		total = st.Total
 		return nil
 	})
 	if err != nil {
