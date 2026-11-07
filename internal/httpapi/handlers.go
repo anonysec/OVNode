@@ -39,14 +39,14 @@ func (s *Server) handleStatus(w http.ResponseWriter, r *http.Request) {
 		status = "degraded"
 	}
 	writeOK(w, "Node status retrieved successfully", map[string]any{
-		"status":          status,
+		"status":           status,
 		"contract_version": ContractVersion,
-		"version":         version.Version,
-		"cpu_usage":       cpuUsage(),
-		"memory_usage":    memoryUsage(),
-		"openvpn_running": ovpn.OpenVPNIsRunning(),
-		"uptime_seconds":  int(time.Since(s.started).Seconds()),
-		"pki_healthy":     healthy,
+		"version":          version.Version,
+		"cpu_usage":        cpuUsage(),
+		"memory_usage":     memoryUsage(),
+		"openvpn_running":  ovpn.OpenVPNIsRunning(),
+		"uptime_seconds":   int(time.Since(s.started).Seconds()),
+		"pki_healthy":      healthy,
 		// The TLS certificate, so the panel can warn before the
 		// connectivity breaks.
 		"cert_expiry": pki.CertExpiry(s.CertFile),

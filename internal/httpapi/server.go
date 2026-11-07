@@ -29,6 +29,7 @@ import (
 
 	"ovnode/internal/fsx"
 	"ovnode/internal/logging"
+	"ovnode/internal/ovpn"
 	"ovnode/internal/pki"
 	"ovnode/internal/ratelimit"
 	"ovnode/internal/store"
@@ -313,6 +314,9 @@ func Run() error {
 	if len(s.APIKey) < 16 {
 		return fmt.Errorf("API_KEY must be at least 16 characters")
 	}
+	// The agent now owns the OpenVPN daemon: ovnode.service forks openvpn as
+	// a child and respawns it in SuperviseOpenVPN. There is no second unit.
+	ovpn.SuperviseOpenVPN(context.Background())
 	logging.Info("ovnode agent %s starting (addr=%s, openvpn_root=%s)",
 		version.Version, s.Addr, pki.OpenVPNRoot())
 	fmt.Println("ovnode serve listening on", s.Addr)

@@ -190,7 +190,7 @@ NODE_BIN_FILE="ovnode"
 
 # Node unit files: a host install writes these, so one is evidence of a node
 # even when the app directory is gone.
-NODE_UNITS=(SYSTEMD_SERVICE OPENVPN_SERVICE)
+NODE_UNITS=(SYSTEMD_SERVICE)
 
 _any_node_unit() {
     local name
@@ -665,6 +665,8 @@ ensure_openvpn_dirs() {
 }
 
 write_openvpn_unit() {
+    : # legacy: OpenVPN daemon is now a child of ovnode.service (write_systemd_unit does ExecStart); this function stays for uninstall cleanup only.
+    return 0
     cat > "$SYSTEMD_DIR/$OPENVPN_SERVICE" << UNIT
 [Unit]
 Description=OVNode OpenVPN daemon
@@ -689,12 +691,13 @@ UNIT
 }
 
 start_openvpn_service() {
-    # The agent generates server.conf + PKI on first boot.
+    # The agent's `serve` generates server.conf + PKI on first boot and owns
+    # the OpenVPN daemon (respawn supervision inside the binary). There is no
+    # separate unit to restart; a bounce is `systemctl restart ovnode`.
     if has_systemd; then
-        write_openvpn_unit
-        systemctl restart "$OPENVPN_SERVICE" >/dev/null 2>&1 && \
-            render_ok "OpenVPN server service started" || \
-            render_warn "Could not start $OPENVPN_SERVICE, check: journalctl -u $OPENVPN_SERVICE -n 50"
+        systemctl restart "$SYSTEMD_SERVICE" >/dev/null 2>&1 && \
+            render_ok "OpenVPN server service started (ovnode.service)" || \
+            render_warn "Could not start ovnode.service: check journalctl -u ovnode.service -n 50"
     elif command -v rc-service >/dev/null 2>&1; then
         rc-update add openvpn default >/dev/null 2>&1 || true
         rc-service openvpn start >/dev/null 2>&1 && render_ok "OpenVPN started (OpenRC)" || render_warn "Start OpenVPN manually"
@@ -704,7 +707,10 @@ start_openvpn_service() {
 }
 # ── Systemd units ──────────────────────────────────────────────────────
 write_systemd_unit() {
-    # ExecStart runs the Go binary that also answers the OpenVPN hooks.
+    # One unit now: the agent serves the /sync API and owns the OpenVPN
+    # daemon's lifecycle. OpenVPN runs as a detached child via exec-fork
+    # semantics through `ovnode openvpn respawn` — no second unit to enable,
+    # disable, or restart separately.
     local exec_start="${AGENT_BIN} serve"
     cat > "$SYSTEMD_DIR/$SYSTEMD_SERVICE" << UNIT
 [Unit]
@@ -721,6 +727,8 @@ ExecStart=${exec_start}
 Restart=on-failure
 RestartSec=3
 LimitNOFILE=65536
+RuntimeDirectory=ovnode-openvpn
+RuntimeDirectoryMode=0755
 
 [Install]
 WantedBy=multi-user.target
@@ -1612,7 +1620,7 @@ do_uninstall() {
     # A y/N prompt put "yes, delete the CA" one keystroke from the default.
     render_line "  $(printf '%bthis removes%b' "$B" "$NC")"
     render_rule
-    render_kv "services" "$SYSTEMD_SERVICE, $OPENVPN_SERVICE"
+    render_kv "services" "$SYSTEMD_SERVICE"
     render_kv "files" "$(dir_size "$APP_DIR")   $APP_DIR"
     if [[ "$PURGE" -eq 1 ]]; then
         render_kv "data" "$(printf '%s%s%s   %s← users, keys, the CA private key' "$RD" "$DATA_BASE" "$NC" "$GY")"

@@ -9,6 +9,7 @@ import (
 	"path/filepath"
 	"strconv"
 	"strings"
+	"syscall"
 
 	"ovnode/internal/pki"
 	"ovnode/internal/store"
@@ -97,10 +98,9 @@ func ReloadOpenVPN() bool {
 
 // RestartOpenVPN restarts the OpenVPN of this tree.
 //
-// The service units belong to the installed node: they point at the default
-// OpenVPN root, so a relocated tree must not restart them — that would
-// bounce the installed node's tunnels. A relocated tree is restarted through
-// its own pid file instead.
+// The agent owns the daemon lifecycle: it supervises openvpn as a child of
+// ovnode.service (started in serve), so this function restarts it as a child
+// directly (pid-file or management socket), not as a standalone unit.
 func RestartOpenVPN() bool {
 	if _, err := os.Stat(settingFile()); err != nil {
 		return false
@@ -110,23 +110,36 @@ func RestartOpenVPN() bool {
 	}
 	pki.EnsureSecretPerms()
 	if pki.IsInstalledTree() {
-		// systemctl
-		if systemctl, err := exec.LookPath("systemctl"); err == nil {
-			for _, unit := range []string{"ovnode-openvpn.service", "openvpn-server@server"} {
-				cmd := exec.Command(systemctl, "restart", unit)
-				if err := cmd.Run(); err == nil {
-					return true
-				}
-			}
-		}
-		// openrc
-		if _, err := os.Stat("/sbin/rc-service"); err == nil {
-			cmd := exec.Command("/sbin/rc-service", "openvpn", "restart")
-			if err := cmd.Run(); err == nil {
-				return true
-			}
+		// openvpn is a child of ovnode.service: kill the pid and let the
+		// supervisor respawn it. systemctl restart of ovnode is the hard
+		// fallback via the CLI.
+		if RestartOpenVPNChild() {
+			return true
 		}
 	}
 	// Fall back to a management-socket SIGHUP for relocated trees.
 	return ReloadOpenVPN()
+}
+
+// RestartOpenVPNChild kills the supervised OpenVPN child (via the pid file);
+// the serve loop's Wait() reaps it and starts a fresh one. Returns false when
+// there is no supervised child to restart.
+func RestartOpenVPNChild() bool {
+	pidFile := pki.PIDFile()
+	data, err := os.ReadFile(pidFile)
+	if err != nil {
+		return false
+	}
+	n, err := strconv.Atoi(strings.TrimSpace(string(data)))
+	if err != nil {
+		return false
+	}
+	if _, err := os.Stat("/proc/" + strconv.Itoa(n)); err != nil {
+		return false
+	}
+	proc, err := os.FindProcess(n)
+	if err != nil {
+		return false
+	}
+	return proc.Signal(syscall.SIGTERM) == nil
 }
