@@ -11,6 +11,7 @@ func TestChangeConfigMultiPortIdempotent(t *testing.T) {
 	root := t.TempDir()
 	t.Setenv("OVNODE_OPENVPN_ROOT", root)
 	t.Setenv("OVNODE_DATA_DIR", root+"/ovnode-data")
+	t.Setenv("OVNODE_NAT_CONF", filepath.Join(root, "absent-nat-conf"))
 	serverDir := filepath.Join(root, "server")
 	os.MkdirAll(serverDir, 0o755)
 	conf := "port 1194\nproto udp\ndev tun\n"
@@ -46,6 +47,7 @@ func setupConfigTree(t *testing.T) (string, string) {
 	root := t.TempDir()
 	t.Setenv("OVNODE_OPENVPN_ROOT", root)
 	t.Setenv("OVNODE_DATA_DIR", root+"/ovnode-data")
+	t.Setenv("OVNODE_NAT_CONF", filepath.Join(root, "absent-nat-conf"))
 	serverDir := filepath.Join(root, "server")
 	if err := os.MkdirAll(serverDir, 0o755); err != nil {
 		t.Fatal(err)
@@ -95,6 +97,7 @@ func TestChangeConfigIdenticalPushIsNoop(t *testing.T) {
 	root := t.TempDir()
 	t.Setenv("OVNODE_OPENVPN_ROOT", root)
 	t.Setenv("OVNODE_DATA_DIR", root+"/ovnode-data")
+	t.Setenv("OVNODE_NAT_CONF", filepath.Join(root, "absent-nat-conf"))
 	serverDir := filepath.Join(root, "server")
 	if err := os.MkdirAll(serverDir, 0o755); err != nil {
 		t.Fatal(err)
