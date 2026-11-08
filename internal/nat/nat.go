@@ -8,6 +8,7 @@ import (
 	"strings"
 
 	"ovnode/internal/ovpn"
+	"ovnode/internal/policy"
 )
 
 // Config holds NAT parameters, loaded from /etc/default/ovnode-nat or env.
@@ -89,6 +90,14 @@ func LoadConfig() Config {
 		if !natKeySeen && !envNATSet {
 			cfg.Enabled = true
 		}
+	}
+	if cfg.ExtraPorts != "" {
+		ports := policy.ParseExtraPorts(cfg.ExtraPorts, cfg.PrimaryPort)
+		strs := make([]string, len(ports))
+		for i, p := range ports {
+			strs[i] = strconv.Itoa(p)
+		}
+		cfg.ExtraPorts = strings.Join(strs, ",")
 	}
 	return cfg
 }

@@ -139,6 +139,19 @@ confirm_word() {
 }
 
 is_port() { [[ "$1" =~ ^[0-9]+$ ]] && (( $1 >= 1 && $1 <= 65535 )); }
+validate_archive_members() {
+  local f
+  while IFS= read -r f; do
+    [[ -n "$f" ]] || continue
+    case "$f" in
+      /*|*../*|../*|*/..|..) return 1 ;;
+    esac
+  done < <(tar -tzf "$1" 2>/dev/null) || return 1
+  tar -tvzf "$1" 2>/dev/null | grep -q '^[lh]' && return 1
+  return 0
+}
+
+
 
 # backup_dir() and the code snapshots below share one root. OVN_BACKUP_ROOT
 # exists for the test suite and for an off-box backup target; unset, every

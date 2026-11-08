@@ -6,6 +6,7 @@ package nat
 import (
 	"os"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"testing"
 )
@@ -28,6 +29,16 @@ func TestLoadConfigOptOutPreserved(t *testing.T) {
 	}
 	if cfg.PrimaryPort != 2053 || cfg.ExtraPorts != "1194" {
 		t.Fatalf("ports not loaded: %+v", cfg)
+	}
+}
+func TestLoadConfigSanitizesExtraPorts(t *testing.T) {
+	writeConf(t, "VPN_EXTRA_PORTS=1194 --dport 53 -j DROP,1195,99999\n")
+	cfg := LoadConfig()
+	for _, tok := range strings.Fields(cfg.ExtraPorts) {
+		n, err := strconv.Atoi(tok)
+		if err != nil || n < 1 || n > 65535 {
+			t.Fatalf("unvalidated token in ExtraPorts %q: %q", cfg.ExtraPorts, tok)
+		}
 	}
 }
 

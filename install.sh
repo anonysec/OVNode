@@ -398,8 +398,10 @@ validate_input() {
     esac
         [[ -n "$NODE_NAME" ]] || NODE_NAME="$INSTANCE_NAME"
     [[ "$NODE_NAME" =~ ^[A-Za-z0-9_-]{1,64}$ ]] || die "Invalid node name" "$EX_USAGE"
+    [[ "$NODE_NAME" != *$'\n'* && "$NODE_NAME" != *$'\r'* ]] || die "Invalid node name" "$EX_USAGE"
     [[ -n "$API_KEY" ]] || generate_api_key
     [[ ${#API_KEY} -ge 16 ]] || die "API key must be at least 16 characters (openssl rand -hex 32)" "$EX_USAGE"
+    [[ "$API_KEY" != *$'\n'* && "$API_KEY" != *$'\r'* && "$API_KEY" != *"="* ]] || die "Invalid API key: must not contain newline or '='" "$EX_USAGE"
     case "$TLS_METHOD" in
         letsencrypt|letsencrypt-ip|selfsigned|custom) ;;
         none) die "Plain HTTP is not allowed, pick selfsigned (default), letsencrypt, letsencrypt-ip or custom" "$EX_USAGE" ;;

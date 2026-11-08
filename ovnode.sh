@@ -335,6 +335,7 @@ do_restore() {
     local src="/var/backups/$name"
     [[ -f "$src" ]] || die "No such backup: $name — '${CLI_NAME} restore' lists them" "$EX_USAGE"
     tar -tzf "$src" >/dev/null 2>&1 || die "Not a readable backup archive: $src" "$EX_ERROR"
+    validate_archive_members "$src" || die "Backup contains unsafe members (path traversal or symlink): $name" "$EX_ERROR"
 
     local port tls scheme
     port="$(env_get "$APP_DIR/.env" SERVICE_PORT)"; : "${port:=$DEFAULT_PORT}"
@@ -369,7 +370,7 @@ do_restore() {
         || [[ "$was_vpn" -eq 1 && "$(systemctl is-active "$OPENVPN_SERVICE" 2>/dev/null)" == "active" ]]; then
         die "Restore aborted: service did not stop — the current state is untouched, safety copies hold pre-restore state" "$EX_ERROR"
     fi
-    tar -xzf "$src" -C "$(restore_target_dir "$src")" \
+    tar --no-absolute-filenames -xzf "$src" -C "$(restore_target_dir "$src")" \
         || die "Restore failed — $name was not fully unpacked; the safety copies above hold the previous state" "$EX_ERROR"
     local restart_failed=0
     [[ "$was_agent" -eq 1 ]] && { node_service_action restart || restart_failed=1; }
@@ -594,7 +595,8 @@ do_rollback() {
     tls="$(env_get "$APP_DIR/.env" TLS_METHOD)"; : "${tls:=selfsigned}"
     scheme="http"; [[ "$tls" != "none" ]] && scheme="https"
     systemctl_bounded stop "$SYSTEMD_SERVICE" >/dev/null 2>&1 || true
-    tar -xzf "$snap" -C "$(dirname "$APP_DIR")" >/dev/null 2>&1 \
+    validate_archive_members "$snap" || die "Snapshot contains unsafe members: $snap" "$EX_ERROR"
+    tar --no-absolute-filenames -xzf "$snap" -C "$(dirname "$APP_DIR")" >/dev/null 2>&1 \
         || die "Rollback extract failed — snapshot kept at $snap" "$EX_ERROR"
     run "Restarting node agent" systemctl_bounded restart "$SYSTEMD_SERVICE"
     if wait_health "${scheme}://127.0.0.1:${port}/sync/health" 45; then
