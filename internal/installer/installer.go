@@ -314,8 +314,17 @@ func Bundle(appDir, nodeData, ovpnRoot, backupRoot, node, fromVersion string) (s
 		}
 		vf.Close()
 		// read the manifest from the validated archive
-		vf2, _ := os.Open(tmp)
-		vr2, _ := gzip.NewReader(vf2)
+		vf2, err := os.Open(tmp)
+		if err != nil {
+			cleanup()
+			return "", err
+		}
+		vr2, err := gzip.NewReader(vf2)
+		if err != nil {
+			vf2.Close()
+			cleanup()
+			return "", err
+		}
 		tv2 := tar.NewReader(vr2)
 		for {
 			h, err := tv2.Next()
@@ -323,7 +332,9 @@ func Bundle(appDir, nodeData, ovpnRoot, backupRoot, node, fromVersion string) (s
 				break
 			}
 			if err != nil {
-				break
+				vf2.Close()
+				cleanup()
+				return "", err
 			}
 			if h.Name == "manifest.json" {
 				raw, _ := io.ReadAll(io.LimitReader(tv2, 1<<20))
