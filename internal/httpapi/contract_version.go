@@ -11,3 +11,5 @@ package httpapi
 // ("contract_version_mismatch"), not an empty field downstream.
 // Bump this only when a request/response shape in contract.json changes.
 const ContractVersion = 3
+// ContractFloor is the lowest panel version this node will serve.
+const ContractFloor = 2

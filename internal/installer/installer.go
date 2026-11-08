@@ -405,7 +405,7 @@ func Restore(bundle, appDir, dataBase, ovpnRoot string) error {
 			break
 		}
 		if h.Name == "manifest.json" {
-			rawManifest, _ = io.ReadAll(tr2)
+			rawManifest, _ = io.ReadAll(io.LimitReader(tr2, 1<<20))
 		}
 	}
 	var manifest struct {
@@ -417,6 +417,9 @@ func Restore(bundle, appDir, dataBase, ovpnRoot string) error {
 	}
 	if manifest.Format != "ovnode-state" {
 		return fmt.Errorf("unsafe state backup: bad manifest")
+	}
+	if len(manifest.Members) > 10000 {
+		return fmt.Errorf("unsafe state backup: too many members")
 	}
 	for rel := range manifest.Members {
 		if strings.HasPrefix(rel, "/") || strings.Contains(rel, "..") {

@@ -84,7 +84,14 @@ func (s *Server) authorize(w http.ResponseWriter, r *http.Request, heavy bool) b
 	// our floor, fails with a typed refusal naming both numbers.
 	if cv := strings.TrimSpace(r.Header.Get("X-Contract-Version")); cv != "" {
 		n, err := strconv.Atoi(cv)
-		if err == nil && n > ContractVersion {
+		if err != nil || n < ContractFloor {
+			writeAuthError(w, http.StatusConflict,
+				"contract_version_mismatch: panel contract "+cv+
+					" below node floor "+strconv.Itoa(ContractFloor)+
+					" (node implements "+strconv.Itoa(ContractVersion)+") — update the panel first")
+			return false
+		}
+		if n > ContractVersion {
 			writeAuthError(w, http.StatusConflict,
 				"contract_version_mismatch: panel requires contract "+cv+
 					" but this node implements contract "+strconv.Itoa(ContractVersion)+

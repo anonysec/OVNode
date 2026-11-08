@@ -32,7 +32,7 @@ func LoadConfig() Config {
 	cfg := Config{Enabled: false, Subnet: ovpn.VPNSubnet(), TunDev: "tun0"}
 	// env overrides
 	if v := os.Getenv("VPN_PRIMARY_PORT"); v != "" {
-		if n, _ := strconv.Atoi(v); n > 0 {
+		if n, _ := strconv.Atoi(v); n >= 1 && n <= 65535 {
 			cfg.PrimaryPort = n
 		}
 	}
@@ -71,7 +71,7 @@ func LoadConfig() Config {
 				natKeySeen = true
 				cfg.Enabled = val == "1" || strings.EqualFold(val, "true") || strings.EqualFold(val, "yes")
 			case "VPN_PRIMARY_PORT":
-				if n, _ := strconv.Atoi(val); n > 0 {
+				if n, _ := strconv.Atoi(val); n >= 1 && n <= 65535 {
 					cfg.PrimaryPort = n
 				}
 			case "VPN_EXTRA_PORTS":

@@ -1032,6 +1032,8 @@ resolve_runtime_identity() {
     elif [[ -z "$RUNTIME_GROUP" ]]; then
         RUNTIME_GROUP="$(id -gn "$RUNTIME_USER")" || die "Unknown runtime user: $RUNTIME_USER" "$EX_ERROR"
     fi
+    [[ "$RUNTIME_USER" =~ ^[a-z_][a-z0-9_-]*$ ]] || die "Invalid runtime user" "$EX_USAGE"
+    [[ "$RUNTIME_GROUP" =~ ^[a-z_][a-z0-9_-]*$ ]] || die "Invalid runtime group" "$EX_USAGE"
 }
 
 ensure_runtime_identity() {
