@@ -290,6 +290,7 @@ func Bundle(appDir, nodeData, ovpnRoot, backupRoot, node, fromVersion string) (s
 			return "", err
 		}
 		vr, verr := gzip.NewReader(vf)
+		defer vr.Close()
 		if verr != nil {
 			vf.Close()
 			cleanup()
@@ -326,6 +327,7 @@ func Bundle(appDir, nodeData, ovpnRoot, backupRoot, node, fromVersion string) (s
 			return "", err
 		}
 		vr2, err := gzip.NewReader(vf2)
+		defer vr2.Close()
 		if err != nil {
 			vf2.Close()
 			cleanup()
