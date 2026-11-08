@@ -418,6 +418,11 @@ func Restore(bundle, appDir, dataBase, ovpnRoot string) error {
 	if manifest.Format != "ovnode-state" {
 		return fmt.Errorf("unsafe state backup: bad manifest")
 	}
+	for rel := range manifest.Members {
+		if strings.HasPrefix(rel, "/") || strings.Contains(rel, "..") {
+			return fmt.Errorf("unsafe state backup: unsafe manifest member")
+		}
+	}
 	expected := manifest.Members
 
 	// stage extraction

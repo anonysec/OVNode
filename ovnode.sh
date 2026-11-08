@@ -590,12 +590,12 @@ do_rollback() {
     check_root
     render_kv "Snapshot" "$snap"
     [[ "$YES" -eq 1 ]] || confirm "Restore the pre-update tree and restart?" || exit "$EX_OK"
+    validate_archive_members "$snap" || die "Snapshot contains unsafe members: $snap" "$EX_ERROR"
     local port tls scheme
     port="$(env_get "$APP_DIR/.env" SERVICE_PORT)"; : "${port:=$DEFAULT_PORT}"
     tls="$(env_get "$APP_DIR/.env" TLS_METHOD)"; : "${tls:=selfsigned}"
     scheme="http"; [[ "$tls" != "none" ]] && scheme="https"
     systemctl_bounded stop "$SYSTEMD_SERVICE" >/dev/null 2>&1 || true
-    validate_archive_members "$snap" || die "Snapshot contains unsafe members: $snap" "$EX_ERROR"
     tar --no-absolute-filenames -xzf "$snap" -C "$(dirname "$APP_DIR")" >/dev/null 2>&1 \
         || die "Rollback extract failed — snapshot kept at $snap" "$EX_ERROR"
     run "Restarting node agent" systemctl_bounded restart "$SYSTEMD_SERVICE"
