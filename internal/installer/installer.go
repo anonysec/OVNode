@@ -312,6 +312,12 @@ func Bundle(appDir, nodeData, ovpnRoot, backupRoot, node, fromVersion string) (s
 				names[h.Name] = true
 			}
 		}
+		if _, err := io.Copy(io.Discard, vr); err != nil {
+			vf.Close()
+			cleanup()
+			return "", err
+		}
+		vr.Close()
 		vf.Close()
 		// read the manifest from the validated archive
 		vf2, err := os.Open(tmp)
@@ -341,6 +347,7 @@ func Bundle(appDir, nodeData, ovpnRoot, backupRoot, node, fromVersion string) (s
 				json.Unmarshal(raw, &parsed)
 			}
 		}
+		vr2.Close()
 		vf2.Close()
 		unsafe := false
 		for n := range names {
