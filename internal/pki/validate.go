@@ -117,6 +117,22 @@ func ValidateServerCert(caPEM, certPEM, keyPEM string) error {
 	if err := cert.CheckSignatureFrom(caCert); err != nil {
 		return fmt.Errorf("certificate does not chain to CA: %w", err)
 	}
+	if cert.IsCA {
+		return fmt.Errorf("server certificate must not be a CA")
+	}
+	// EKU absent means unrestricted (common with easy-rsa/OpenVPN service
+	// certs); when present it must include serverAuth.
+	if len(cert.ExtKeyUsage) > 0 {
+		ok := false
+		for _, e := range cert.ExtKeyUsage {
+			if e == x509.ExtKeyUsageServerAuth {
+				ok = true
+			}
+		}
+		if !ok {
+			return fmt.Errorf("server certificate lacks serverAuth EKU")
+		}
+	}
 	return nil
 }
 

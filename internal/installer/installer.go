@@ -436,6 +436,8 @@ func Restore(bundle, appDir, dataBase, ovpnRoot string) error {
 	defer f3.Close()
 	gr3, _ := gzip.NewReader(f3)
 	tr3 := tar.NewReader(gr3)
+	const maxRestoreTotal = 512 << 20
+	var restoreTotal int64
 	for {
 		h, err := tr3.Next()
 		if err == io.EOF {
@@ -447,6 +449,11 @@ func Restore(bundle, appDir, dataBase, ovpnRoot string) error {
 		if h.Typeflag != tar.TypeReg {
 			continue
 		}
+		restoreTotal += h.Size
+		if restoreTotal > maxRestoreTotal {
+			return fmt.Errorf("unsafe state backup: archive exceeds %d bytes", maxRestoreTotal)
+		}
+		remaining := maxRestoreTotal - (restoreTotal - h.Size)
 		dst := filepath.Join(staged, h.Name)
 		if err := os.MkdirAll(filepath.Dir(dst), 0o755); err != nil {
 			return err
@@ -455,9 +462,14 @@ func Restore(bundle, appDir, dataBase, ovpnRoot string) error {
 		if err != nil {
 			return err
 		}
-		if _, err := io.Copy(out, tr3); err != nil {
+		written, err := io.Copy(out, io.LimitReader(tr3, remaining))
+		if err != nil {
 			out.Close()
 			return err
+		}
+		if written != h.Size {
+			out.Close()
+			return fmt.Errorf("unsafe state backup: size mismatch on %s", h.Name)
 		}
 		out.Close()
 	}
@@ -510,8 +522,10 @@ func Restore(bundle, appDir, dataBase, ovpnRoot string) error {
 		}
 		in.Close()
 		fd.Close()
-		if strings.HasSuffix(dst, ".env") {
-			os.Chmod(tmp, 0o600)
+		b := filepath.Base(dst)
+		if strings.HasSuffix(dst, ".env") || b == "key.pem" || b == "ca.key" ||
+			b == "tls.key" || b == "server.key" || strings.HasSuffix(dst, ".key") {
+			os.Chmod(tmp, 0o600) // ponytail: per-member manifest modes on upgrade
 		} else if strings.Contains(dst, "scripts/") || strings.HasSuffix(dst, "/ovnode") {
 			os.Chmod(tmp, 0o755)
 		}

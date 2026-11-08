@@ -3,6 +3,7 @@ package nat
 import (
 	"fmt"
 	"os"
+	"net"
 	"os/exec"
 	"strconv"
 	"strings"
@@ -90,6 +91,12 @@ func LoadConfig() Config {
 		if !natKeySeen && !envNATSet {
 			cfg.Enabled = true
 		}
+	}
+	if _, _, err := net.ParseCIDR(cfg.Subnet); err != nil {
+		cfg.Subnet = ovpn.VPNSubnet()
+	}
+	if !validIface(cfg.TunDev) {
+		cfg.TunDev = "tun0"
 	}
 	if cfg.ExtraPorts != "" {
 		ports := policy.ParseExtraPorts(cfg.ExtraPorts, cfg.PrimaryPort)

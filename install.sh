@@ -402,6 +402,10 @@ validate_input() {
     [[ -n "$API_KEY" ]] || generate_api_key
     [[ ${#API_KEY} -ge 16 ]] || die "API key must be at least 16 characters (openssl rand -hex 32)" "$EX_USAGE"
     [[ "$API_KEY" =~ ^[A-Za-z0-9._~+/=-]+$ ]] || die "Invalid API key: use only letters, digits, '.', '_', '~', '+', '/', '=', '-'" "$EX_USAGE"
+    [[ -z "$TLS_KEY" || "$TLS_KEY" =~ ^[A-Za-z0-9/._-]+$ ]] || die "Invalid TLS key path" "$EX_USAGE"
+    [[ -z "$TLS_CERT" || "$TLS_CERT" =~ ^[A-Za-z0-9/._-]+$ ]] || die "Invalid TLS cert path" "$EX_USAGE"
+    [[ -z "$EXTRA_PORTS" || "$EXTRA_PORTS" =~ ^[0-9,]+$ ]] || die "Invalid extra ports" "$EX_USAGE"
+    [[ -z "$OVN_VERSION" || "$OVN_VERSION" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]] || die "Invalid version" "$EX_USAGE"
     case "$TLS_METHOD" in
         letsencrypt|letsencrypt-ip|selfsigned|custom) ;;
         none) die "Plain HTTP is not allowed, pick selfsigned (default), letsencrypt, letsencrypt-ip or custom" "$EX_USAGE" ;;
@@ -731,6 +735,12 @@ RestartSec=3
 LimitNOFILE=65536
 RuntimeDirectory=ovnode-openvpn
 RuntimeDirectoryMode=0755
+NoNewPrivileges=yes
+PrivateTmp=yes
+ProtectSystem=strict
+ReadWritePaths=${APP_DIR} /etc/ovnode /etc/openvpn /var/lib/ovnode /run/ovnode-openvpn /tmp
+CapabilityBoundingSet=CAP_NET_ADMIN CAP_NET_BIND_SERVICE CAP_DAC_OVERRIDE
+ProtectHome=yes
 
 [Install]
 WantedBy=multi-user.target

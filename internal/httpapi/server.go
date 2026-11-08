@@ -98,6 +98,40 @@ func (s *Server) routes() *http.ServeMux {
 	mux.HandleFunc("PUT /sync/pki", s.handlePushPKI)
 	return mux
 }
+func panelAllowMiddleware(next http.Handler) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		spec := strings.TrimSpace(os.Getenv("OVNODE_PANEL_ALLOW"))
+		if spec == "" {
+			next.ServeHTTP(w, r)
+			return
+		}
+		host, _, err := net.SplitHostPort(r.RemoteAddr)
+		if err != nil {
+			host = r.RemoteAddr
+		}
+		ip := net.ParseIP(host)
+		if ip == nil {
+			writeFail(w, "forbidden")
+			return
+		}
+		for _, part := range strings.Split(spec, ",") {
+			part = strings.TrimSpace(part)
+			if part == "" {
+				continue
+			}
+			if strings.Contains(part, "/") {
+				if _, cidr, err := net.ParseCIDR(part); err == nil && cidr.Contains(ip) {
+					next.ServeHTTP(w, r)
+					return
+				}
+			} else if net.ParseIP(part) != nil && net.ParseIP(part).Equal(ip) {
+				next.ServeHTTP(w, r)
+				return
+			}
+		}
+		writeFail(w, "forbidden")
+	})
+}
 
 func (s *Server) recoveryMiddleware(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -169,7 +203,7 @@ func (s *Server) ListenAndServe() error {
 			Certificates: []tls.Certificate{cert},
 			MinVersion:   tls.VersionTLS12,
 		},
-		Handler: gzipMiddleware(s.recoveryMiddleware(s.routes())),
+		Handler: gzipMiddleware(panelAllowMiddleware(s.recoveryMiddleware(s.routes()))),
 	}
 	// Graceful shutdown on SIGINT/SIGTERM.
 	errCh := make(chan error, 1)
