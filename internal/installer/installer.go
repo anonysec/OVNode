@@ -151,7 +151,6 @@ func Bundle(appDir, nodeData, ovpnRoot, backupRoot, node, fromVersion string) (s
 		if err != nil {
 			return nil
 		}
-		defer f.Close()
 		hdr := &tar.Header{
 			Name:     arc,
 			Size:     info.Size(),
@@ -160,16 +159,19 @@ func Bundle(appDir, nodeData, ovpnRoot, backupRoot, node, fromVersion string) (s
 			Typeflag: tar.TypeReg,
 		}
 		if err := tw.WriteHeader(hdr); err != nil {
+			f.Close()
 			return err
 		}
 		if _, err := io.Copy(tw, f); err != nil {
+			f.Close()
 			return err
 		}
+		f.Close()
 		h := sha256.New()
-		f2, _ := os.Open(path)
-		if f2 != nil {
-			defer f2.Close()
+		f2, err2 := os.Open(path)
+		if err2 == nil {
 			io.Copy(h, f2)
+			f2.Close()
 		}
 		members[arc] = hex.EncodeToString(h.Sum(nil))
 		return nil
@@ -249,8 +251,18 @@ func Bundle(appDir, nodeData, ovpnRoot, backupRoot, node, fromVersion string) (s
 		cleanup()
 		return "", err
 	}
-	mf, _ := os.Open(stageTmpName)
-	_, _ = io.Copy(tw, mf)
+	mf, err := os.Open(stageTmpName)
+	if err != nil {
+		os.Remove(stageTmpName)
+		cleanup()
+		return "", err
+	}
+	if _, err = io.Copy(tw, mf); err != nil {
+		mf.Close()
+		os.Remove(stageTmpName)
+		cleanup()
+		return "", err
+	}
 	mf.Close()
 	os.Remove(stageTmpName)
 

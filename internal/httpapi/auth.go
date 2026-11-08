@@ -73,15 +73,8 @@ func (s *Server) authorize(w http.ResponseWriter, r *http.Request, heavy bool) b
 	}
 	// The pairing runs only after the key is proven: the panel id is
 	// identity, not authentication.
-	if err := pairing.Enforce(strings.TrimSpace(r.Header.Get("X-Panel-ID"))); err != nil {
-		writeAuthError(w, http.StatusConflict,
-			"Node is paired with another panel. Wait for the 30-minute lease "+
-				"or run `ovnode auth disconnect` on this node.")
-		return false
-	}
-	// Contract negotiation: an absent header means a legacy panel that has
-	// not yet been told; accept. An explicit version above ours, or below
-	// our floor, fails with a typed refusal naming both numbers.
+	// Contract negotiation: absent = legacy (accept). Runs BEFORE
+	// pairing.Enforce so a wrong contract cannot hold/renew the lease.
 	if cv := strings.TrimSpace(r.Header.Get("X-Contract-Version")); cv != "" {
 		n, err := strconv.Atoi(cv)
 		if err != nil || n < ContractFloor {
@@ -98,6 +91,12 @@ func (s *Server) authorize(w http.ResponseWriter, r *http.Request, heavy bool) b
 					" — update the node first")
 			return false
 		}
+	}
+	if err := pairing.Enforce(strings.TrimSpace(r.Header.Get("X-Panel-ID"))); err != nil {
+		writeAuthError(w, http.StatusConflict,
+			"Node is paired with another panel. Wait for the 30-minute lease "+
+				"or run `ovnode auth disconnect` on this node.")
+		return false
 	}
 	return true
 }

@@ -302,6 +302,10 @@ func (s *Server) handleBulkLimits(w http.ResponseWriter, r *http.Request) {
 		writeFail(w, "Invalid user payload")
 		return
 	}
+	if len(body.Users) > 1000 {
+		writeFail(w, "Too many users in one request (max 1000)")
+		return
+	}
 	applied := 0
 	failed := []map[string]any{}
 	for _, item := range body.Users {

@@ -20,6 +20,7 @@ import (
 	"fmt"
 	"net"
 	"net/http"
+	"sync"
 	"os"
 	"os/signal"
 	"path/filepath"
@@ -98,11 +99,15 @@ func (s *Server) routes() *http.ServeMux {
 	mux.HandleFunc("PUT /sync/pki", s.handlePushPKI)
 	return mux
 }
+var panelAllowWarned sync.Once
+
 func panelAllowMiddleware(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		spec := strings.TrimSpace(os.Getenv("OVNODE_PANEL_ALLOW"))
 		if spec == "" {
-			logging.Warn("OVNODE_PANEL_ALLOW is empty — panel allowlist disabled (any IP with valid API key accepted)")
+			panelAllowWarned.Do(func() {
+				logging.Warn("OVNODE_PANEL_ALLOW is empty — panel allowlist disabled (any IP with valid API key accepted)")
+			})
 			next.ServeHTTP(w, r)
 			return
 		}
