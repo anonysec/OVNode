@@ -65,7 +65,6 @@ func addToArchive(w *tar.Writer, src, prefix string, members map[string]string) 
 		if err != nil {
 			return err
 		}
-		defer f.Close()
 		hdr := &tar.Header{
 			Name:     relArc,
 			Size:     info.Size(),
@@ -74,16 +73,19 @@ func addToArchive(w *tar.Writer, src, prefix string, members map[string]string) 
 			Typeflag: tar.TypeReg,
 		}
 		if err := w.WriteHeader(hdr); err != nil {
+			f.Close()
 			return err
 		}
 		if _, err := io.Copy(w, f); err != nil {
+			f.Close()
 			return err
 		}
+		f.Close()
 		h := sha256.New()
-		f2, _ := os.Open(p)
-		if f2 != nil {
-			defer f2.Close()
+		f2, err2 := os.Open(p)
+		if err2 == nil {
 			io.Copy(h, f2)
+			f2.Close()
 			members[relArc] = hex.EncodeToString(h.Sum(nil))
 		}
 		return nil
@@ -312,7 +314,7 @@ func Bundle(appDir, nodeData, ovpnRoot, backupRoot, node, fromVersion string) (s
 				break
 			}
 			if h.Name == "manifest.json" {
-				raw, _ := io.ReadAll(tv2)
+				raw, _ := io.ReadAll(io.LimitReader(tv2, 1<<20))
 				json.Unmarshal(raw, &parsed)
 			}
 		}

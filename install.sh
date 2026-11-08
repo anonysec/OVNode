@@ -740,6 +740,8 @@ PrivateTmp=yes
 ProtectSystem=strict
 ReadWritePaths=${APP_DIR} /etc/ovnode /etc/openvpn /var/lib/ovnode /run/ovnode-openvpn /tmp
 CapabilityBoundingSet=CAP_NET_ADMIN CAP_NET_BIND_SERVICE CAP_DAC_OVERRIDE
+RestrictAddressFamilies=AF_UNIX AF_INET AF_INET6 AF_NETLINK
+ProtectKernelTunables=yes
 ProtectHome=yes
 
 [Install]
