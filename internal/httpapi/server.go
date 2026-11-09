@@ -20,11 +20,11 @@ import (
 	"fmt"
 	"net"
 	"net/http"
-	"sync"
 	"os"
 	"os/signal"
 	"path/filepath"
 	"strings"
+	"sync"
 	"syscall"
 	"time"
 
@@ -99,6 +99,7 @@ func (s *Server) routes() *http.ServeMux {
 	mux.HandleFunc("PUT /sync/pki", s.handlePushPKI)
 	return mux
 }
+
 var panelAllowWarned sync.Once
 
 func panelAllowMiddleware(next http.Handler) http.Handler {

@@ -2,8 +2,8 @@ package nat
 
 import (
 	"fmt"
-	"os"
 	"net"
+	"os"
 	"os/exec"
 	"strconv"
 	"strings"
