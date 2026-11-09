@@ -22,6 +22,7 @@ import (
 	"ovnode/internal/hooks"
 	"ovnode/internal/httpapi"
 	"ovnode/internal/installer"
+	"ovnode/internal/installer/commands"
 	"ovnode/internal/nat"
 	"ovnode/internal/ovpn"
 	"ovnode/internal/version"
@@ -57,10 +58,72 @@ func main() {
 		runInstaller()
 	case "assets":
 		runAssets()
+	case "install", "update", "uninstall":
+		runInstallCommand(os.Args[1])
 	default:
 		usage()
 		os.Exit(2)
 	}
+}
+
+// runInstallCommand dispatches ovnode install|update|uninstall.
+//
+// Stage 2 keeps bash as the default path: install.sh still performs the
+// install and only these explicit subcommands invoke Go. Exit codes mirror
+// the bash constants (0/1/2/3/4).
+func runInstallCommand(command string) {
+	cfg, action, err := commands.Parse(os.Args[2:])
+	r := commands.DefaultRunner()
+	if err != nil {
+		fmt.Fprintln(os.Stderr, "ovnode installer: "+err.Error())
+		usage()
+		os.Exit(commands.ExitUsage)
+	}
+	if action == "help" {
+		usage()
+		os.Exit(commands.ExitOK)
+	}
+	if action == "recover-update" {
+		// Stage 2 routes recover-update through update's failover path when
+		// the journal says recovery is needed; see commands.Update.
+		action = "update"
+	}
+	var runErr error
+	switch action {
+	case "install":
+		runErr = commands.Install(cfg, r)
+	case "update":
+		runErr = commands.Update(cfg, r)
+	case "uninstall":
+		runErr = commands.Uninstall(cfg, r)
+	default:
+		fmt.Fprintf(os.Stderr, "ovnode %s: action %q is not implemented in Go yet; use install.sh\n", command, action)
+		os.Exit(commands.ExitUsage)
+	}
+	if runErr != nil {
+		fmt.Fprintln(os.Stderr, "ovnode installer: "+runErr.Error())
+		code := commands.ExitError
+		if ue, ok := runErr.(*commands.UsageError); ok && ue != nil {
+			code = commands.ExitUsage
+		}
+		if strings.Contains(runErr.Error(), "Already installed") || strings.Contains(runErr.Error(), "holds no node") {
+			code = commands.ExitAlready
+		}
+		if strings.Contains(runErr.Error(), "Not installed") {
+			code = commands.ExitNotInstalled
+		}
+		if commands.IsFake() {
+			commands.HoldFake(r)
+		}
+		os.Exit(code)
+	}
+	if commands.IsFake() {
+		commands.HoldFake(r)
+	}
+}
+
+func usage() {
+	fmt.Fprintln(os.Stderr, "usage: ovnode <version|hook|ca|nat|serve|probe|state|identity-sha|installer|assets|install|update|uninstall>")
 }
 
 // runHook dispatches the OpenVPN hooks.
@@ -313,11 +376,6 @@ func runIdentitySHA() {
 		os.Exit(2)
 	}
 	fmt.Println(installer.IdentitySHA(os.Args[2], os.Args[3]))
-}
-
-func usage() {
-	fmt.Fprintln(os.Stderr, "usage: ovnode <command>")
-	fmt.Fprintln(os.Stderr, "commands: version, serve, hook, ca, probe, state, identity-sha, installer, assets")
 }
 
 // runProbe reads the embedded contract and checks every route the panel

@@ -1,0 +1,198 @@
+package commands
+
+import (
+	"fmt"
+	"os"
+	"path/filepath"
+	"strings"
+
+	"ovnode/internal/installer"
+	"ovnode/internal/version"
+)
+
+type updateCtx struct {
+	from, safety, identity string
+}
+
+// Update reproduces do_update, including the failover ordering.
+func Update(c *Config, runner Runner) error {
+	if _, err := os.Stat(c.AppDir); err != nil {
+		return fmt.Errorf("Not installed (%s missing): %d", c.AppDir, ExitNotInstalled)
+	}
+	if _, err := os.Stat(c.AgentBin()); err != nil {
+		if _, err := os.Stat(filepath.Join(c.AppDir, "agent")); err == nil {
+			// legacy path — handled by reassigning AgentBin internally
+		} else {
+			return fmt.Errorf("The node agent binary is missing (%s), reinstall instead of updating: %d", c.AgentBin(), ExitError)
+		}
+	}
+	if err := checkRoot(); err != nil {
+		return fmt.Errorf("%w: %d", ErrRoot, ExitError)
+	}
+	if err := c.operationBegin("update"); err != nil {
+		return err
+	}
+	defer c.operationEnd()
+	c.recoverEnvFromDotEnv()
+	// [1/6] Backup — safety bundle before anything else.
+	safety, err := installer.Bundle(c.AppDir, c.DataDir(), c.OpenVPNRoot, "/var/backups", c.NodeName, version.Version)
+	if err != nil {
+		return fmt.Errorf("Could not create the mandatory state safety snapshot: %w", err)
+	}
+	from := version.Version
+	identity := installer.IdentitySHA(c.NodeName, c.APIKey)
+	u := &updateCtx{from: from, safety: safety, identity: identity}
+	_ = u
+	// [2/6] Stage — fetch and stage the candidate.
+	stage := filepath.Join(dirOf(c.AppDir), ".ovnode.staging")
+	_ = os.RemoveAll(stage)
+	if err := os.MkdirAll(stage, 0o755); err != nil {
+		return err
+	}
+	if err := c.fetchRelease(filepath.Join(stage, "ovnode")); err != nil {
+		return err
+	}
+	// [3/6] Maintenance
+	marker := u.marker(c)
+	if err := os.MkdirAll(filepath.Dir(marker), 0o755); err != nil {
+		return err
+	}
+	if err := os.WriteFile(marker, []byte{}, 0o600); err != nil {
+		return err
+	}
+	_ = installer.WriteUpdateState(u.statePath(c), "activating", from, c.Version, safety, identity)
+	// [4/6] Activate — atomic rename, previous is kept for failover.
+	previous := filepath.Join(dirOf(c.AppDir), ".ovnode.previous")
+	_ = os.RemoveAll(previous)
+	if err := os.Rename(c.AppDir, previous); err != nil {
+		// Previous tree vanished mid-flight: maintenance stays, journal says so.
+		_ = installer.WriteUpdateState(u.statePath(c), "recovery_required", from, c.Version, safety, identity)
+		return fmt.Errorf("Could not activate the staged release; the previous release remains active and state was not changed: %d", ExitError)
+	}
+	if err := os.Rename(stage, c.AppDir); err != nil {
+		// Put the old tree back, clear the marker — rollback contract.
+		state := "failed_over"
+		if _, err := os.Stat(c.AppDir); err != nil && os.IsNotExist(err) {
+			state = "recovery_required"
+		}
+		_ = os.Remove(marker)
+		_ = installer.WriteUpdateState(u.statePath(c), state, from, c.Version, safety, identity)
+		if _, err := os.Stat(c.AppDir); err != nil {
+			_ = os.Rename(previous, c.AppDir)
+		}
+		return fmt.Errorf("Could not activate or restore release files. Writes remain blocked; run: ovnode recover-update: %d", ExitError)
+	}
+	// Candidate starts.
+	if err := c.writeSystemdUnit(runner); err != nil {
+		return err
+	}
+	if err := c.writeNatUnit(runner); err != nil {
+		return err
+	}
+	_ = c.installAgentBinary()
+	if err := systemctlBounded(runner, "restart", c.Service); err != nil {
+		return failover(c, u, runner)
+	}
+	// [5/6] Verify
+	scheme := "http"
+	if c.TLSMethod != "none" {
+		scheme = "https"
+	}
+	healthURL := scheme + "://127.0.0.1:" + c.Port + "/sync/health"
+	if !waitHealth(runner, healthURL, 60) {
+		return failover(c, u, runner)
+	}
+	// [6/6] Commit
+	_ = os.Remove(marker)
+	_ = c.setupNAT(runner)
+	_ = c.setupLogrotate()
+	if !waitHealth(runner, healthURL, 60) {
+		_ = os.WriteFile(marker, []byte{}, 0o600)
+		_ = installer.WriteUpdateState(u.statePath(c), "recovery_required", from, c.Version, safety, identity)
+		return fmt.Errorf("Candidate passed verification but failed its final check. Writes are blocked; run: ovnode recover-update")
+	}
+	_ = installer.WriteUpdateState(u.statePath(c), "committed", from, c.Version, safety, identity)
+	_ = os.RemoveAll(previous)
+	c.installCLI()
+	return nil
+}
+
+func failover(c *Config, u *updateCtx, runner Runner) error {
+	// Same ordering as node_failover: stop, restore previous + state, restart.
+	_ = systemctlBounded(runner, "stop", c.Service)
+	previous := filepath.Join(dirOf(c.AppDir), ".ovnode.previous")
+	stage := filepath.Join(dirOf(c.AppDir), ".ovnode.staging")
+	_ = os.RemoveAll(stage)
+	_ = os.Rename(c.AppDir, stage)
+	if err := os.Rename(previous, c.AppDir); err != nil {
+		_ = installer.WriteUpdateState(u.statePath(c), "recovery_required", u.from, c.Version, u.safety, u.identity)
+		return fmt.Errorf("Automatic failover could not restore the previous release. Snapshot: %s", u.safety)
+	}
+	if err := installer.Restore(u.safety, c.AppDir, c.DataBase, c.OpenVPNRoot); err != nil {
+		_ = installer.WriteUpdateState(u.statePath(c), "recovery_required", u.from, c.Version, u.safety, u.identity)
+		return fmt.Errorf("Previous code was restored but state could not be restored")
+	}
+	if err := systemctlBounded(runner, "restart", c.Service); err != nil {
+		_ = installer.WriteUpdateState(u.statePath(c), "recovery_required", u.from, c.Version, u.safety, u.identity)
+		return fmt.Errorf("Previous release restored but will not start")
+	}
+	scheme := "http"
+	if c.TLSMethod != "none" {
+		scheme = "https"
+	}
+	healthURL := scheme + "://127.0.0.1:" + c.Port + "/sync/health"
+	if waitHealth(runner, healthURL, 60) {
+		_ = os.Remove(u.marker(c))
+		_ = installer.WriteUpdateState(u.statePath(c), "failed_over", u.from, c.Version, u.safety, u.identity)
+		return fmt.Errorf("Update failed over safely to v%s. State was restored from %s. Check logs before retrying.", u.from, u.safety)
+	}
+	_ = installer.WriteUpdateState(u.statePath(c), "recovery_required", u.from, c.Version, u.safety, u.identity)
+	return fmt.Errorf("Failover did not restore health either, state backup at %s. Check logs.", u.safety)
+}
+
+func (u *updateCtx) marker(c *Config) string {
+	return filepath.Join(c.DataDir(), "update-maintenance")
+}
+
+func (u *updateCtx) statePath(c *Config) string {
+	return filepath.Join(c.DataBase, "update-state.json")
+}
+
+func (c *Config) recoverEnvFromDotEnv() {
+	if c.NodeName == "" {
+		c.NodeName = c.EnvGet("NODE_NAME")
+	}
+	if c.NodeName == "" {
+		c.NodeName = "ovnode"
+	}
+	if c.Port == "" {
+		c.Port = c.EnvGet("SERVICE_PORT")
+	}
+	if c.Port == "" {
+		c.Port = "2083"
+	}
+	// Identity is never regenerated on update.
+	c.APIKey = c.EnvGet("API_KEY")
+	if c.VPNPorts == "" {
+		c.VPNSport = c.EnvGet("OPENVPN_PORT")
+		if c.VPNSport == "" {
+			c.VPNSport = "1194"
+		}
+	}
+	// Keep the install's TLS mode unless the caller passed one.
+	if os.Getenv("OVN_TLS") == "" {
+		if v := c.EnvGet("TLS_METHOD"); v != "" {
+			c.TLSMethod = v
+		}
+	}
+	if c.TLSKey == "" {
+		c.TLSKey = c.EnvGet("SSL_KEYFILE")
+	}
+	if c.TLSCert == "" {
+		c.TLSCert = c.EnvGet("SSL_CERTFILE")
+	}
+	if !c.IPv6 && c.EnvGet("OVNODE_ENABLE_IPV6") == "1" {
+		c.IPv6 = true
+	}
+	_ = strings.TrimSpace
+}
