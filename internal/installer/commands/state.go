@@ -56,6 +56,7 @@ type Config struct {
 	Pin          string
 	RuntimeUser  string
 	RuntimeGroup string
+	PreState     string
 }
 
 // FromEnv builds a Config from OVN_* variables.

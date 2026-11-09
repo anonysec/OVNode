@@ -67,25 +67,29 @@ func main() {
 }
 
 // runInstallCommand dispatches ovnode install|update|uninstall.
-//
-// Stage 2 keeps bash as the default path: install.sh still performs the
-// install and only these explicit subcommands invoke Go. Exit codes mirror
-// the bash constants (0/1/2/3/4).
 func runInstallCommand(command string) {
-	cfg, action, err := commands.Parse(os.Args[2:])
 	r := commands.DefaultRunner()
+	flush := func() {
+		if commands.IsFake() {
+			commands.HoldFake(r)
+		}
+	}
+	cfg, action, err := commands.Parse(append([]string{command}, os.Args[2:]...))
 	if err != nil {
 		fmt.Fprintln(os.Stderr, "ovnode installer: "+err.Error())
 		usage()
+		flush()
+		if strings.Contains(err.Error(), "Not installed") {
+			os.Exit(commands.ExitNotInstalled)
+		}
 		os.Exit(commands.ExitUsage)
 	}
 	if action == "help" {
 		usage()
+		flush()
 		os.Exit(commands.ExitOK)
 	}
 	if action == "recover-update" {
-		// Stage 2 routes recover-update through update's failover path when
-		// the journal says recovery is needed; see commands.Update.
 		action = "update"
 	}
 	var runErr error
@@ -98,6 +102,7 @@ func runInstallCommand(command string) {
 		runErr = commands.Uninstall(cfg, r)
 	default:
 		fmt.Fprintf(os.Stderr, "ovnode %s: action %q is not implemented in Go yet; use install.sh\n", command, action)
+		flush()
 		os.Exit(commands.ExitUsage)
 	}
 	if runErr != nil {
@@ -112,14 +117,10 @@ func runInstallCommand(command string) {
 		if strings.Contains(runErr.Error(), "Not installed") {
 			code = commands.ExitNotInstalled
 		}
-		if commands.IsFake() {
-			commands.HoldFake(r)
-		}
+		flush()
 		os.Exit(code)
 	}
-	if commands.IsFake() {
-		commands.HoldFake(r)
-	}
+	flush()
 }
 
 func usage() {

@@ -2,8 +2,8 @@
 # shellcheck disable=SC2034,SC1090
 # SPDX-License-Identifier: MIT
 #
-# Installer regression tests: does install.sh install on a fresh server, and
-# does it refuse to touch a box that already runs a node?
+# Installer regression tests: does install-legacy.sh install on a fresh server,
+# and does it refuse to touch a box that already runs a node?
 #
 # The bug these exist for: main called load_helpers before asking whether
 # APP_DIR existed. load_helpers downloads the release binary *into* APP_DIR, so
@@ -24,7 +24,7 @@ set -uo pipefail   # no -e: a failing case is data, not a reason to stop
 
 HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 ROOT_DIR="$(dirname "$HERE")"
-INSTALL_SH="$ROOT_DIR/install.sh"
+INSTALL_SH="$ROOT_DIR/install-legacy.sh"
 FAKE_BIN="$HERE/testdata/fake-ovnode.sh"
 
 case "$(uname -m)" in

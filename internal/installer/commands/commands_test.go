@@ -29,6 +29,7 @@ func flagsToArgs() []string {
 // box without a node) exit 4 without downloading anything.
 func TestParseMatchesBashContract(t *testing.T) {
 	dir := t.TempDir()
+	t.Setenv("OVN_SYSTEMD_DIR", t.TempDir())
 	t.Setenv("OVN_APP_DIR", dir)
 	cfg, action, err := Parse([]string{"--panel-ip", "203.0.113.9", "-y"})
 	if err != nil {

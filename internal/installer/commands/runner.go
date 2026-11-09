@@ -52,6 +52,9 @@ func DefaultRunner() Runner {
 	return execRunner{}
 }
 
+// Fake exposes the recording runner for callers that self-invoke (assets).
+func Fake() Runner { return DefaultRunner() }
+
 type recordingRunner struct {
 	mu   sync.Mutex
 	Run2 []string

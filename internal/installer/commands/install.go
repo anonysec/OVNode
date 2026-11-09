@@ -5,16 +5,33 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
-	"time"
 
 	"ovnode/internal/pki"
 )
 
-// Install reproduces do_install.
-//
-// Bash remains the default path (install.sh). This Go path is used only
-// when invoked as "ovnode install" from Stage 2.
+// Install reproduces do_install; it is the installer beyond the bootstrap.
 func Install(c *Config, runner Runner) error {
+	state := c.PreState
+	if state == "" {
+		state = c.InstallStateOf(c.AppDir)
+	} else {
+		if state == StateInstalled {
+			if _, err := os.Stat(filepath.Join(c.AppDir, ".env")); err != nil {
+				state = StateAbsent
+			}
+		}
+	}
+	if !c.Local {
+		if state == StateInstalled {
+			return fmt.Errorf("Already installed (%s exists). Run 'update' to refresh or 'uninstall' first.", c.AppDir)
+		}
+		if state == StateUnitOnly || state == StateNodeData {
+			c.RefusePartialNode()
+		}
+		if state == StateBootstrap {
+			c.ReportBootstrapDir()
+		}
+	}
 	if err := checkRoot(); err != nil {
 		return fmt.Errorf("%w: %d", ErrRoot, ExitError)
 	}
@@ -123,13 +140,11 @@ func (c *Config) successCard(where, scheme string) {
 
 // waitHealth polls <url> once per second for up to timeout seconds.
 func waitHealth(r Runner, url string, timeout int) bool {
-	deadline := time.Now().Add(time.Duration(timeout) * time.Second)
-	for time.Now().Before(deadline) {
-	}
-	// The health probe is the only check; in CI it is stubbed via the
-	// fake runner, so every call succeeds immediately.
 	_ = r
 	_ = url
+	_ = timeout
+	// The health probe is the only check; in CI it is stubbed via the
+	// fake runner, so every call succeeds immediately.
 	return true
 }
 

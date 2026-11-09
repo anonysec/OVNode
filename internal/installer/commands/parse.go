@@ -153,7 +153,7 @@ func Parse(args []string) (*Config, string, error) {
 			fmt.Fprintln(os.Stderr, deprecatedFlag(arg, "set OVN_QUIET=1 instead"))
 			c.Quiet = true
 		case "install":
-			return nil, "", fmt.Errorf("'install' is the default, just drop the word")
+			action = "install"
 		case "menu":
 			return nil, "", fmt.Errorf("The menu lives in the manager, run: ovnode")
 		case "status", "start", "stop", "restart", "restart-vpn", "logs", "backup", "auto-backup", "tls":
@@ -169,16 +169,18 @@ func Parse(args []string) (*Config, string, error) {
 		}
 		c.Version = strings.TrimPrefix(c.Pin, "v")
 	}
+	// State is read before any download.
+	c.PreState = c.InstallStateOf(c.AppDir)
 	// Entry gates (parse_args): no bootstrap before the checks.
 	switch action {
 	case "uninstall":
-		switch c.InstallStateOf(c.AppDir) {
+		switch c.PreState {
 		case StateInstalled, StateUnitOnly, StateNodeData:
 		default:
 			return nil, "", errNotInstalled(c.AppDir)
 		}
 	case "update", "recover-update", "repair-unit":
-		if c.InstallStateOf(c.AppDir) != StateInstalled {
+		if c.PreState != StateInstalled {
 			return nil, "", errNotInstalled(c.AppDir)
 		}
 	}
