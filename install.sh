@@ -27,8 +27,8 @@ DOCKER=0
 VERSION="${OVN_VERSION:-${OVM_VERSION:-latest}}"
 # Forks: point source downloads (and update pulls) at your own repo.
 REPO="${OVN_REPO:-anonysec/OVNode}"
-# The release ships bare per-platform binaries; no checksum or signature is
-# attached, so the installer installs them as-is.
+# The release ships per-platform binaries plus a SHA256SUMS file;
+# fetch_release_binary verifies the download against it before installing.
 
 
 # Versioned GitHub Release tarballs only: verified checksum, no git needed.
@@ -71,6 +71,7 @@ TLS_METHOD="${OVN_TLS:-selfsigned}"
 TLS_DOMAIN="${OVN_TLS_DOMAIN:-}"
 TLS_KEY="${OVN_TLS_KEY:-}"
 TLS_CERT="${OVN_TLS_CERT:-}"
+PANEL_IP="${OVN_PANEL_IP:-}"
 
 IPV6="${OVN_IPV6:-0}"
 NO_NAT="${OVN_NO_NAT:-0}"
@@ -92,7 +93,8 @@ AUTO_BACKUP_ACTION="" BACKUP_TIME="" BACKUP_KEEP=""
 # Any OVN_* input present (mirrors CLI flags for early validation / no menu).
 ENV_INPUTS=0
 for _ovn_var in OVN_PORT OVN_KEY OVN_VPN_PORTS OVN_PROTO OVN_NAME OVN_TLS \
-                OVN_TLS_DOMAIN OVN_TLS_KEY OVN_TLS_CERT OVN_IPV6 OVN_NO_NAT; do
+                OVN_TLS_DOMAIN OVN_TLS_KEY OVN_TLS_CERT OVN_IPV6 OVN_NO_NAT \
+                OVN_PANEL_IP; do
     if [[ -n "${!_ovn_var:-}" ]]; then ENV_INPUTS=1; fi
 done
 unset _ovn_var
@@ -401,7 +403,9 @@ validate_input() {
     [[ "$NODE_NAME" != *$'\n'* && "$NODE_NAME" != *$'\r'* ]] || die "Invalid node name" "$EX_USAGE"
     [[ -n "$API_KEY" ]] || generate_api_key
     [[ ${#API_KEY} -ge 16 ]] || die "API key must be at least 16 characters (openssl rand -hex 32)" "$EX_USAGE"
+    [[ ${#API_KEY} -ge 32 ]] || render_warn "API key is shorter than 32 characters; use openssl rand -hex 32 for new nodes"
     [[ "$API_KEY" =~ ^[A-Za-z0-9._~+/=-]+$ ]] || die "Invalid API key: use only letters, digits, '.', '_', '~', '+', '/', '=', '-'" "$EX_USAGE"
+    [[ -z "$PANEL_IP" || "$PANEL_IP" =~ ^([0-9]{1,3}\.){3}[0-9]{1,3}(/[0-9]{1,2})?$ || "$PANEL_IP" =~ ^[0-9A-Fa-f:]+(/[0-9]{1,3})?$ ]] || die "Invalid panel IP or CIDR: '$PANEL_IP'" "$EX_USAGE"
     [[ -z "$TLS_KEY" || "$TLS_KEY" =~ ^[A-Za-z0-9/._-]+$ ]] || die "Invalid TLS key path" "$EX_USAGE"
     [[ -z "$TLS_CERT" || "$TLS_CERT" =~ ^[A-Za-z0-9/._-]+$ ]] || die "Invalid TLS cert path" "$EX_USAGE"
     [[ -z "$EXTRA_PORTS" || "$EXTRA_PORTS" =~ ^[0-9,]+$ ]] || die "Invalid extra ports" "$EX_USAGE"
@@ -439,9 +443,9 @@ vpn_ports_label() {
 }
 
 # ── Release fetch with retry ───────────────────────────────────────────
-# The release ships bare per-platform binaries. The installer downloads the
-# product and installs it without any checksum, so a truncated download is the
-# only failure mode worth stopping on.
+# The release ships per-platform binaries plus a SHA256SUMS file. The
+# installer downloads the product and its published checksum and verifies
+# the product against the checksum before installing it.
 detect_arch() {
     case "$(uname -m)" in
         x86_64|amd64)  printf 'amd64' ;;
@@ -461,6 +465,10 @@ release_tag() {
 release_url() {
     printf 'https://github.com/%s/releases/download/%s/%s' \
         "$REPO" "$(release_tag)" "$(release_asset)"
+}
+release_sums_url() {
+    printf 'https://github.com/%s/releases/download/%s/SHA256SUMS' \
+        "$REPO" "$(release_tag)"
 }
 
 
@@ -519,8 +527,7 @@ identity_sha() {
 }
 
 # fetch_release_binary <dir>: download this platform's binary and install it
-# as <dir>/ovnode. The release workflow ships a bare binary, so there is no
-# checksum to verify and no reason for an interrupted download to abort.
+# as <dir>/ovnode, after verifying it against the release SHA256SUMS.
 fetch_release_binary() {
     local dest="$1" work asset retries=0
     asset="$(release_asset)"
@@ -544,7 +551,17 @@ fetch_release_binary() {
         sleep $((2 ** retries))
     done
 
-
+    if ! curl -fsSL --max-time 60 --retry 3 --retry-delay 2 --retry-max-time 120 \
+        -o "$work/SHA256SUMS" "$(release_sums_url)" 2>/dev/null; then
+        rm -rf "$work"
+        trap - EXIT
+        fail "Could not download SHA256SUMS for v$VERSION, refusing to install an unverified release"
+    fi
+    if ! (cd "$work" && grep " $asset\$" SHA256SUMS | sha256sum -c - >/dev/null 2>&1); then
+        rm -rf "$work"
+        trap - EXIT
+        fail "Checksum verification failed for $asset (v$VERSION): SHA256SUMS is missing a line for $asset or the download does not match, refusing to install"
+    fi
 
     mkdir -p "$dest"
     install -m 0755 "$work/$asset" "$dest/ovnode"
@@ -608,8 +625,8 @@ OVNODE_RUNTIME_GROUP=${RUNTIME_GROUP}
 TLS_METHOD=${TLS_METHOD}
 $( if [[ -n "$EXTRA_PORTS" ]]; then echo "OVNODE_EXTRA_PORTS=${EXTRA_PORTS}"; fi )
 $( if [[ "$IPV6" -eq 1 ]]; then echo "OVNODE_ENABLE_IPV6=1"; fi )
-$( if [[ -n "$TLS_KEY" ]]; then echo "SSL_KEYFILE=${TLS_KEY}"; fi )
 $( if [[ -n "$TLS_CERT" ]]; then echo "SSL_CERTFILE=${TLS_CERT}"; fi )
+$( if [[ -n "$PANEL_IP" ]]; then echo "OVNODE_PANEL_ALLOW=${PANEL_IP}"; fi )
 EOF
     chmod 600 "$APP_DIR/.env"
     render_ok ".env written"
@@ -1213,6 +1230,7 @@ node_success_card() {
     fi
     render_ok "Data     $(node_data_dir)"
     render_ok "Logs     $CLI_NAME logs -f"
+    if [[ -n "$PANEL_IP" ]]; then render_ok "Panel    allow ${PANEL_IP}"; else render_warn "No panel allowlist set; any IP with the key can call this node"; fi
     cert_file="$(env_get "$APP_DIR/.env" SSL_CERTFILE 2>/dev/null || true)"
     [[ -n "$cert_file" && -f "$cert_file" ]] && {
         render_blank
@@ -1885,6 +1903,8 @@ show_help() {
                            path runs. Fetches nothing.       [OVN_LOCAL=1]
     --src DIR             with --local: the checkout to install from
     --dest DIR            with --local: the install destination
+    --panel-ip IP         Restrict /sync to this panel IP or CIDR;
+                          unset = any IP with the key           [OVN_PANEL_IP]
 
   -h, --help              This help  (no env equivalent)
 
@@ -1957,6 +1977,7 @@ parse_args() {
                            if [[ $# -ge 1 && "$1" != -* ]]; then SRC_DIR="$1"; shift; fi ;;
             --src)        [[ $# -ge 2 ]] || fail "--src needs a value" "$EX_USAGE"; SRC_DIR="$2"; shift 2 ;;
             --dest)       [[ $# -ge 2 ]] || fail "--dest needs a directory" "$EX_USAGE"; DEST_DIR="$2"; shift 2 ;;
+            --panel-ip)   eval "$need2"; PANEL_IP="$2"; CLI_FLAGS=1; shift 2 ;;
             --ipv6)       deprecated "--ipv6" "set OVN_IPV6=1 instead"; IPV6=1; CLI_FLAGS=1; shift ;;
             --no-nat)     deprecated "--no-nat" "set OVN_NO_NAT=1 instead"; NO_NAT=1; CLI_FLAGS=1; shift ;;
             --yes|-y)     YES=1; CLI_FLAGS=1; shift ;;

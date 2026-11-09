@@ -36,8 +36,8 @@ func TestRunManualTLSDoesNotCreateVPNTree(t *testing.T) {
 	dir := t.TempDir()
 	root := filepath.Join(dir, "unmanaged-openvpn")
 	t.Setenv("OVNODE_OPENVPN_ROOT", root)
+	t.Setenv("API_KEY", "0123456789abcdef0123456789abcdef") // 32 chars: no short-key gate
 	t.Setenv("SSL_CERTFILE", filepath.Join(dir, "missing-cert"))
-	t.Setenv("SSL_KEYFILE", filepath.Join(dir, "missing-key"))
 	if err := Run(); err == nil || !strings.Contains(err.Error(), "TLS cert") {
 		t.Fatalf("manual TLS mode must reach its own TLS check: %v", err)
 	}

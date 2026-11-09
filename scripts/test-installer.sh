@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Copyright (c) 2026 anonysec
+# shellcheck disable=SC2034,SC1090
 # SPDX-License-Identifier: MIT
 #
 # Installer regression tests: does install.sh install on a fresh server, and
@@ -64,13 +64,14 @@ expect_not_in() {
 }
 
 # ── Fixtures ───────────────────────────────────────────────────────────
-# The published release: a bare binary only (no checksum or signature), which is
-# all fetch_release_binary now installs.
+# The published release: a binary plus its SHA256SUMS line, which is all
+# fetch_release_binary now installs and verifies.
 RELEASE_DIR="$WORK/release"
 publish_release() {
     mkdir -p "$RELEASE_DIR"
     cp "$FAKE_BIN" "$RELEASE_DIR/$ASSET"
     chmod 0755 "$RELEASE_DIR/$ASSET"
+    (cd "$RELEASE_DIR" && sha256sum "$ASSET" > SHA256SUMS)
 }
 
 # The curl shim. A release URL becomes the local fixture; anything else is a
@@ -509,7 +510,113 @@ runtime_case rotate RUNTIME_ACTION=rotate "RUNTIME_ROTATE_CONF=$rotate_conf" \
     OVNODE_RUNTIME_GROUP=chosen-group "OVNODE_LOG_DIR=$WORK/custom-logs" "OVNODE_LOG_FILE=$hook_log"
 expect_status 0 "$RC" "isolated log rotation generation succeeds"
 expect_in "$rotate_conf" "$hook_log" "rotation uses the effective hook log path"
+
+# ── Tampered download: the binary must not land over an existing node ──
+# The checksum line still names the good hash; the fixture binary is altered
+# after publish_release, so verification must fail before any install. The
+# fetch driver calls fetch_release_binary straight into an existing install
+# dir, so "untouched" is observable on the file itself.
+section "tampered release binary aborts without touching the existing binary"
+FETCH_DRIVER="$WORK/fetch-driver.sh"
+cat > "$FETCH_DRIVER" << 'FETCHDRIVER'
+#!/usr/bin/env bash
+. "$INSTALL_SH"
+fetch_release_binary "$1"
+FETCHDRIVER
+chmod 0755 "$FETCH_DRIVER"
+fetch_case() {
+    local name="$1" dest="$2"
+    : > "$CURL_LOG"
+    env "PATH=$SHIM_DIR:$PATH" "INSTALL_SH=$INSTALL_SH" "OVN_APP_DIR=$dest" \
+        "OVN_SYSTEMD_DIR=$WORK/units" "OVN_VERSION=2.0.0" \
+        bash "$FETCH_DRIVER" "$dest" < /dev/null > "$WORK/$name.log" 2>&1
+    RC=$?
+}
+TAMPER_APP="$WORK/tamper/app"
+rm -rf "$WORK/tamper"; mkdir -p "$TAMPER_APP"
+cp "$RELEASE_DIR/$ASSET" "$TAMPER_APP/ovnode"; chmod 0755 "$TAMPER_APP/ovnode"
+printf 'NODE_NAME=tamper-1\nAPI_KEY=keep-me\n' > "$TAMPER_APP/.env"
+tamper_sum="$(sha256sum "$TAMPER_APP/ovnode" | awk '{print $1}')"
+printf 'tampered\n' >> "$RELEASE_DIR/$ASSET"
+fetch_case tamper-fetch "$TAMPER_APP"
+expect_status 1 "$RC" "a tampered release aborts"
+expect_in "$WORK/tamper-fetch.log" "Checksum verification failed" "it names the checksum failure"
+expect_eq "$tamper_sum" "$(sha256sum "$TAMPER_APP/ovnode" | awk '{print $1}')" "the existing binary is untouched"
+publish_release
+
+# ── Missing SHA256SUMS: refuse to install an unverified release ────────
+section "missing SHA256SUMS aborts"
+MISSING_APP="$WORK/missingsums/app"
+rm -rf "$WORK/missingsums"; mkdir -p "$MISSING_APP"
+rm -f "$RELEASE_DIR/SHA256SUMS"
+fetch_case missingsums-fetch "$MISSING_APP"
+expect_status 1 "$RC" "a missing SHA256SUMS aborts"
+expect_in "$WORK/missingsums-fetch.log" "Could not download SHA256SUMS" "it names the missing sums file"
+if [[ -f "$MISSING_APP/ovnode" ]]; then bad "an unverified binary was installed"; else ok "no unverified binary was installed"; fi
+publish_release
 expect_in "$rotate_conf" 'create 0660 root chosen-group' "rotation preserves configured runtime-group append access"
+
+# ── Panel allowlist (--panel-ip / OVN_PANEL_IP) ───────────────────────
+# The flag and the env var must reach .env; without them the install
+# summary says so in one line. The driver stubs do_install, so write_env
+# is invoked directly with the parsed state.
+section "panel allowlist"
+PANEL_DRIVER="$WORK/panel-driver.sh"
+cat > "$PANEL_DRIVER" << 'PANELDRIVER'
+#!/usr/bin/env bash
+. "$INSTALL_SH"
+load_helpers() { . "$ROOT_DIR/lib.sh"; }
+. "$ROOT_DIR/lib.sh"
+do_install() { printf 'MARK-reached-do_install\n' >&2; }
+parse_args "$@"
+NODE_NAME="${NODE_NAME:-ovnode}"; PORT=2083; VPN_PORTS=1194; TLS_METHOD=selfsigned
+RUNTIME_USER=nobody; RUNTIME_GROUP=nogroup
+API_KEY="${API_KEY:-0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef}"
+validate_input
+mkdir -p "$APP_DIR"
+write_env
+node_success_card https 127.0.0.1
+PANELDRIVER
+chmod 0755 "$PANEL_DRIVER"
+panel_case() {
+    local name="$1" appdir="$2"; shift 2
+    : > "$CURL_LOG"
+    env "PATH=$SHIM_DIR:$PATH" "INSTALL_SH=$INSTALL_SH" "ROOT_DIR=$ROOT_DIR" \
+        "OVN_APP_DIR=$appdir" "OVN_BIN_DIR=$WORK/bin" "OVN_SYSTEMD_DIR=$WORK/units" \
+        "OVN_VERSION=2.0.0" bash "$PANEL_DRIVER" "$@" < /dev/null > "$WORK/$name.log" 2>&1
+    RC=$?
+}
+PANEL_APP="$WORK/panel/app"
+rm -rf "$WORK/panel"; mkdir -p "$PANEL_APP"
+panel_case panel-flag "$PANEL_APP" --panel-ip 203.0.113.9 -y
+expect_status 0 "$RC" "install with --panel-ip succeeds"
+expect_in "$PANEL_APP/.env" 'OVNODE_PANEL_ALLOW=203.0.113.9' "--panel-ip writes OVNODE_PANEL_ALLOW to .env"
+expect_in "$WORK/panel-flag.log" 'Panel    allow 203.0.113.9' "the summary names the allowlisted IP"
+expect_not_in "$WORK/panel-flag.log" 'No panel allowlist set' "no open-allowlist line when restricted"
+PANEL_ENV_APP="$WORK/panelenv/app"
+rm -rf "$WORK/panelenv"; mkdir -p "$PANEL_ENV_APP"
+: > "$CURL_LOG"
+env "PATH=$SHIM_DIR:$PATH" "INSTALL_SH=$INSTALL_SH" "ROOT_DIR=$ROOT_DIR" \
+    "OVN_APP_DIR=$PANEL_ENV_APP" "OVN_BIN_DIR=$WORK/bin" "OVN_SYSTEMD_DIR=$WORK/units" \
+    "OVN_VERSION=2.0.0" "OVN_PANEL_IP=203.0.113.9" bash "$PANEL_DRIVER" -y < /dev/null > "$WORK/panelenv.log" 2>&1
+RC=$?
+expect_status 0 "$RC" "install with OVN_PANEL_IP succeeds"
+expect_in "$PANEL_ENV_APP/.env" 'OVNODE_PANEL_ALLOW=203.0.113.9' "OVN_PANEL_IP writes OVNODE_PANEL_ALLOW to .env"
+PANEL_NONE_APP="$WORK/panelnone/app"
+rm -rf "$WORK/panelnone"; mkdir -p "$PANEL_NONE_APP"
+panel_case panel-none "$PANEL_NONE_APP" -y
+expect_status 0 "$RC" "install with no allowlist succeeds"
+expect_not_in "$PANEL_NONE_APP/.env" 'OVNODE_PANEL_ALLOW' "no allowlist line when unset"
+expect_in "$WORK/panel-none.log" 'No panel allowlist set; any IP with the key can call this node' "the summary says any IP with the key can call"
+PANEL_SHORT_APP="$WORK/panelshort/app"
+rm -rf "$WORK/panelshort"; mkdir -p "$PANEL_SHORT_APP"
+: > "$CURL_LOG"
+env "PATH=$SHIM_DIR:$PATH" "INSTALL_SH=$INSTALL_SH" "ROOT_DIR=$ROOT_DIR" \
+    "OVN_APP_DIR=$PANEL_SHORT_APP" "OVN_BIN_DIR=$WORK/bin" "OVN_SYSTEMD_DIR=$WORK/units" \
+    "OVN_VERSION=2.0.0" "OVN_KEY=sixteen-char-key" bash "$PANEL_DRIVER" -y < /dev/null > "$WORK/panelshort.log" 2>&1
+RC=$?
+expect_status 0 "$RC" "a 16-char key is still accepted"
+expect_in "$WORK/panelshort.log" 'API key is shorter than 32 characters' "a key under 32 chars warns at start"
 
 # ── Summary ────────────────────────────────────────────────────────────
 printf '\n%s passed, %s failed\n' "$PASS" "$FAIL"

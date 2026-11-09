@@ -6,7 +6,10 @@ package httpapi
 import (
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"testing"
+
+	"ovnode/internal/logging"
 )
 
 func TestFailedAuthLockoutBlocksCorrectKey(t *testing.T) {
@@ -38,5 +41,68 @@ func TestFailedAuthLockoutBlocksCorrectKey(t *testing.T) {
 	s.routes().ServeHTTP(rec2, req2)
 	if rec2.Code != http.StatusOK {
 		t.Fatalf("different IP correct key status = %d, want 200", rec2.Code)
+	}
+}
+
+func TestPanelAllowBlocksOtherIPs(t *testing.T) {
+	s := testServer(t)
+	s.panelAllow, s.allowEmpty = parsePanelAllow("203.0.113.0/24")
+	if s.allowEmpty {
+		t.Fatal("allowlist parsed as empty")
+	}
+	for _, tc := range []struct {
+		remote string
+		want   bool
+	}{
+		{"203.0.113.9:1234", true},
+		{"198.51.100.7:1234", false},
+	} {
+		req := httptest.NewRequest(http.MethodGet, "/sync/status", nil)
+		req.RemoteAddr = tc.remote
+		req.Header.Set("key", testKey)
+		rec := httptest.NewRecorder()
+		s.panelAllowMiddleware(s.routes()).ServeHTTP(rec, req)
+		if rec.Code != http.StatusOK {
+			t.Fatalf("remote %s status = %d, want 200 (envelope carries the verdict)", tc.remote, rec.Code)
+		}
+		if got := envelopeOf(t, rec)["success"] == true; got != tc.want {
+			t.Fatalf("remote %s success = %v, want %v", tc.remote, got, tc.want)
+		}
+	}
+}
+
+func TestPanelAllowEmptyAllowsAnyIP(t *testing.T) {
+	s := testServer(t)
+	s.panelAllow, s.allowEmpty = parsePanelAllow("")
+	if !s.allowEmpty {
+		t.Fatal("empty spec must mean allow-all")
+	}
+	req := httptest.NewRequest(http.MethodGet, "/sync/status", nil)
+	req.RemoteAddr = "198.51.100.7:1234"
+	req.Header.Set("key", testKey)
+	rec := httptest.NewRecorder()
+	s.panelAllowMiddleware(s.routes()).ServeHTTP(rec, req)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d, want 200", rec.Code)
+	}
+}
+
+func TestShortAPIKeyWarnsAtStart(t *testing.T) {
+	before := len(logging.Recent("WARNING", logging.RingSize))
+	dir := t.TempDir()
+	t.Setenv("OVNODE_OPENVPN_ROOT", dir)
+	t.Setenv("API_KEY", "sixteen-char-key") // 16 chars: accepted, below 32
+	if err := Run(); err == nil {
+		t.Fatal("Run with missing TLS must fail before serving")
+	}
+	after := logging.Recent("WARNING", logging.RingSize)
+	found := false
+	for _, r := range after[before:] {
+		if strings.Contains(r.Message, "shorter than 32") {
+			found = true
+		}
+	}
+	if !found {
+		t.Fatalf("no short-key warning in %v", after[before:])
 	}
 }
