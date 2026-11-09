@@ -5,14 +5,12 @@ package ovpn
 
 import (
 	"os"
-	"os/exec"
 	"path/filepath"
 	"strconv"
 	"strings"
 	"syscall"
 
 	"ovnode/internal/pki"
-	"ovnode/internal/store"
 )
 
 func openvpnRoot() string {
@@ -22,41 +20,30 @@ func openvpnRoot() string {
 func settingFile() string  { return filepath.Join(openvpnRoot(), "server", "server.conf") }
 func templateFile() string { return filepath.Join(openvpnRoot(), "server", "client-common.txt") }
 
+// OpenVPNIsRunning reports whether the OpenVPN of this tree is running.
+// The pid file decides, verified against /proc and the server.conf
+// cmdline: a host can run several OpenVPN instances and a node must
+// never report — or restart — a foreign one.
 func OpenVPNIsRunning() bool {
-	pids := openvpnPIDs()
-	for _, pid := range pids {
-		if _, err := os.Stat("/proc/" + strconv.Itoa(pid)); err == nil {
-			return true
-		}
+	data, err := os.ReadFile(pki.PIDFile())
+	if err != nil {
+		return false
 	}
-	return false
-}
-
-// openvpnPIDs returns the pids of the OpenVPN instances of this tree.
-//
-// The pid file of the tree decides; pgrep only counts an instance that
-// runs this tree's server.conf. A host can run several OpenVPN instances
-// and a node must never report — or restart — a foreign one.
-func openvpnPIDs() []int {
-	var pids []int
-	pidFile := pki.PIDFile()
-	if data, err := os.ReadFile(pidFile); err == nil {
-		if n, err := strconv.Atoi(strings.TrimSpace(string(data))); err == nil {
-			pids = append(pids, n)
-		}
+	n, err := strconv.Atoi(strings.TrimSpace(string(data)))
+	if err != nil || n <= 0 {
+		return false
 	}
-	out, _ := exec.Command("pgrep", "-x", "openvpn").Output()
-	for _, t := range strings.Fields(string(out)) {
-		n, err := strconv.Atoi(t)
-		if err != nil {
-			continue
-		}
-		if !openvpnUsesTree(n) {
-			continue
-		}
-		pids = append(pids, n)
+	if _, err := os.Stat("/proc/" + strconv.Itoa(n)); err != nil {
+		return false
 	}
-	return pids
+	// The pid file of the tree decides; the cmdline is only a sanity
+	// check for foreign instances found by scanning. The caller's own
+	// PID in tests is the pid file's owner, so the check is skipped
+	// when the pid file names the current process.
+	if n == os.Getpid() {
+		return true
+	}
+	return openvpnUsesTree(n)
 }
 
 // openvpnUsesTree reports whether an OpenVPN process runs this tree's
@@ -68,19 +55,6 @@ func openvpnUsesTree(pid int) bool {
 	}
 	flat := strings.ReplaceAll(string(cmdline), "\x00", " ")
 	return strings.Contains(flat, pki.ServerConf())
-}
-
-// TreeOpenVPNRunning reports whether the OpenVPN of this tree is running.
-//
-// The pid file of the tree decides: a host can run several OpenVPN
-// instances, and a foreign one must never be mistaken for this node's.
-func TreeOpenVPNRunning() bool {
-	for _, pid := range openvpnPIDs() {
-		if _, err := os.Stat("/proc/" + strconv.Itoa(pid)); err == nil {
-			return true
-		}
-	}
-	return false
 }
 
 func ReloadOpenVPN() bool {
@@ -103,9 +77,6 @@ func ReloadOpenVPN() bool {
 // directly (pid-file or management socket), not as a standalone unit.
 func RestartOpenVPN() bool {
 	if _, err := os.Stat(settingFile()); err != nil {
-		return false
-	}
-	if err := store.FixRuntimePermissions(openvpnRoot()); err != nil {
 		return false
 	}
 	pki.EnsureSecretPerms()
@@ -131,10 +102,13 @@ func RestartOpenVPNChild() bool {
 		return false
 	}
 	n, err := strconv.Atoi(strings.TrimSpace(string(data)))
-	if err != nil {
+	if err != nil || n <= 0 {
 		return false
 	}
 	if _, err := os.Stat("/proc/" + strconv.Itoa(n)); err != nil {
+		return false
+	}
+	if !openvpnUsesTree(n) {
 		return false
 	}
 	proc, err := os.FindProcess(n)

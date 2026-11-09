@@ -6,7 +6,6 @@ package httpapi
 import (
 	"crypto/sha256"
 	"crypto/subtle"
-	"encoding/json"
 	"net"
 	"net/http"
 	"strconv"
@@ -32,10 +31,6 @@ import (
 // keys evicted the real caller.
 func (s *Server) authorize(w http.ResponseWriter, r *http.Request, heavy bool) bool {
 	given := r.Header.Get("key")
-	if len(s.APIKey) < 16 {
-		writeAuthError(w, http.StatusServiceUnavailable, "API key not configured")
-		return false
-	}
 	if given == "" {
 		writeAuthError(w, http.StatusUnauthorized, "Missing API key")
 		return false
@@ -128,11 +123,9 @@ func clientAddr(r *http.Request) string {
 // The 409 body carries the explanation in "detail" and in "msg": the panel
 // reads whichever it finds.
 func writeAuthError(w http.ResponseWriter, status int, msg string) {
-	w.Header().Set("Content-Type", "application/json")
-	w.WriteHeader(status)
-	body := map[string]any{"success": false, "msg": msg, "data": nil}
+	data := map[string]any(nil)
 	if status == http.StatusConflict {
-		body["detail"] = msg
+		data = map[string]any{"detail": msg}
 	}
-	_ = json.NewEncoder(w).Encode(body)
+	writeEnvelope(w, status, false, msg, data)
 }

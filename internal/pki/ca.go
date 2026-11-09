@@ -389,8 +389,9 @@ func readCRL() (*x509.RevocationList, error) {
 	return x509.ParseRevocationList(block.Bytes)
 }
 
-// primaryIP returns the host's outbound IPv4 address for certificate SANs.
-func primaryIP() string {
+// PrimaryIP returns the host's outbound IPv4 address for certificate SANs.
+// The httpapi agent reuses this for its one-time setup print.
+func PrimaryIP() string {
 	conn, err := net.DialTimeout("udp", "8.8.8.8:80", 2*time.Second)
 	if err == nil {
 		defer conn.Close()
@@ -432,7 +433,7 @@ func RenewServerCertificateNative() error {
 	// the certificate against the address (rather than only the CN) accept
 	// the renewed server certificate.
 	sanIPs := []net.IP{}
-	if ip := net.ParseIP(primaryIP()); ip != nil {
+	if ip := net.ParseIP(PrimaryIP()); ip != nil {
 		sanIPs = append(sanIPs, ip)
 	}
 	tmpl := &x509.Certificate{

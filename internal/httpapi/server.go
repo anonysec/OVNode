@@ -38,6 +38,11 @@ import (
 	"ovnode/internal/version"
 )
 
+const (
+	writeTimeout     = 30 * time.Second
+	longWriteTimeout = 150 * time.Second
+)
+
 // Server is the node's HTTP agent.
 type Server struct {
 	Addr     string
@@ -129,7 +134,9 @@ func (s *Server) guard(h http.HandlerFunc, heavy bool) http.HandlerFunc {
 // longWrite sets a 150s write deadline for slow heavy routes.
 func longWrite(h http.HandlerFunc) http.HandlerFunc {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		_ = http.NewResponseController(w).SetWriteDeadline(time.Now().Add(150 * time.Second))
+		if err := http.NewResponseController(w).SetWriteDeadline(time.Now().Add(longWriteTimeout)); err != nil {
+			logging.Warn("set write deadline failed for %s %s: %v", r.Method, r.URL.Path, err)
+		}
 		h(w, r)
 	})
 }
@@ -253,6 +260,8 @@ func (g *gzipWriter) Flush() {
 	}
 }
 
+func (g *gzipWriter) Unwrap() http.ResponseWriter { return g.ResponseWriter }
+
 // ListenAndServe serves the /sync API over TLS.
 //
 // TLS is not optional: the panel pins the node CA, so a missing or
@@ -267,7 +276,7 @@ func (s *Server) ListenAndServe(ctx context.Context) error {
 		Addr:              s.Addr,
 		ReadHeaderTimeout: 10 * time.Second,
 		ReadTimeout:       30 * time.Second,
-		WriteTimeout:      30 * time.Second,
+		WriteTimeout:      writeTimeout,
 		IdleTimeout:       60 * time.Second,
 		MaxHeaderBytes:    1 << 20,
 		TLSConfig: &tls.Config{

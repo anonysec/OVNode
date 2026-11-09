@@ -23,6 +23,8 @@ jobs:
           sudo apt-get install -y -qq openvpn easy-rsa iptables iproute2 logrotate shellcheck
       - name: Shell syntax
         run: bash -n install.sh install-legacy.sh ovnode.sh lib.sh doctor.sh scripts/compose/*.sh
+      - name: Go build
+        run: go build ./...
       - name: Go tests
         run: go test -race ./...
 

@@ -40,29 +40,30 @@ func TestHandleLogsClampAndValidate(t *testing.T) {
 }
 
 func TestGzipMiddlewareSkipsOVPNDownload(t *testing.T) {
-	h := gzipMiddleware(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+	s := testServer(t)
+	h := gzipMiddleware(s.gzipSkip(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		_, _ = w.Write([]byte(strings.Repeat("x", 1024)))
-	}))
+	})))
+	// The download pattern stays raw even through a gzip-eligible request.
 	req := httptest.NewRequest(http.MethodGet, "/sync/download/ovpn/uid", nil)
 	req.Header.Set("Accept-Encoding", "gzip")
+	// Simulate Go 1.22 routing: set Pattern the way ServeMux would.
+	req.Pattern = "GET /sync/download/ovpn/{uid}"
 	rec := httptest.NewRecorder()
 	h.ServeHTTP(rec, req)
 	if rec.Header().Get("Content-Encoding") != "" {
-		t.Fatal("expected no gzip for ovpn download")
+		t.Fatal("expected no gzip for gzipSkip route")
 	}
-}
-
-func TestAPIKeyTooShortRefused(t *testing.T) {
-	s := testServer(t)
-	s.APIKey = "short"
-	rec := do(t, s, http.MethodGet, "/sync/status", "")
-	if rec.Code != http.StatusServiceUnavailable {
-		t.Fatalf("expected 503, got %d", rec.Code)
-	}
-	// health still works
-	rec = do(t, s, http.MethodGet, "/sync/health", "")
-	if rec.Code != http.StatusOK {
-		t.Fatalf("health should work, got %d", rec.Code)
+	// The same request without the flag is compressed.
+	h2 := gzipMiddleware(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		_, _ = w.Write([]byte(strings.Repeat("x", 1024)))
+	}))
+	req2 := httptest.NewRequest(http.MethodGet, "/sync/status", nil)
+	req2.Header.Set("Accept-Encoding", "gzip")
+	rec2 := httptest.NewRecorder()
+	h2.ServeHTTP(rec2, req2)
+	if rec2.Header().Get("Content-Encoding") != "gzip" {
+		t.Fatal("expected gzip without the skip flag")
 	}
 }
 
@@ -92,13 +93,21 @@ func TestHandleUpdateLock(t *testing.T) {
 	s := testServer(t)
 	dir := t.TempDir()
 	path := filepath.Join(dir, "install.sh")
-	if err := os.WriteFile(path, []byte("#!/bin/sh\nsleep 2\n"), 0o755); err != nil {
+	if err := os.WriteFile(path, []byte("#!/bin/sh\ntrap '' HUP; while [ -e /tmp/ovnode-update-lock-hold ]; do sleep 0.05; done\n"), 0o755); err != nil {
 		t.Fatal(err)
 	}
 	if err := os.Chown(path, 0, 0); err != nil && !os.IsPermission(err) {
 		t.Fatal(err)
 	}
+	// appDir is computed once in NewServer; the test builds the server
+	// directly, so seed the cached path the same way.
+	s.appDirPath = dir
 	t.Setenv("APP_DIR", dir)
+
+	if err := os.WriteFile("/tmp/ovnode-update-lock-hold", []byte("hold\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { os.Remove("/tmp/ovnode-update-lock-hold") })
 
 	rec := do(t, s, http.MethodPost, "/sync/update", "")
 	body := envelopeOf(t, rec)

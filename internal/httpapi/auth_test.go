@@ -106,3 +106,52 @@ func TestShortAPIKeyWarnsAtStart(t *testing.T) {
 		t.Fatalf("no short-key warning in %v", after[before:])
 	}
 }
+
+func TestAuthorizeChargesOncePerRequest(t *testing.T) {
+	s := testServer(t)
+	ip := "203.0.113.50:1234"
+	for i := 0; i < 120; i++ {
+		req := httptest.NewRequest(http.MethodGet, "/sync/status", nil)
+		req.RemoteAddr = ip
+		req.Header.Set("key", testKey)
+		if !s.authorize(httptest.NewRecorder(), req, false) {
+			t.Fatalf("call %d blocked early", i+1)
+		}
+	}
+	req := httptest.NewRequest(http.MethodGet, "/sync/status", nil)
+	req.RemoteAddr = ip
+	req.Header.Set("key", testKey)
+	rec := httptest.NewRecorder()
+	if s.authorize(rec, req, false) {
+		t.Fatal("121st call should be blocked (exactly 120 charges in 120 calls)")
+	}
+	if rec.Code != http.StatusTooManyRequests {
+		t.Fatalf("121st status = %d, want 429", rec.Code)
+	}
+}
+
+func TestHeavyBucketExhaustionReturns429(t *testing.T) {
+	s := testServer(t)
+	ip := "203.0.113.60:1234"
+	for i := 0; i < 60; i++ {
+		req := httptest.NewRequest(http.MethodPost, "/sync/user", nil)
+		req.RemoteAddr = ip
+		req.Header.Set("key", testKey)
+		if !s.authorize(httptest.NewRecorder(), req, true) {
+			t.Fatalf("heavy call %d blocked early", i+1)
+		}
+	}
+	req := httptest.NewRequest(http.MethodPost, "/sync/user", nil)
+	req.RemoteAddr = ip
+	req.Header.Set("key", testKey)
+	rec := httptest.NewRecorder()
+	if s.authorize(rec, req, true) {
+		t.Fatal("61st heavy call should be blocked")
+	}
+	if rec.Code != http.StatusTooManyRequests {
+		t.Fatalf("61st heavy status = %d, want 429", rec.Code)
+	}
+	if !strings.Contains(rec.Body.String(), "certificate") {
+		t.Fatalf("429 body = %q, want certificate slowdown text", rec.Body.String())
+	}
+}

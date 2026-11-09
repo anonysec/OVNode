@@ -24,8 +24,6 @@ func UsersUsage() (map[string]any, error) {
 	if err != nil {
 		return nil, err
 	}
-	sessions := snap.Sessions
-
 	names := store.NameMap(pki.UsersDir())
 	display := func(cn string) string {
 		if name := names[cn]; name != "" {
@@ -33,7 +31,31 @@ func UsersUsage() (map[string]any, error) {
 		}
 		return cn
 	}
+	live := liveTotals(snap.Sessions, display, names)
+	present, err := reconcileLive(snap, names)
+	if err != nil {
+		return nil, err
+	}
+	totals, totalsEpochs, err := readTotals(display, present)
+	if err != nil {
+		return nil, err
+	}
+	return map[string]any{
+		"users":         live.users,
+		"sessions":      live.sessions,
+		"totals":        totals,
+		"totals_epochs": totalsEpochs,
+	}, nil
+}
 
+type liveView struct {
+	users    map[string]uint64
+	sessions map[string]map[string]uint64
+}
+
+// liveTotals builds the per-user live snapshot views (users, sessions) the
+// panel sees, keyed by display name where applicable.
+func liveTotals(sessions []Session, display func(string) string, names map[string]string) liveView {
 	users := map[string]uint64{}
 	perSession := map[string]map[string]uint64{}
 	for _, s := range sessions {
@@ -46,9 +68,26 @@ func UsersUsage() (map[string]any, error) {
 			perSession[s.CommonName][s.RealAddress] = total
 		}
 	}
+	sessionRows := map[string]map[string]uint64{}
+	for cn, per := range perSession {
+		sessionRows[cn] = per
+		if name := names[cn]; name != "" && name != cn {
+			sessionRows[name] = per
+		}
+	}
+	liveByName := map[string]uint64{}
+	for cn, total := range users {
+		liveByName[display(cn)] += total
+	}
+	return liveView{users: liveByName, sessions: sessionRows}
+}
 
-	// Group live rows by CN; identity check and recording run under the
-	// per-CN session lock (session lock before usage lock).
+// reconcileLive records each live session's observed bytes. The per-CN
+// lock is taken only when a write is needed (bytes changed): an unchanged
+// poll does not wait or write again. The returned map is the set of live
+// accounting IDs per CN, extended with marker IDs for receipt retention.
+func reconcileLive(snap StatusSnapshot, names map[string]string) (map[string]map[string]bool, error) {
+	sessions := snap.Sessions
 	byCNSession := map[string][]Session{}
 	var cns []string
 	for _, s := range sessions {
@@ -58,67 +97,91 @@ func UsersUsage() (map[string]any, error) {
 		byCNSession[s.CommonName] = append(byCNSession[s.CommonName], s)
 	}
 	sort.Strings(cns)
-	present := map[string]map[string]bool{} // cn -> live accounting IDs
+	allMarkers := readMarkers()
+	byCN := map[string][]marker{}
+	for _, m := range allMarkers {
+		byCN[m.commonName] = append(byCN[m.commonName], m)
+	}
+	present := map[string]map[string]bool{}
 	for _, cn := range cns {
 		rows := byCNSession[cn]
 		present[cn] = map[string]bool{}
-		err := store.Lock(filepath.Join(pki.SessionsDir(), ".lock."+cn), 0o660, func() error {
-			markers := readMarkers()
-			var cands []marker
-			for _, m := range markers {
-				if m.commonName == cn {
-					cands = append(cands, m)
-				}
+		cands := byCN[cn]
+		_ = cands
+		type rec struct {
+			sessionID string
+			bytes     uint64
+		}
+		var recs []rec
+		for _, s := range rows {
+			chosen := chooseMarker(s, cands, snap.UpdatedAt)
+			var sessionID string
+			switch {
+			case chosen != nil:
+				sessionID = chosen.sessionID
+			case len(cands) == 0:
+				sessionID = derivedSessionID(s)
+			default:
+				continue
 			}
-			for _, s := range rows {
-				chosen := chooseMarker(s, cands, snap.UpdatedAt)
-				var sessionID string
-				switch {
-				case chosen != nil:
-					sessionID = chosen.sessionID
-				case len(cands) == 0:
-					// Markerless live legacy session: derive a stable ID
-					// from the complete observed status identity so
-					// repeated polls keep one offset and never rebase.
-					sessionID = derivedSessionID(s)
-				default:
-					// Markers exist but none match this row (e.g. a stale
-					// snapshot): never fall back to another candidate.
-					continue
-				}
-				bytes := s.BytesReceived + s.BytesSent
-				if _, err := store.RecordSessionUsage(pki.UsageDir(), cn, sessionID, bytes, false); err != nil {
+			bytes := s.BytesReceived + s.BytesSent
+			if needsWrite(cn, sessionID, bytes) {
+				recs = append(recs, rec{sessionID, bytes})
+			}
+			present[cn][sessionID] = true
+		}
+		if len(recs) == 0 {
+			continue
+		}
+		if err := store.Lock(filepath.Join(pki.SessionsDir(), ".lock."+cn), 0o660, func() error {
+			for _, r := range recs {
+				if _, err := store.RecordSessionUsage(pki.UsageDir(), cn, r.sessionID, r.bytes, false); err != nil {
 					return err
 				}
-				present[cn][sessionID] = true
 			}
 			return nil
-		})
-		if err != nil {
+		}); err != nil {
 			return nil, err
 		}
 	}
-
-	sessionRows := map[string]map[string]uint64{}
-	for cn, per := range perSession {
-		sessionRows[cn] = per
-		if name := names[cn]; name != "" && name != cn {
-			sessionRows[name] = per
+	for _, m := range allMarkers {
+		if present[m.commonName] == nil {
+			present[m.commonName] = map[string]bool{}
 		}
+		present[m.commonName][m.sessionID] = true
+		present[m.commonName][m.key] = true
 	}
+	return present, nil
+}
 
-	liveByName := map[string]uint64{}
-	for cn, total := range users {
-		liveByName[display(cn)] += total
+// needsWrite reports whether this poll should record new bytes: the stored
+// session bytes differ, or the session does not exist yet. An unchanged
+// session is answered by the persisted counter without opening a temp
+// file or taking the per-CN lock downstream.
+func needsWrite(cn, sessionID string, bytes uint64) bool {
+	st, err := store.ReadUsageState(pki.UsageDir(), cn)
+	if err != nil || st.Sessions == nil {
+		return true
 	}
+	sess, ok := st.Sessions[sessionID]
+	if !ok {
+		return true
+	}
+	if sess.Closed {
+		return true
+	}
+	return bytes > sess.Bytes
+}
 
-	// Totals from the persisted counter. Any unreadable counter fails the
-	// sample: a corrupt file must not report as partial success or zero.
+// readTotals loads every persisted counter and builds the totals and
+// totals_epochs maps with the same contributor set. Unreadable counters
+// fail the sample.
+func readTotals(display func(string) string, present map[string]map[string]bool) (map[string]uint64, map[string]string, error) {
 	totals := map[string]uint64{}
 	epochsByCN := map[string]string{}
 	entries, err := os.ReadDir(pki.UsageDir())
 	if err != nil {
-		return nil, err
+		return nil, nil, err
 	}
 	cnSet := map[string]bool{}
 	for _, e := range entries {
@@ -130,18 +193,6 @@ func UsersUsage() (map[string]any, error) {
 		}
 		cnSet[e.Name()] = true
 	}
-	// Only persisted counters contribute to totals. A live session with no
-	// counter file must not mint a fresh epoch per poll (ReadUsageState
-	// fabricates one) — the panel reseeds on epoch change and drops bytes.
-	// Marker session IDs count as present for receipt retention.
-	markers := readMarkers()
-	for _, m := range markers {
-		if present[m.commonName] == nil {
-			present[m.commonName] = map[string]bool{}
-		}
-		present[m.commonName][m.sessionID] = true
-		present[m.commonName][m.key] = true
-	}
 	var allCNs []string
 	for cn := range cnSet {
 		allCNs = append(allCNs, cn)
@@ -150,19 +201,16 @@ func UsersUsage() (map[string]any, error) {
 	for _, cn := range allCNs {
 		st, err := store.ReadUsageState(pki.UsageDir(), cn)
 		if err != nil {
-			return nil, err
+			return nil, nil, err
 		}
 		totals[display(cn)] += st.Total
 		epochsByCN[cn] = st.Epoch
 	}
-	// Retire completed receipts whose generation is confirmed gone.
 	for _, cn := range allCNs {
 		if err := store.PruneReceipts(pki.UsageDir(), cn, present[cn]); err != nil {
-			return nil, err
+			return nil, nil, err
 		}
 	}
-
-	// totals and totals_epochs share the same complete contributor set.
 	totalsEpochs := map[string]string{}
 	byName := map[string][]string{}
 	for _, cn := range allCNs {
@@ -185,13 +233,7 @@ func UsersUsage() (map[string]any, error) {
 			totalsEpochs[name] = ""
 		}
 	}
-
-	return map[string]any{
-		"users":         liveByName,
-		"sessions":      sessionRows,
-		"totals":        totals,
-		"totals_epochs": totalsEpochs,
-	}, nil
+	return totals, totalsEpochs, nil
 }
 
 // chooseMarker picks the marker generation that may account for a status

@@ -23,6 +23,7 @@ func TestGenerateCRLRejectsCorruptRevocationData(t *testing.T) {
 		t.Run(failure, func(t *testing.T) {
 			root := t.TempDir()
 			t.Setenv("OVNODE_OPENVPN_ROOT", root)
+			t.Setenv("OVNODE_DATA_DIR", root+"/ovnode-data")
 			writeTestCA(t, root)
 			if err := GenerateCRL(); err != nil {
 				t.Fatal(err)
@@ -73,6 +74,7 @@ func TestGenerateCRLRejectsCorruptRevocationData(t *testing.T) {
 func TestGenerateCRLDoesNotLosePreviousRevocations(t *testing.T) {
 	root := t.TempDir()
 	t.Setenv("OVNODE_OPENVPN_ROOT", root)
+	t.Setenv("OVNODE_DATA_DIR", root+"/ovnode-data")
 	writeTestCA(t, root)
 	certPEM, _, err := IssueClientCertToTree("alice")
 	if err != nil {
@@ -145,6 +147,7 @@ func TestIssueClientCertPreservesUnterminatedIndex(t *testing.T) {
 func TestRevokeExpiredAndReissuedCertificates(t *testing.T) {
 	root := t.TempDir()
 	t.Setenv("OVNODE_OPENVPN_ROOT", root)
+	t.Setenv("OVNODE_DATA_DIR", root+"/ovnode-data")
 	writeTestCA(t, root)
 	certPEM, _, err := IssueClientCertToTree("alice")
 	if err != nil {
