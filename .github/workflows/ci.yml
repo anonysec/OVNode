@@ -29,7 +29,7 @@ jobs:
       - name: Vulnerability scan
         run: |
           # Pinned: bump deliberately (Dependabot does not track go install).
-          go install golang.org/x/vuln/cmd/govulncheck@v1.1.4
+          go install golang.org/x/vuln/cmd/govulncheck@v1.2.0
           govulncheck ./...
       - name: Static analysis
         run: |
