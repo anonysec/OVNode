@@ -87,7 +87,7 @@ func resolveCN(id, name string) (string, error) {
 }
 
 // errInvalidUserID is the refusal for an identity the node cannot use.
-var errInvalidUserID = errors.New("Invalid user id (must be UUID or simple id)")
+var errInvalidUserID = errors.New("invalid user id (must be UUID or simple id)")
 
 // handleUserCreate provisions a user: certificate, profile, name and limit.
 func (s *Server) handleUserCreate(w http.ResponseWriter, r *http.Request) {

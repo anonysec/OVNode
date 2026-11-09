@@ -290,12 +290,12 @@ func Bundle(appDir, nodeData, ovpnRoot, backupRoot, node, fromVersion string) (s
 			return "", err
 		}
 		vr, verr := gzip.NewReader(vf)
-		defer vr.Close()
 		if verr != nil {
 			vf.Close()
 			cleanup()
 			return "", verr
 		}
+		defer vr.Close()
 		tv := tar.NewReader(vr)
 		names := map[string]bool{}
 		var parsed map[string]any
@@ -327,12 +327,12 @@ func Bundle(appDir, nodeData, ovpnRoot, backupRoot, node, fromVersion string) (s
 			return "", err
 		}
 		vr2, err := gzip.NewReader(vf2)
-		defer vr2.Close()
 		if err != nil {
 			vf2.Close()
 			cleanup()
 			return "", err
 		}
+		defer vr2.Close()
 		tv2 := tar.NewReader(vr2)
 		for {
 			h, err := tv2.Next()
@@ -400,7 +400,6 @@ func Restore(bundle, appDir, dataBase, ovpnRoot string) error {
 	}
 	defer gr.Close()
 	tr := tar.NewReader(gr)
-	infos := []tar.Header{}
 	names := map[string]bool{}
 	for {
 		h, err := tr.Next()
@@ -411,8 +410,6 @@ func Restore(bundle, appDir, dataBase, ovpnRoot string) error {
 			return err
 		}
 		if h.Typeflag == tar.TypeReg {
-			info := *h
-			infos = append(infos, info)
 			names[h.Name] = true
 		}
 	}

@@ -119,8 +119,8 @@ func TestIssueClientCertToTree(t *testing.T) {
 	if err != nil {
 		t.Fatalf("the CRL does not parse: %v", err)
 	}
-	if len(list.RevokedCertificates) != 1 {
-		t.Fatalf("the CRL lists %d certificates, want 1", len(list.RevokedCertificates))
+	if len(list.RevokedCertificateEntries) != 1 {
+		t.Fatalf("the CRL lists %d certificates, want 1", len(list.RevokedCertificateEntries))
 	}
 }
 
