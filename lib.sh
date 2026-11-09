@@ -350,13 +350,6 @@ systemctl_bounded() {  # systemctl_bounded stop|restart <unit>
     return 0
 }
 
-# Menu. The drawing and the keystrokes belong to render.sh; this is the wrapper
-# for callers that want a tag back.
-#
-# The old version preferred whiptail when it happened to be installed, so the
-# same menu rendered two completely different ways on two different boxes. One
-# renderer, so the pointer, the number and the arrow always agree.
-tui_select() { render_menu "$@"; }
 
 _existing_tls_pair_usable() {  # <key> <cert> → 0 when an intact, unexpired pair is already there
     local key="$1" cert="$2" key_pub cert_pub
@@ -692,37 +685,6 @@ render_screen() {
     return 0
 }
 
-# ── Menu ───────────────────────────────────────────────────────────────
-#
-# Numbers only. Typing a number needs no arrow keys, no separate fd and no
-# read timeout, so a pasted line, a closed terminal or a tmux that lost the
-# pane cannot leave a half-drawn frame on screen.
-#
-# render_menu <title> <tag> <label> [<tag> <label> ...] → prints the tag.
-
-render_menu() {
-    shift    # title is the caller's; the banner already said what this is
-    local -a tags=() labels=()
-    while [[ $# -ge 2 ]]; do tags+=("$1"); labels+=("$2"); shift 2; done
-    local count=${#tags[@]}
-    [[ "$count" -gt 0 ]] || return 1
-
-    local i=0
-    while (( i < count )); do
-        printf '  %b%d%b  %s\n' "$B" "$(( i + 1 ))" "$NC" "${labels[$i]}" >&2
-        i=$(( i + 1 ))
-    done
-
-    local n
-    n="$(ask "choice" "1")"
-    [[ "$n" =~ ^[0-9]+$ ]] || n=1
-    # Wrap into range rather than crash on 0 or a stray large number. The
-    # modulo is done in bash's own arithmetic, where a negative operand keeps
-    # its sign: $(( (0 - 1) % 3 )) is -1, and indexing with -1 is the last
-    # element rather than the first. Adding the count first keeps it positive.
-    printf '%s' "${tags[$(( ((10#$n - 1) + count) % count ))]}"
-    return 0
-}
 
 # ── Steps ───────────────────────────────────────────────────────────────
 #

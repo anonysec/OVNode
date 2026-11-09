@@ -86,11 +86,9 @@ PIN="${OVN_VERSION:-}"
 CLI_FLAGS=0
 CMD_GIVEN=0
 INTERACTIVE=0
-# Set by the start menu: 1 = Express (no further questions).
-EXPRESS=0
 LOGS_ARG=""
 AUTO_BACKUP_ACTION="" BACKUP_TIME="" BACKUP_KEEP=""
-# Any OVN_* input present (mirrors CLI flags for early validation / no menu).
+# Any OVN_* input present (mirrors CLI flags for early validation).
 ENV_INPUTS=0
 for _ovn_var in OVN_PORT OVN_KEY OVN_VPN_PORTS OVN_PROTO OVN_NAME OVN_TLS \
                 OVN_TLS_DOMAIN OVN_TLS_KEY OVN_TLS_CERT OVN_IPV6 OVN_NO_NAT \
@@ -140,8 +138,7 @@ fi
 #
 #   installed        a node is here: .env (the identity and the API key, written
 #                    last by do_install) or the verified binary. Never
-#                    re-installed over, never deleted by an install. Exit 3,
-#                    plus the update/uninstall menu on a terminal.
+#                    re-installed over, never deleted by an install. Exit 3.
 #   unit-only        an OVNode systemd unit exists and APP_DIR holds no node.
 #                    Something was installed here once. Refused like `installed`
 #                   , but `uninstall` is allowed, because cleaning it up is
@@ -255,8 +252,7 @@ node_exists() {
     esac
 }
 
-# A complete node: .env or the binary. This is what the update/uninstall menu
-# is for, and what an install may never write over.
+# A complete node: .env or the binary. This is what an install may never write over.
 node_is_installed() {
     ensure_install_state
     [[ "$INSTALL_STATE" == "installed" ]]
@@ -1711,8 +1707,7 @@ dir_size() {
 
 # ── Interactive setup (humans on a TTY) ────────────────────────────────
 # Two questions: the port the agent answers on, and the certificate. Everything
-# else, the VPN transport, the deployment mode, is either chosen on the front
-# door menu or owned by the panel.
+# else, the VPN transport and the deployment mode are owned by the panel.
 #
 # The transport used to be asked here and got UDP when a person answered and TCP
 # when nobody did. One question with two possible defaults is a question with a
@@ -1785,55 +1780,13 @@ ask_lets_encrypt() {
     return 0
 }
 
-# Express install: safe defaults, no further questions. TLS is always on.
-apply_express_defaults() {
-    : "${PORT:=$(find_free_port "$DEFAULT_PORT")}"
-    : "${VPN_PORTS:=$DEFAULT_VPN}"
-    : "${NODE_NAME:=ovnode}"
-    : "${VPN_PROTO:=udp}"
-    TLS_METHOD="selfsigned"
-    [[ -n "$API_KEY" ]] || generate_api_key
-    EXPRESS=1
-}
-
-# Friendly front door: shown only for a bare interactive invocation.
-# Host install is the default; Docker is the explicit second choice.
-# The front door. The deployment mode is chosen here and nowhere else, the
-# wizard used to ask it again as "Step 3/4", so the answer could be given twice
-# and the two did not always agree.
-start_menu() {
-    apply_express_defaults
-}
 
 
-# ── Terminal command (TUI) ─────────────────────────────────────────────
-# install_cli() copies manager.sh to $BIN_DIR as "ovnode", so a bare
-# `ovnode` opens the menu. Every action is also a subcommand for scripts.
 
 # systemd waits up to TimeoutStopSec for a stuck unit; bound the wait so an
 # uninstall/update never looks frozen, then force the unit.
 STOP_TIMEOUT="${OVN_STOP_TIMEOUT:-20}"
 
-installed_menu() {
-    render_warn "OVNode is already installed at $APP_DIR"
-    if ! is_tty; then
-        # Exit 3, the documented "already installed" code, not die's 1: this is a
-        # state the caller asked about, so a provisioning script can tell it
-        # apart from a real failure.
-        render_fail "already installed" "$APP_DIR, re-run with: $0 update"
-        exit "$EX_ALREADY"
-    fi
-    local tag
-    tag="$(render_menu "" \
-        update    "update to v${VERSION}" \
-        uninstall "uninstall" \
-        quit      "quit")"
-    case "$tag" in
-        update)    do_update || render_warn "update failed" ;;
-        uninstall) do_uninstall ;;
-        *)         render_line "  nothing was changed" ;;
-    esac
-}
 
 install_cli() {
     # Refreshed on every update, so a box whose ovnode is an old copy gets swapped.
@@ -2092,11 +2045,7 @@ main() {
     # INSTALL_STATE, not [[ -d "$APP_DIR" ]]: load_helpers has created that
     # directory by now on a fresh box. Only a real node stops the run.
     if node_is_installed; then
-        if [[ "$YES" -eq 1 ]]; then
-            die "Already installed ($APP_DIR exists). Run 'update' to refresh or 'uninstall' first." "$EX_ALREADY"
-        fi
-        installed_menu
-        exit "$EX_OK"
+        die "Already installed ($APP_DIR exists). Run 'update' to refresh or 'uninstall' first." "$EX_ALREADY"
     fi
     # Not a node, but not nothing either: unit files or a data directory from
     # an earlier install. Installing would mint a second identity beside them.
@@ -2109,11 +2058,6 @@ main() {
         report_bootstrap_dir
     fi
 
-    # Bare interactive invocation gets the start menu; flags and OVN_* inputs
-    # keep the original machine path.
-    if [[ "$CMD_GIVEN" -eq 0 && "$CLI_FLAGS" -eq 0 && "$ENV_INPUTS" -eq 0 && "$YES" -eq 0 ]] && is_tty; then
-        start_menu
-    fi
 
     detect_os
     if [[ "${INTERACTIVE:-0}" -eq 1 ]] || { [[ "$YES" -eq 0 ]] && is_tty && [[ -z "$PORT" || -z "$API_KEY" ]]; }; then

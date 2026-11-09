@@ -217,22 +217,23 @@ expect_status 0 "$RC" "the driver runs"
 expect_in "$WORK/order.log" "MARK-load_helpers-state=absent" "load_helpers is entered with the state already known"
 
 # ── Fresh install, interactive (a terminal) ────────────────────────────
-# The same bug hit the wizard: a human on a TTY was shown the already-installed
-# menu on a server that had never had a node. Answer 1 (host) at the front door.
+# Bare invocation on a TTY: there is no menu. The non-menu path
+# (detect_os → interactive_setup → validate_input → do_install) must
+# still reach the install step.
 section "fresh install, interactive (pty)"
 if ! command -v script >/dev/null 2>&1; then
     skip "no util-linux 'script' on this host — the terminal path is not exercised"
 else
     INT_APP="$WORK/int/app"
     rm -rf "$WORK/int"; mkdir -p "$WORK/int"
-    run_case fresh-tty "$INT_APP" --tty 1
-    expect_status 0 "$RC" "fresh install from a terminal succeeds"
-    expect_in "$WORK/fresh-tty.log" "MARK-reached-do_install" "the terminal path reached the install step"
+    run_case fresh-tty "$INT_APP" --tty $'ovnode\n2083\n1194\n1\n\n\n'
+    expect_status 0 "$RC" "fresh install from a terminal succeeds without a menu"
+    expect_in "$WORK/fresh-tty.log" "MARK-reached-do_install" "the terminal path reached the install step without a menu"
     expect_not_in "$WORK/fresh-tty.log" "already installed" "the terminal path did not report an existing node"
     if [[ "$(curl_calls)" -ge 1 ]]; then ok "the release was fetched on the terminal path"; else bad "the release was never fetched on the terminal path"; fi
 fi
 
-# The wizard (`interactive`), not just the express menu: a human answering the
+# The wizard (`interactive`): a human answering the
 # two questions must reach the install too. Answers: port, then TLS choice 1.
 section "fresh install, wizard (pty)"
 if ! command -v script >/dev/null 2>&1; then
@@ -264,8 +265,8 @@ expect_eq "$env_sum" "$(sha256sum "$EXIST_APP/.env" | awk '{print $1}')" "the no
 if [[ -x "$EXIST_APP/ovnode" ]]; then ok "the installed binary is untouched"; else bad "the installed binary was replaced or removed"; fi
 
 # ── Existing installation, interactive ─────────────────────────────────
-# On a terminal the operator gets the menu, not an error. Answer 3 = quit:
-# nothing updated, nothing removed.
+# On a terminal the operator gets exit 3 directly: there is no menu.
+# Nothing updated, nothing removed, nothing installed over.
 section "existing installation, interactive (pty)"
 EXIST_TTY_APP="$WORK/existing-tty/app"
 rm -rf "$WORK/existing-tty"; mkdir -p "$EXIST_TTY_APP"
@@ -275,11 +276,11 @@ if ! command -v script >/dev/null 2>&1; then
     skip "no util-linux 'script' on this host — the terminal path is not exercised"
 else
     run_case existing-tty "$EXIST_TTY_APP" --tty 3
-    expect_status 0 "$RC" "quitting the already-installed menu exits 0"
-    expect_in "$WORK/existing-tty.log" "already installed" "the menu says the node is already installed"
+    expect_status 3 "$RC" "an existing node on a terminal exits 3 without a menu"
+    expect_in "$WORK/existing-tty.log" "Already installed" "it says the node is already installed"
     expect_not_in "$WORK/existing-tty.log" "MARK-reached-do_install" "it never reinstalls over the node"
-    expect_not_in "$WORK/existing-tty.log" "MARK-reached-do_update" "answering quit updates nothing"
-    expect_not_in "$WORK/existing-tty.log" "MARK-reached-do_uninstall" "answering quit removes nothing"
+    expect_not_in "$WORK/existing-tty.log" "MARK-reached-do_update" "it does not update the node"
+    expect_not_in "$WORK/existing-tty.log" "MARK-reached-do_uninstall" "it does not uninstall the node"
 fi
 
 # ── A node whose binary was deleted ────────────────────────────────────
