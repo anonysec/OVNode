@@ -37,7 +37,7 @@ jobs:
           go install honnef.co/go/tools/cmd/staticcheck@latest
           staticcheck ./...
           # Pinned: bump deliberately (Dependabot does not track go install).
-          go install github.com/securego/gosec/v2/cmd/gosec@v2.23.0
+          go install github.com/securego/gosec/v2/cmd/gosec@v2.24.0
           gosec -exclude-dir=internal/fsx/testdata -exclude=G404,G304,G101,G402 ./....
       - name: Shellcheck
         run: shellcheck install.sh lib.sh ovnode.sh scripts/smoke-test.sh
