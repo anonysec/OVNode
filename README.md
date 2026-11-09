@@ -20,28 +20,6 @@ The VPN server half of an [OVManager](https://github.com/anonysec/OVManager) dep
 >
 > This repository is a stable, production-ready release. The API, configuration format and deployment model are frozen for this line; the changelog lists every change. Use it on VPN servers.
 
-## Tech Stack
-
-- Go
-- Linux (Ubuntu)
-- OpenVPN
-- RADIUS
-- iptables
-- systemd
-
-## Roadmap
-
-- Core Go refactor of legacy shell-based workflows
-- API implementation for node, user, session, and accounting operations
-- Security auditing and hardening of authentication, TLS, and filesystem access
-- Concurrency and routing logic improvements
-- Documentation and operator CLI polish
-- Community release and packaging
-
-## Upcoming Architecture
-
-The project is preparing for a major architectural refactor. Advanced AI-assisted development will be used to improve concurrent routing logic, strengthen security checks, and accelerate the transition from proof-of-concept scripts to a robust, production-oriented management platform. This phase will focus on safer defaults, clearer module boundaries, and more reliable operational behavior across OpenVPN and RADIUS-integrated environments.
-
 ## 📖 Table of contents
 
 - [What is this?](#-what-is-this)
@@ -118,17 +96,16 @@ The project is preparing for a major architectural refactor. Advanced AI-assiste
 - `1194/udp` reachable by your users, and `2083/tcp` reachable from the panel.
 
 ```bash
-bash <(curl -sSL https://raw.githubusercontent.com/anonysec/OVNode/main/install.sh)
+bash <(curl -sSL https://raw.githubusercontent.com/anonysec/OVNode/main/install.sh) -y
 
-Pin the installer to a release tag instead of `main`; the installer's own SHA-256 is published in the release notes.
+# Pin the installer to a release tag instead of `main`; the release
+# `SHA256SUMS` file lists the SHA-256 of each release binary.
 ```
 
-The menu asks one question, and the recommended choice asks nothing else:
-
-| Choice | What it does |
-| --- | --- |
-| **1. Install** | Host service. Node `ovnode`, sync API on `2083`, OpenVPN on `1194/udp`, self-signed TLS, generated API key. |
-To answer every setting yourself, run the wizard instead:
+The bootstrap downloads the verified release binary, then runs the Go
+installer (`ovnode install`). The previous bash installer is shipped one
+release as `install-legacy.sh`.
+To answer every setting yourself, run the interactive installer instead:
 
 ```bash
 bash <(curl -sSL https://raw.githubusercontent.com/anonysec/OVNode/main/install.sh) interactive
@@ -305,8 +282,7 @@ same file, and it is a no-op on an install that is already flat.
 
 The API key lives in `.env`, not in the panel. It is printed by the installer and by `ovnode auth key`; neither can be recovered elsewhere, so losing `.env` means re-enrolling the node. The node keeps its own certificate in `/etc/ovnode/tls` (or wherever `SSL_KEYFILE` says) rather than in `/etc/ssl/self-signed`, which is shared with an OVManager panel on the same host.
 
-`ovnode restore` takes a safety copy before it replaces anything, and refuses to continue if it cannot. `ovnode update` and `ovnode uninstall` delegate to the installer, so each exists in exactly one place.
-
+`ovnode restore` takes a safety copy before it replaces anything, and refuses to continue if it cannot. `ovnode update` and `ovnode uninstall` run the Go installer, so each exists in exactly one place.
 `ovnode backup` archives `/var/lib/ovnode` and the OpenVPN PKI (`/etc/openvpn/server/pki`) into root-only tarballs in `/var/backups`, keeping the newest 14 (`--keep N` changes that). `ovnode update` is stricter still: it snapshots the identity file, the node data directory, `/etc/openvpn` and the API TLS files before it touches anything, and rolls back if the new release does not come up.
 
 ## 📚 Docs
@@ -337,7 +313,7 @@ go build ./cmd/ovnode
 ./ovnode serve
 ```
 
-The production installer consumes verified release archives only, so a source checkout is a development path rather than a deployment one. Manual mode runs the API alone: TLS (through `ssl_certfile`/`ssl_keyfile` in `.env`), IP forwarding and NAT, the firewall, service supervision and the OpenVPN daemon are yours to configure — the installer does all of that.
+The production installer consumes release binaries (verified against the release SHA256SUMS) only, so a source checkout is a development path rather than a deployment one. Manual mode runs the API alone: TLS (through `ssl_certfile`/`ssl_keyfile` in `.env`), IP forwarding and NAT, the firewall, service supervision and the OpenVPN daemon are yours to configure — the installer does all of that.
 
 ## Operating guarantees (Task 12 corrections)
 

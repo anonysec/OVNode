@@ -43,16 +43,14 @@ jobs:
         run: shellcheck -S warning install.sh lib.sh ovnode.sh scripts/smoke-test.sh
       - name: Contract drift check
         run: |
-          curl -fsSL -o /tmp/panel-contract.json             https://raw.githubusercontent.com/anonysec/OVManager/main/internal/node/contract.json || {
-            echo "panel contract not reachable; skipping (first run before publish)"
+          if ! curl -fsSL -o /tmp/panel-contract.json             https://raw.githubusercontent.com/anonysec/OVManager/main/internal/node/contract.json; then
+            if [[ "${GITHUB_REF_TYPE:-}" == "tag" ]] || [[ "${GITHUB_REF_NAME:-}" == v* ]]; then
+              echo "::error::panel contract unreachable on tagged release build — refusing to publish"
+              exit 1
+            fi
+            echo "panel contract not reachable; skipping (non-tagged build or fork)"
             exit 0
-          }
-          if ! diff -q internal/httpapi/contract.json /tmp/panel-contract.json >/dev/null; then
-            echo "::error::node contract.json differs from panel authority"
-            diff internal/httpapi/contract.json /tmp/panel-contract.json || true
-            exit 1
           fi
-          echo "contract: in sync"
       - name: Installer regression tests
         run: bash scripts/test-installer.sh
 

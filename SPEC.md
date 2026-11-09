@@ -17,7 +17,8 @@ here; nothing listed here may change behavior.
 - NAT: `VPN_NAT_ENABLED` enrollment, owned rules only (`ovnode-nat` /
   `ovnode-redirect` comments), primary+extra port sync via `nat apply`.
 - Installer: install/update/uninstall, pre-update state snapshot + verified
-  restore, native systemd units.
+  restore, release binary verified against the release SHA256SUMS before
+  install, native systemd units.
 
 ## Frozen contracts
 - Usage counter v2 JSON (`version, epoch, total, sessions`, filename

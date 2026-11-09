@@ -14,7 +14,7 @@ import (
 // TestCreateUserWithCredentialsPreservesLimit: a credential re-push with a
 // nil limit must not clobber an existing limit (or unlimited=0).
 func TestCreateUserWithCredentialsPreservesLimit(t *testing.T) {
-	providerTree(t)
+	requireProviderPKI(t)
 	if err := InitPKI(); err != nil {
 		t.Fatal(err)
 	}
