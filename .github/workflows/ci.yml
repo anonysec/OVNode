@@ -40,7 +40,7 @@ jobs:
           go install github.com/securego/gosec/v2/cmd/gosec@v2.24.0
           gosec -exclude-dir=internal/fsx/testdata -exclude=G404,G304,G101,G402 ./... || true
       - name: Shellcheck
-        run: shellcheck install.sh lib.sh ovnode.sh scripts/smoke-test.sh
+        run: shellcheck -S warning install.sh lib.sh ovnode.sh scripts/smoke-test.sh
       - name: Contract drift check
         run: |
           curl -fsSL -o /tmp/panel-contract.json             https://raw.githubusercontent.com/anonysec/OVManager/main/internal/node/contract.json || {

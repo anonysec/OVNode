@@ -673,6 +673,7 @@ ensure_openvpn_dirs() {
 write_openvpn_unit() {
     : # legacy: OpenVPN daemon is now a child of ovnode.service (write_systemd_unit does ExecStart); this function stays for uninstall cleanup only.
     return 0
+    # shellcheck disable=SC2317
     cat > "$SYSTEMD_DIR/$OPENVPN_SERVICE" << UNIT
 [Unit]
 Description=OVNode OpenVPN daemon

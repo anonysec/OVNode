@@ -144,7 +144,7 @@ validate_archive_members() {
   while IFS= read -r f; do
     [[ -n "$f" ]] || continue
     case "$f" in
-      /*|*../*|../*|*/..|..) return 1 ;;
+      /*|../*|*../*|*/..|..) return 1 ;;
     esac
   done < <(tar -tzf "$1" 2>/dev/null) || return 1
   tar -tvzf "$1" 2>/dev/null | grep -q '^[lh]' && return 1
