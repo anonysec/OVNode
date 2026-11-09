@@ -34,7 +34,7 @@ jobs:
       - name: Static analysis
         run: |
           # Pinned: bump deliberately (Dependabot does not track go install).
-          go install honnef.co/go/tools/cmd/staticcheck@2025.1.1
+          go install honnef.co/go/tools/cmd/staticcheck@latest
           staticcheck ./...
           # Pinned: bump deliberately (Dependabot does not track go install).
           go install github.com/securego/gosec/v2/cmd/gosec@v2.22.4
