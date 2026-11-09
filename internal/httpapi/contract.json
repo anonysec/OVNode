@@ -4,7 +4,6 @@
     "path": "/sync/status",
     "request": [],
     "response": [
-      "contract_version",
       "version",
       "cpu_usage",
       "memory_usage",
@@ -174,20 +173,6 @@
     "note": "no data key is read; only CreateUserOnAllNodes calls it, and that fan-out is dead code"
   },
   {
-    "method": "PUT",
-    "path": "/sync/user",
-    "request": [
-      "id",
-      "name",
-      "max_logins",
-      "status"
-    ],
-    "response": [],
-    "response_raw": false,
-    "request_at": "internal/node/user_policy.go:ApplyUserPolicy",
-    "note": "name, supplied max_logins, and activation state are applied together; omitted status keeps the legacy activate default"
-  },
-  {
     "method": "DELETE",
     "path": "/sync/user/{uid}",
     "request": [],
@@ -250,5 +235,19 @@
     "response_at": [
       "internal/node/sync.go:pushLimitsBatch:data"
     ]
+  },
+  {
+    "method": "PUT",
+    "path": "/sync/user",
+    "request": [
+      "id",
+      "name",
+      "max_logins",
+      "status"
+    ],
+    "response": [],
+    "response_raw": false,
+    "request_at": "internal/node/user_policy.go:ApplyUserPolicy",
+    "note": "desired account policy delivery; the panel reads the envelope only"
   }
 ]
