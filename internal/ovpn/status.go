@@ -7,6 +7,8 @@ package ovpn
 import (
 	"bufio"
 	"fmt"
+	"io"
+	"math"
 	"os"
 	"strconv"
 	"strings"
@@ -41,15 +43,9 @@ var defaultColumns = map[string]int{
 	"Connected Since (time_t)": 8,
 }
 
-// columnMap resolves column name to index from a HEADER,CLIENT_LIST line.
-//
-// headerParts[0] is "HEADER" and [1] is "CLIENT_LIST"; a data row has no
-// "HEADER" prefix, so a data field N corresponds to header index N + 1.
+// columnMap resolves column names from a HEADER line.
 func columnMap(headerParts []string) map[string]int {
-	columns := make(map[string]int, len(defaultColumns))
-	for k, v := range defaultColumns {
-		columns[k] = v
-	}
+	columns := copyDefaultColumns()
 	for idx, name := range headerParts[2:] {
 		if _, ok := columns[name]; ok {
 			columns[name] = idx + 1
@@ -58,24 +54,11 @@ func columnMap(headerParts []string) map[string]int {
 	return columns
 }
 
-// ParseSessions reads the status file and returns one Session per client.
-//
-// The file is tab- or comma-delimited depending on the OpenVPN version, and
-// the columns are resolved from the HEADER line when there is one — OpenVPN
-// 2.3 lacked the Virtual IPv6 column that shifts every later field.
-func ParseSessions(path string) []Session {
-	f, err := os.Open(path)
-	if err != nil {
-		return nil
-	}
-	defer f.Close()
-
-	columns := make(map[string]int, len(defaultColumns))
-	for k, v := range defaultColumns {
-		columns[k] = v
-	}
-	var out []Session
-	sc := bufio.NewScanner(f)
+// parseStatus scans a status stream. Columns are built once per header.
+func parseStatus(r io.Reader) (StatusSnapshot, error) {
+	columns := copyDefaultColumns()
+	snap := StatusSnapshot{Sessions: []Session{}}
+	sc := bufio.NewScanner(r)
 	sc.Buffer(make([]byte, 0, 64*1024), 1024*1024)
 	for sc.Scan() {
 		line := strings.TrimRight(sc.Text(), "\r")
@@ -83,33 +66,58 @@ func ParseSessions(path string) []Session {
 		if !strings.Contains(line, "\t") {
 			delim = ","
 		}
+		parts := strings.Split(line, delim)
 		if strings.HasPrefix(line, "HEADER") && strings.Contains(line, "CLIENT_LIST") {
-			columns = columnMap(strings.Split(line, delim))
+			columns = columnMap(parts)
+			continue
+		}
+		if strings.HasPrefix(line, "TIME") {
+			if len(parts) >= 3 {
+				if n, err := strconv.ParseInt(strings.TrimSpace(parts[len(parts)-1]), 10, 64); err == nil {
+					snap.UpdatedAt = n
+				}
+			}
 			continue
 		}
 		if !strings.HasPrefix(line, "CLIENT_LIST") {
+			if strings.TrimSpace(line) == "END" {
+				snap.Complete = true
+			}
 			continue
 		}
-		parts := strings.Split(line, delim)
 		cn := field(parts, columns["Common Name"])
 		if cn == "" || cn == "Common Name" {
 			continue
 		}
 		real := field(parts, columns["Real Address"])
 		ip, port := splitRealAddress(real)
-		out = append(out, Session{
+		snap.Sessions = append(snap.Sessions, Session{
 			CommonName:     cn,
 			RealAddress:    real,
 			TrustedIP:      ip,
 			TrustedPort:    port,
 			VirtualAddress: field(parts, columns["Virtual Address"]),
-			BytesReceived:  number(field(parts, columns["Bytes Received"])),
-			BytesSent:      number(field(parts, columns["Bytes Sent"])),
+			BytesReceived:  clampUint64(number(field(parts, columns["Bytes Received"]))),
+			BytesSent:      clampUint64(number(field(parts, columns["Bytes Sent"]))),
 			ClientID:       field(parts, columns["Client ID"]),
-			ConnectedAt:    int64(number(field(parts, columns["Connected Since (time_t)"]))),
+			ConnectedAt:    connectedAt(field(parts, columns["Connected Since (time_t)"])),
 		})
 	}
-	return out
+	if err := sc.Err(); err != nil {
+		return StatusSnapshot{}, err
+	}
+	return snap, nil
+}
+
+// ParseSessions reads the status file and returns one Session per client.
+func ParseSessions(path string) []Session {
+	f, err := os.Open(path)
+	if err != nil {
+		return nil
+	}
+	defer f.Close()
+	snap, _ := parseStatus(f)
+	return snap.Sessions
 }
 
 // SessionsForCN returns the live sessions of one common name.
@@ -123,15 +131,36 @@ func SessionsForCN(path, cn string) []Session {
 	return out
 }
 
-// LivePools returns the set of VPN pool addresses currently in use.
-func LivePools(path string) map[string]bool {
-	out := map[string]bool{}
-	for _, s := range ParseSessions(path) {
-		if s.VirtualAddress != "" {
-			out[s.VirtualAddress] = true
-		}
+func copyDefaultColumns() map[string]int {
+	columns := make(map[string]int, len(defaultColumns))
+	for k, v := range defaultColumns {
+		columns[k] = v
 	}
-	return out
+	return columns
+}
+
+func number(value string) uint64 {
+	n, err := strconv.ParseUint(value, 10, 64)
+	if err != nil {
+		return 0
+	}
+	return n
+}
+
+func clampUint64(n uint64) uint64 {
+	if n > math.MaxInt64 {
+		return math.MaxInt64
+	}
+	return n
+}
+
+// connectedAt parses ConnectedAt via ParseInt (no int64(number(...)) conversion).
+func connectedAt(value string) int64 {
+	n, err := strconv.ParseInt(strings.TrimSpace(value), 10, 64)
+	if err != nil {
+		return 0
+	}
+	return n
 }
 
 func field(parts []string, idx int) string {
@@ -152,14 +181,6 @@ func splitRealAddress(real string) (string, string) {
 	return real, ""
 }
 
-func number(value string) uint64 {
-	n, err := strconv.ParseUint(value, 10, 64)
-	if err != nil {
-		return 0
-	}
-	return n
-}
-
 // StatusSnapshot is a parsed OpenVPN status file with validity info.
 type StatusSnapshot struct {
 	Sessions  []Session
@@ -174,65 +195,11 @@ func ReadStatusSnapshot(path string) (StatusSnapshot, error) {
 		return StatusSnapshot{}, err
 	}
 	defer f.Close()
-
-	columns := make(map[string]int, len(defaultColumns))
-	for k, v := range defaultColumns {
-		columns[k] = v
-	}
-	snap := StatusSnapshot{Sessions: []Session{}}
-	complete := false
-	sc := bufio.NewScanner(f)
-	sc.Buffer(make([]byte, 0, 64*1024), 1024*1024)
-	for sc.Scan() {
-		line := strings.TrimRight(sc.Text(), "\r")
-		delim := "\t"
-		if !strings.Contains(line, "\t") {
-			delim = ","
-		}
-		if strings.HasPrefix(line, "HEADER") && strings.Contains(line, "CLIENT_LIST") {
-			columns = columnMap(strings.Split(line, delim))
-			continue
-		}
-		if strings.HasPrefix(line, "TIME") {
-			parts := strings.Split(line, delim)
-			// TIME <date> <time> <unix>  or  TIME\t<date time>\t<unix>
-			if len(parts) >= 3 {
-				if n, err := strconv.ParseInt(strings.TrimSpace(parts[len(parts)-1]), 10, 64); err == nil {
-					snap.UpdatedAt = n
-				}
-			}
-			continue
-		}
-		if strings.HasPrefix(line, "CLIENT_LIST") {
-			parts := strings.Split(line, delim)
-			cn := field(parts, columns["Common Name"])
-			if cn == "" || cn == "Common Name" {
-				continue
-			}
-			real := field(parts, columns["Real Address"])
-			ip, port := splitRealAddress(real)
-			snap.Sessions = append(snap.Sessions, Session{
-				CommonName:     cn,
-				RealAddress:    real,
-				TrustedIP:      ip,
-				TrustedPort:    port,
-				VirtualAddress: field(parts, columns["Virtual Address"]),
-				BytesReceived:  number(field(parts, columns["Bytes Received"])),
-				BytesSent:      number(field(parts, columns["Bytes Sent"])),
-				ClientID:       field(parts, columns["Client ID"]),
-				ConnectedAt:    int64(number(field(parts, columns["Connected Since (time_t)"]))),
-			})
-			continue
-		}
-		if strings.TrimSpace(line) == "END" {
-			complete = true
-		}
-	}
-	if err := sc.Err(); err != nil {
+	snap, err := parseStatus(f)
+	if err != nil {
 		return StatusSnapshot{}, err
 	}
-	snap.Complete = complete
-	if !complete {
+	if !snap.Complete {
 		return snap, fmt.Errorf("incomplete status snapshot")
 	}
 	return snap, nil

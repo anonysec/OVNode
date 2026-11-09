@@ -22,6 +22,8 @@ import (
 	"sort"
 	"strings"
 	"time"
+
+	"ovnode/internal/fsx"
 )
 
 // ── Identity (identity_sha) ─────────────────────────────────────────────
@@ -53,6 +55,12 @@ func addToArchive(w *tar.Writer, src, prefix string, members map[string]string) 
 		if base == "update-maintenance" || base == "update-state.json" {
 			return nil
 		}
+		if info.Mode()&os.ModeSymlink != 0 {
+			if info.Mode().IsDir() {
+				return filepath.SkipDir
+			}
+			return nil
+		}
 		if info.IsDir() || !info.Mode().IsRegular() {
 			return nil
 		}
@@ -61,9 +69,9 @@ func addToArchive(w *tar.Writer, src, prefix string, members map[string]string) 
 			return err
 		}
 		relArc := filepath.ToSlash(filepath.Join(prefix, rel))
-		f, err := os.Open(p)
+		f, err := fsx.OpenFileNoFollow(p, os.O_RDONLY, 0)
 		if err != nil {
-			return err
+			return nil
 		}
 		hdr := &tar.Header{
 			Name:     relArc,
@@ -82,7 +90,7 @@ func addToArchive(w *tar.Writer, src, prefix string, members map[string]string) 
 		}
 		f.Close()
 		h := sha256.New()
-		f2, err2 := os.Open(p)
+		f2, err2 := fsx.OpenFileNoFollow(p, os.O_RDONLY, 0)
 		if err2 == nil {
 			io.Copy(h, f2)
 			f2.Close()
@@ -143,11 +151,11 @@ func Bundle(appDir, nodeData, ovpnRoot, backupRoot, node, fromVersion string) (s
 
 	// node.env (the .env file).
 	addFileEntry := func(path, arc string) error {
-		info, err := os.Stat(path)
-		if err != nil || !info.Mode().IsRegular() {
+		info, err := os.Lstat(path)
+		if err != nil || !info.Mode().IsRegular() || info.Mode()&os.ModeSymlink != 0 {
 			return nil
 		}
-		f, err := os.Open(path)
+		f, err := fsx.OpenFileNoFollow(path, os.O_RDONLY, 0)
 		if err != nil {
 			return nil
 		}
@@ -168,7 +176,7 @@ func Bundle(appDir, nodeData, ovpnRoot, backupRoot, node, fromVersion string) (s
 		}
 		f.Close()
 		h := sha256.New()
-		f2, err2 := os.Open(path)
+		f2, err2 := fsx.OpenFileNoFollow(path, os.O_RDONLY, 0)
 		if err2 == nil {
 			io.Copy(h, f2)
 			f2.Close()
@@ -313,7 +321,7 @@ func Bundle(appDir, nodeData, ovpnRoot, backupRoot, node, fromVersion string) (s
 				names[h.Name] = true
 			}
 		}
-		if _, err := io.Copy(io.Discard, vr); err != nil {
+		if _, err := io.Copy(io.Discard, io.LimitReader(vr, 512<<20)); err != nil {
 			vf.Close()
 			cleanup()
 			return "", err
@@ -409,6 +417,9 @@ func Restore(bundle, appDir, dataBase, ovpnRoot string) error {
 		if err != nil {
 			return err
 		}
+		if h.Typeflag == tar.TypeSymlink || h.Typeflag == tar.TypeLink {
+			return fmt.Errorf("unsafe state backup: link member %s", h.Name)
+		}
 		if h.Typeflag == tar.TypeReg {
 			names[h.Name] = true
 		}
@@ -417,7 +428,7 @@ func Restore(bundle, appDir, dataBase, ovpnRoot string) error {
 		return fmt.Errorf("unsafe state backup: no manifest")
 	}
 	for n := range names {
-		if strings.HasPrefix(n, "/") || strings.Contains(n, "..") {
+		if strings.HasPrefix(n, "/") || filepath.IsAbs(n) || strings.Contains(n, "..") {
 			return fmt.Errorf("unsafe state backup: unsafe member")
 		}
 	}
@@ -453,7 +464,7 @@ func Restore(bundle, appDir, dataBase, ovpnRoot string) error {
 		return fmt.Errorf("unsafe state backup: too many members")
 	}
 	for rel := range manifest.Members {
-		if strings.HasPrefix(rel, "/") || strings.Contains(rel, "..") {
+		if strings.HasPrefix(rel, "/") || filepath.IsAbs(rel) || strings.Contains(rel, "..") {
 			return fmt.Errorf("unsafe state backup: unsafe manifest member")
 		}
 	}
@@ -488,7 +499,11 @@ func Restore(bundle, appDir, dataBase, ovpnRoot string) error {
 			return fmt.Errorf("unsafe state backup: archive exceeds %d bytes", maxRestoreTotal)
 		}
 		remaining := maxRestoreTotal - (restoreTotal - h.Size)
-		dst := filepath.Join(staged, h.Name)
+		dst := filepath.Join(staged, h.Name) // #nosec G305 -- member name validated: not absolute, contains no "..", and staged path re-checked above
+		cleanStaged := filepath.Clean(staged) + string(os.PathSeparator)
+		if !strings.HasPrefix(filepath.Clean(dst)+string(os.PathSeparator), cleanStaged) {
+			return fmt.Errorf("unsafe state backup: member escapes staging: %s", h.Name)
+		}
 		if err := os.MkdirAll(filepath.Dir(dst), 0o755); err != nil {
 			return err
 		}

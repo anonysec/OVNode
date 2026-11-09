@@ -84,7 +84,8 @@ func openDirectory(path string, create bool, perm os.FileMode) (*os.File, error)
 			}
 			var parent syscall.Stat_t
 			err = syscall.Fstat(int(dir.Fd()), &parent)
-			if err == nil && (parent.Uid != uint32(os.Geteuid()) || parent.Mode&0o022 != 0) {
+			euid := os.Geteuid()
+			if err == nil && (euid < 0 || parent.Uid != uint32(euid) || parent.Mode&0o022 != 0) { // #nosec G115 -- euid guarded >= 0 above
 				err = fmt.Errorf("cannot safely create a directory under a writable or unowned parent")
 			}
 			if err == nil {
@@ -95,7 +96,7 @@ func openDirectory(path string, create bool, perm os.FileMode) (*os.File, error)
 				if err == nil {
 					var created syscall.Stat_t
 					err = syscall.Fstat(fd, &created)
-					if err == nil && created.Uid != uint32(os.Geteuid()) {
+					if err == nil && (created.Uid != uint32(euid)) { // #nosec G115 -- euid guarded >= 0 above
 						err = fmt.Errorf("new directory ownership changed during creation")
 					}
 					if err == nil {

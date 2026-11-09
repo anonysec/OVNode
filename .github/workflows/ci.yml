@@ -34,11 +34,11 @@ jobs:
       - name: Static analysis
         run: |
           # Pinned: bump deliberately (Dependabot does not track go install).
-          go install honnef.co/go/tools/cmd/staticcheck@latest
+          go install honnef.co/go/tools/cmd/staticcheck@2026.2.2
           staticcheck ./...
           # Pinned: bump deliberately (Dependabot does not track go install).
-          go install github.com/securego/gosec/v2/cmd/gosec@v2.24.0
-          gosec -exclude-dir=internal/fsx/testdata -exclude=G404,G304,G101,G402 ./... || true
+          go install github.com/securego/gosec/v2/cmd/gosec@v2.30.0
+          gosec -exclude-dir=internal/fsx/testdata -exclude=G104,G301,G302,G306,G304,G703,G204 ./...
       - name: Shellcheck
         run: shellcheck -S warning install.sh lib.sh ovnode.sh scripts/smoke-test.sh
       - name: Contract drift check
