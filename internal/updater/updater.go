@@ -9,6 +9,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"regexp"
 	"strings"
 	"syscall"
 )
@@ -16,14 +17,19 @@ import (
 const lockName = ".update.lock"
 const statusName = ".update-status"
 
-// TriggerUpdate runs install.sh update detached.
+// TriggerUpdate runs install.sh update detached via systemd-run.
+//
+// The transient unit lives outside ovnode.service's sandbox and cgroup, so
+// the update can write /var/backups, replace binaries, and survive the
+// service restart. The updater only enqueues it and returns; the update
+// script itself finishes the work and writes the final status.
 //
 // The target version, when given, must be a plain semver. The installer
 // path is checked before execution: it must be root-owned and not
 // group/world-writable.
 func TriggerUpdate(appDir, version string) error {
 	if version != "" {
-		if !validVersion(version) {
+		if !ValidVersion(version) {
 			return fmt.Errorf("invalid target version %q", version)
 		}
 	}
@@ -56,11 +62,18 @@ func TriggerUpdate(appDir, version string) error {
 		_ = lockFile.Close()
 		return errors.New("update already running")
 	}
+	// The flock is a process-lock: the transient update re-enqueues it,
+	// and once TriggerUpdate returns it stays held by the process that
+	// owns it. Releasing here would let a second call begin, so the
+	// process that enqueued the update keeps the lock file open and
+	// relies on the update script to write the final status.
 
 	marker := filepath.Join(appDir, statusName)
 	_ = os.WriteFile(marker, []byte("running\n"), 0o600)
 
-	cmd := exec.Command("bash", installer, "update")
+	cmd := exec.Command("systemd-run", "--unit=ovnode-update-"+sanitizeUnit(appDir), "--collect", "--quiet",
+		"--setenv=OVN_APP_DIR="+appDir, "--setenv=OVN_VERSION="+version,
+		"/bin/bash", installer, "update")
 	cmd.Dir = appDir
 	cmd.Env = []string{
 		"PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin",
@@ -71,22 +84,14 @@ func TriggerUpdate(appDir, version string) error {
 	if version != "" {
 		cmd.Env = append(cmd.Env, "OVN_VERSION="+version)
 	}
-	if err := cmd.Start(); err != nil {
-		_ = os.WriteFile(marker, []byte("failed\n"), 0o600)
+	if err := cmd.Run(); err != nil {
 		_ = syscall.Flock(int(lockFile.Fd()), syscall.LOCK_UN)
 		_ = lockFile.Close()
 		return err
 	}
-	go func() {
-		err := cmd.Wait()
-		status := "completed"
-		if err != nil {
-			status = "failed"
-		}
-		_ = os.WriteFile(marker, []byte(status+"\n"), 0o600)
-		_ = syscall.Flock(int(lockFile.Fd()), syscall.LOCK_UN)
-		_ = lockFile.Close()
-	}()
+	// systemd-run only enqueued the unit; the update script holds the lock
+	// for the duration. Releasing here would let a second call in and would
+	// make UpdateStatus report "interrupted" for a live update.
 	return nil
 }
 
@@ -97,6 +102,10 @@ func UpdateStatus(appDir string) string {
 	}
 	status := strings.TrimSpace(string(data))
 	if status == "running" {
+		// The update script owns the flock for the whole run; a released
+		// lock while the marker says running means the script died
+		// before reaching the end. A missing lock file with a running
+		// marker is still running.
 		f, err := os.OpenFile(filepath.Join(appDir, lockName), os.O_RDWR, 0)
 		if err != nil {
 			return "running"
@@ -117,36 +126,26 @@ func UpdateStatus(appDir string) string {
 	return status
 }
 
-func ValidVersion(v string) bool { return validVersion(v) }
-
-func validVersion(v string) bool {
-	// manual check to avoid regexp import
-	parts := split(v, '.')
-	if len(parts) != 3 {
-		return false
-	}
-	for _, p := range parts {
-		if p == "" {
-			return false
-		}
-		for _, c := range p {
-			if c < '0' || c > '9' {
-				return false
-			}
+func sanitizeUnit(appDir string) string {
+	// The unit name comes from the app dir so parallel installs do not
+	// share one transient unit.
+	var b strings.Builder
+	for _, r := range filepath.Base(appDir) {
+		if (r >= 'a' && r <= 'z') || (r >= 'A' && r <= 'Z') || (r >= '0' && r <= '9') || r == '-' || r == '_' {
+			b.WriteRune(r)
+		} else {
+			b.WriteByte('-')
 		}
 	}
-	return true
+	if b.Len() == 0 {
+		return "update"
+	}
+	return b.String()
 }
 
-func split(s string, sep byte) []string {
-	var out []string
-	start := 0
-	for i := 0; i < len(s); i++ {
-		if s[i] == sep {
-			out = append(out, s[start:i])
-			start = i + 1
-		}
-	}
-	out = append(out, s[start:])
-	return out
+var versionRe = regexp.MustCompile(`^[0-9]+\.[0-9]+\.[0-9]+$`)
+
+// ValidVersion reports whether v is a plain semver X.Y.Z.
+func ValidVersion(v string) bool {
+	return versionRe.MatchString(v)
 }

@@ -25,16 +25,16 @@ func TestChangeConfigMultiPortIdempotent(t *testing.T) {
 		TunnelAddress: "vpn.example.com",
 		ExtraPorts:    "1195,1196",
 	}
-	var c1, c2 ChangeConfigResult
-	if !ChangeConfig(req, &c1) {
-		t.Fatal("first change failed")
+	_, err := ChangeConfig(req)
+	if err != nil {
+		t.Fatalf("first change failed: %v", err)
 	}
 	first, _ := os.ReadFile(filepath.Join(serverDir, "client-common.txt"))
 	if !strings.Contains(string(first), "remote vpn.example.com 1195") || !strings.Contains(string(first), "remote vpn.example.com 1196") {
 		t.Fatalf("missing extra remote lines:\n%s", string(first))
 	}
-	if !ChangeConfig(req, &c2) {
-		t.Fatal("second change failed")
+	if _, err := ChangeConfig(req); err != nil {
+		t.Fatalf("second change failed: %v", err)
 	}
 	second, _ := os.ReadFile(filepath.Join(serverDir, "client-common.txt"))
 	if string(first) != string(second) {
@@ -81,7 +81,8 @@ func TestChangeConfigValidationTable(t *testing.T) {
 		t.Run(tc.name, func(t *testing.T) {
 			_, serverDir := setupConfigTree(t)
 			before, _ := os.ReadFile(filepath.Join(serverDir, "server.conf"))
-			got := ChangeConfig(tc.req, nil)
+			_, err := ChangeConfig(tc.req)
+			got := err == nil
 			if got != tc.ok {
 				t.Fatalf("got %v want %v", got, tc.ok)
 			}
@@ -116,18 +117,18 @@ func TestChangeConfigIdenticalPushIsNoop(t *testing.T) {
 		ExtraPorts:    "",
 		DNS1:          strPtr("1.1.1.1"),
 	}
-	var c1 ChangeConfigResult
-	if !ChangeConfig(req, &c1) {
-		t.Fatal("first change failed")
+	_, err := ChangeConfig(req)
+	if err != nil {
+		t.Fatalf("first change failed: %v", err)
 	}
 
 	before, err := os.Stat(filepath.Join(serverDir, "server.conf"))
 	if err != nil {
 		t.Fatal(err)
 	}
-	var c2 ChangeConfigResult
-	if !ChangeConfig(req, &c2) {
-		t.Fatalf("second change failed")
+	c2, err := ChangeConfig(req)
+	if err != nil {
+		t.Fatalf("second change failed: %v", err)
 	}
 	if c2.HotReload {
 		t.Fatal("HotReload true on identical push")

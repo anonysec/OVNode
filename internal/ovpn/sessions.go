@@ -394,7 +394,7 @@ func mgmtAvailable(now time.Time) bool {
 // the same port, and a node that drove it would kill another node's
 // sessions.
 func probeManagement() bool {
-	if !TreeOpenVPNRunning() {
+	if !OpenVPNIsRunning() {
 		return false
 	}
 	conn, err := dialManagement()

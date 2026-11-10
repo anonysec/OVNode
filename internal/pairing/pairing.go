@@ -23,13 +23,57 @@ func pairingPath() string {
 
 var enforceMu sync.Mutex
 
+type record struct {
+	PanelID  string `json:"panel_id"`
+	LastSeen int64  `json:"last_seen"`
+}
+
+var cache struct {
+	path  string
+	rec   *record
+	mtime time.Time
+	have  bool
+}
+
 // Enforce applies the lease; returns error if refused.
+//
+// The file is the source of truth, but the parsed record is cached in
+// memory under enforceMu. A repeated call for the same panel inside 60
+// seconds, with the on-disk mtime unchanged, touches no file at all.
 func Enforce(panelID string) error {
 	enforceMu.Lock()
 	defer enforceMu.Unlock()
 
 	path := pairingPath()
 	dir := filepath.Dir(path)
+	if cache.have && cache.path != path {
+		cache.have = false
+		cache.rec = nil
+	}
+	if cache.have && cache.path == path {
+		if fi, err := os.Stat(path); err == nil {
+			if !fi.ModTime().Equal(cache.mtime) {
+				cache.have = false
+			}
+		} else if os.IsNotExist(err) {
+			cache.have = false
+			cache.rec = nil
+		}
+	}
+	if cache.have && cache.path == path && cache.rec != nil && cache.rec.PanelID == panelID {
+		now0 := time.Now().Unix()
+		if panelID != "" && now0-cache.rec.LastSeen < 60 {
+			return nil
+		}
+		if panelID == "" {
+			return os.ErrPermission
+		}
+		if now0-cache.rec.LastSeen > leaseSeconds {
+			// Lease expired: fall through to the write.
+		} else {
+			return os.ErrPermission
+		}
+	}
 	if err := os.MkdirAll(dir, 0o755); err != nil {
 		return err
 	}
@@ -44,29 +88,36 @@ func Enforce(panelID string) error {
 	}
 	defer syscall.Flock(int(lf.Fd()), syscall.LOCK_UN)
 
-	now := time.Now().Unix()
-	data, err := os.ReadFile(path)
-	var rec *struct {
-		PanelID  string `json:"panel_id"`
-		LastSeen int64  `json:"last_seen"`
-	}
-	if err != nil {
-		if os.IsNotExist(err) {
-			// no pairing file yet: unpaired
-		} else {
+	// Re-read under the lock: another process may have changed the file
+	// since the cache check above.
+	var rec *record
+	if cache.have && cache.path == path && cache.rec != nil {
+		rec = cache.rec
+	} else {
+		fi, err := os.Stat(path)
+		if err != nil && !os.IsNotExist(err) {
 			return fmt.Errorf("pairing file unreadable: %w", err)
 		}
-	} else {
-		var r struct {
-			PanelID  string `json:"panel_id"`
-			LastSeen int64  `json:"last_seen"`
-		}
-		if uerr := json.Unmarshal(data, &r); uerr != nil {
-			return fmt.Errorf("pairing file corrupt: %w", uerr)
-		} else if r.PanelID != "" {
-			rec = &r
+		if err == nil {
+			data, err := os.ReadFile(path)
+			if err != nil {
+				return fmt.Errorf("pairing file unreadable: %w", err)
+			}
+			var r record
+			if uerr := json.Unmarshal(data, &r); uerr != nil {
+				return fmt.Errorf("pairing file corrupt: %w", uerr)
+			} else if r.PanelID != "" {
+				rec = &r
+			}
+			cache.path = path
+			cache.rec = rec
+			cache.mtime = fi.ModTime()
+			cache.have = true
 		} else {
-			// empty/unpaired file
+			cache.path = path
+			cache.rec = nil
+			cache.have = true
+			cache.mtime = time.Time{}
 		}
 	}
 	if panelID == "" {
@@ -75,6 +126,7 @@ func Enforce(panelID string) error {
 		}
 		return nil
 	}
+	now := time.Now().Unix()
 	if rec != nil && rec.PanelID != panelID {
 		age := now - rec.LastSeen
 		if age <= leaseSeconds {
@@ -110,5 +162,11 @@ func Enforce(panelID string) error {
 		return err
 	}
 	renamed = true
+	if fi, err := os.Stat(path); err == nil {
+		cache.path = path
+		cache.rec = &record{PanelID: panelID, LastSeen: now}
+		cache.mtime = fi.ModTime()
+		cache.have = true
+	}
 	return nil
 }

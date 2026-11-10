@@ -24,7 +24,7 @@ func DisconnectUser(cn string, onlyStale bool) (removed []string, killed int, mg
 	killOK := false
 	mgmt = map[string]any{"available": nil, "ok": nil, "skipped": "only_stale"}
 	if !onlyStale {
-		if !TreeOpenVPNRunning() {
+		if !OpenVPNIsRunning() {
 			// The tree's OpenVPN is not running: there is nothing to kill
 			// and the socket on the port may belong to another tree.
 			mgmt = map[string]any{"available": false, "ok": false, "skipped": "openvpn not running"}

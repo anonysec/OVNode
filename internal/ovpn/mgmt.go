@@ -60,6 +60,112 @@ func validateMgmtHost(host string) error {
 	return fmt.Errorf("management host %q is not loopback; set OVNODE_ALLOW_REMOTE_MGMT=1", host)
 }
 
+// LiveSessionsForCN returns the live sessions of one CN, preferring the
+// management socket (status 3) over the status file, which OpenVPN only
+// rewrites every few seconds.
+func LiveSessionsForCN(statusFile, cn string) []Session {
+	if sessions, ok := mgmtSessionsForCN(cn); ok {
+		return sessions
+	}
+	return SessionsForCN(statusFile, cn)
+}
+
+// mgmtSessionsForCN runs "status 3" over the pinned management endpoint
+// and parses the CLIENT_LIST rows in the reply. The second result reports
+// whether the socket answered; callers fall back to the status file when
+// it did not.
+func mgmtSessionsForCN(cn string) ([]Session, bool) {
+	host := mgmtHost()
+	if err := validateMgmtHost(host); err != nil {
+		return nil, false
+	}
+	addr := net.JoinHostPort(host, strconv.Itoa(ManagementPort()))
+	conn, err := net.DialTimeout("tcp", addr, mgmtDialTimeout)
+	if err != nil {
+		return nil, false
+	}
+	defer conn.Close()
+	m := &mgmtConn{conn: conn}
+	if strings.Contains(strings.ToUpper(m.readBanner()), "PASSWORD") {
+		pw, ok := readPassword(pki.MgmtPassFile())
+		if !ok {
+			return nil, false
+		}
+		_ = conn.SetWriteDeadline(time.Now().Add(mgmtReplyBudget))
+		if _, err := conn.Write([]byte(pw + "\n")); err != nil {
+			return nil, false
+		}
+		authReply := m.readUntil(time.Now().Add(mgmtAuthBudget), "SUCCESS", "ERROR")
+		upper := strings.ToUpper(authReply)
+		if strings.Contains(upper, "BAD PASSWORD") || (strings.Contains(upper, "ERROR") && strings.Contains(upper, "PASSWORD")) {
+			return nil, false
+		}
+	}
+	_ = conn.SetWriteDeadline(time.Now().Add(mgmtReplyBudget))
+	if _, err := conn.Write([]byte("status 3\n")); err != nil {
+		return nil, false
+	}
+	text := m.readUntil(time.Now().Add(statusBudget), "END")
+	_ = conn.SetWriteDeadline(time.Now().Add(mgmtReplyBudget))
+	_, _ = conn.Write([]byte("quit\n"))
+	if !strings.Contains(text, "END") {
+		return nil, false
+	}
+	return parseMgmtSessions(text, cn), true
+}
+
+// parseMgmtSessions parses the status 3 reply into sessions of one CN.
+// status 3 uses the CLIENT_LIST,HEADER comma format with the same column
+// order as the status file, so the same header-driven parsing applies.
+func parseMgmtSessions(text, cn string) []Session {
+	columns := make(map[string]int, len(defaultColumns))
+	for k, v := range defaultColumns {
+		columns[k] = v
+	}
+	sawHeader := false
+	var out []Session
+	for _, line := range strings.Split(text, "\n") {
+		line = strings.TrimRight(line, "\r")
+		if !strings.Contains(line, "CLIENT_LIST") {
+			continue
+		}
+		if strings.HasPrefix(line, "HEADER") {
+			if parts := strings.Split(line, ","); len(parts) > 2 {
+				columns = columnMap(parts)
+				sawHeader = true
+			}
+			continue
+		}
+		if !strings.HasPrefix(line, "CLIENT_LIST") {
+			continue
+		}
+		parts := strings.Split(line, ",")
+		name := field(parts, columns["Common Name"])
+		if name == "" || name != cn {
+			continue
+		}
+		real := field(parts, columns["Real Address"])
+		ip, port := splitRealAddress(real)
+		out = append(out, Session{
+			CommonName:     name,
+			RealAddress:    real,
+			TrustedIP:      ip,
+			TrustedPort:    port,
+			VirtualAddress: field(parts, columns["Virtual Address"]),
+			BytesReceived:  number(field(parts, columns["Bytes Received"])),
+			BytesSent:      number(field(parts, columns["Bytes Sent"])),
+			ClientID:       field(parts, columns["Client ID"]),
+			ConnectedAt:    connectedAt(field(parts, columns["Connected Since (time_t)"])),
+		})
+	}
+	if !sawHeader {
+		// A reply without the CLIENT_LIST header is not a status 3
+		// reply: let the caller fall back to the status file.
+		return nil
+	}
+	return out
+}
+
 // Takeover kills the given client ids over ONE management connection and
 // then verifies that the common name is gone.
 //

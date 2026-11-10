@@ -29,10 +29,10 @@ func TestAllowHeavyAndPruning(t *testing.T) {
 	// Pruning test: populate more than maxBuckets
 	now := time.Now()
 	for i := 0; i < maxBuckets+20; i++ {
-		l.heavy["c"+strconv.Itoa(i)] = &bucket{ts: []time.Time{now.Add(-2 * window)}}
+		l.heavy.hits["c"+strconv.Itoa(i)] = timeEntry{ts: []time.Time{now.Add(-2 * span60s)}}
 	}
 	l.prune(now)
-	if len(l.heavy) > maxBuckets {
-		t.Fatalf("heavy buckets len = %d, want <= %d", len(l.heavy), maxBuckets)
+	if len(l.heavy.hits) > maxBuckets {
+		t.Fatalf("heavy.hits len = %d, want <= %d", len(l.heavy.hits), maxBuckets)
 	}
 }

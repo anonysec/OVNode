@@ -18,15 +18,15 @@ type envelope struct {
 }
 
 // writeEnvelope answers with the standard envelope.
-func writeEnvelope(w http.ResponseWriter, success bool, msg string, data any) {
+func writeEnvelope(w http.ResponseWriter, status int, success bool, msg string, data any) {
 	w.Header().Set("Content-Type", "application/json")
-	w.WriteHeader(http.StatusOK)
+	w.WriteHeader(status)
 	_ = json.NewEncoder(w).Encode(envelope{Success: success, Msg: msg, Data: data})
 }
 
 // writeOK answers a successful call.
 func writeOK(w http.ResponseWriter, msg string, data any) {
-	writeEnvelope(w, true, msg, data)
+	writeEnvelope(w, http.StatusOK, true, msg, data)
 }
 
 // writeFail answers a business failure.
@@ -35,7 +35,7 @@ func writeOK(w http.ResponseWriter, msg string, data any) {
 // transport error and retries loudly, which is not what a refused change
 // is.
 func writeFail(w http.ResponseWriter, msg string) {
-	writeEnvelope(w, false, msg, nil)
+	writeEnvelope(w, http.StatusOK, false, msg, nil)
 }
 
 // decodeBody reads a JSON body into v.

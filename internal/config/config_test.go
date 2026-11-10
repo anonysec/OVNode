@@ -6,6 +6,7 @@ package config
 import (
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 
 	"ovnode/internal/fsx"
@@ -49,18 +50,7 @@ func TestHookFromEnvValidatesRanges(t *testing.T) {
 	}
 	// event log should mention fallback
 	data, _ := os.ReadFile(filepath.Join(cfg.LogDir, "hook-events.log"))
-	if !contains(string(data), "invalid") {
+	if !strings.Contains(string(data), "invalid") {
 		t.Fatalf("expected fallback log, got %q", string(data))
 	}
-}
-
-func contains(s, sub string) bool {
-	return len(s) >= len(sub) && (func() bool {
-		for i := 0; i+len(sub) <= len(s); i++ {
-			if s[i:i+len(sub)] == sub {
-				return true
-			}
-		}
-		return false
-	})()
 }

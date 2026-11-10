@@ -6,8 +6,10 @@ package store
 import (
 	"encoding/json"
 	"fmt"
+	"io/fs"
 	"os"
 	"path/filepath"
+	"syscall"
 
 	"ovnode/internal/fsx"
 	"sort"
@@ -154,7 +156,9 @@ func OVPNPath(usersDir, cn string) (string, error) {
 	return filepath.Join(dir, "client.ovpn"), nil
 }
 
-// EnsureLayout creates the ovnode tree and runs legacy migration.
+// EnsureLayout creates the ovnode tree and runs legacy migration once at
+// startup. Permission repair is separate: FixRuntimePermissions does not
+// migrate, so a restart does not replay legacy moves.
 func EnsureLayout(openvpnRoot string) {
 	ovnodeDir := filepath.Join(openvpnRoot, "ovnode")
 	for _, d := range []string{
@@ -169,7 +173,181 @@ func EnsureLayout(openvpnRoot string) {
 	MigrateLegacy(openvpnRoot)
 }
 
-// FixRuntimePermissions repairs the managed tree without granting runtime policy or secret writes.
+// rule is one permission row. match returns the file mode, the owner gid,
+// and whether the row applies; an empty match means the row does not apply.
+type rule struct {
+	path      string
+	dir       os.FileMode
+	file      os.FileMode
+	gid       int
+	recursive bool
+	match     func(path string, info os.FileInfo) (os.FileMode, int, bool)
+}
+
+// permRules returns the repair table in walk order. The runtime gid is
+// resolved by the caller.
+func permRules(openvpnRoot string, gid int) []rule {
+	legacy := filepath.Join(openvpnRoot, "ovnode")
+	pkiDir := filepath.Join(openvpnRoot, "server", "pki")
+	var rules []rule
+	for _, dir := range []string{
+		openvpnRoot, filepath.Join(openvpnRoot, "server"), pkiDir, filepath.Join(openvpnRoot, "ccd"), legacy, fsx.OVNodeDir(),
+	} {
+		rules = append(rules, rule{path: dir, dir: 0o750 | os.ModeSetgid, file: 0o750 | os.ModeSetgid, gid: gid})
+	}
+	for _, name := range []string{"users", "sessions", "usage", "scripts", "state"} {
+		rules = append(rules, rule{path: filepath.Join(legacy, name), dir: 0o750 | os.ModeSetgid, file: 0o750 | os.ModeSetgid, gid: gid})
+	}
+	for _, name := range []string{"clients", "limits", "disabled", "ovnode-active", "scripts"} {
+		source := filepath.Join(openvpnRoot, name)
+		if _, err := os.Lstat(source); os.IsNotExist(err) {
+			continue
+		}
+		n := name
+		rules = append(rules, rule{
+			path:      source,
+			dir:       0o750 | os.ModeSetgid,
+			file:      0o600,
+			gid:       gid,
+			recursive: true,
+			match: func(path string, info fs.FileInfo) (os.FileMode, int, bool) {
+				if info.IsDir() {
+					return 0o750 | os.ModeSetgid, gid, true
+				}
+				switch n {
+				case "limits", "disabled":
+					return 0o640, gid, true
+				case "clients":
+					return 0o600, gid, true
+				}
+				if filepath.Ext(path) == ".ovpn" || filepath.Ext(path) == ".key" {
+					return 0o600, gid, true
+				}
+				return 0, 0, false
+			},
+		})
+	}
+	rules = append(rules, rule{
+		path:      filepath.Join(legacy, "users"),
+		dir:       0o750 | os.ModeSetgid,
+		file:      0o600,
+		gid:       gid,
+		recursive: true,
+		match: func(path string, info fs.FileInfo) (os.FileMode, int, bool) {
+			if info.IsDir() {
+				return 0o750 | os.ModeSetgid, gid, true
+			}
+			switch info.Name() {
+			case "state", "limit", "disabled", "name":
+				return 0o640, gid, true
+			case "cert.pem", "ca.pem":
+				return 0o644, gid, true
+			}
+			return 0o600, gid, true
+		},
+	})
+	ub := fsx.UsersDir()
+	rules = append(rules, rule{
+		path:      ub,
+		dir:       0o750 | os.ModeSetgid,
+		file:      0o600,
+		gid:       gid,
+		recursive: true,
+		match: func(path string, info fs.FileInfo) (os.FileMode, int, bool) {
+			if info.IsDir() {
+				return 0o750 | os.ModeSetgid, gid, true
+			}
+			switch info.Name() {
+			case "state", "limit", "disabled", "name":
+				return 0o640, gid, true
+			case "cert.pem", "ca.pem":
+				return 0o644, gid, true
+			}
+			return 0o600, gid, true
+		},
+	})
+	return rules
+}
+
+// applyRules walks the table. The .tmp- skip is once here, not per rule.
+// PKI symlinks are refused. uid is always 0; gid comes from the row.
+func applyRules(rules []rule) error {
+	for _, r := range rules {
+		if err := applyRule(r); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+func applyRule(r rule) error {
+	if err := repairRuntimeDir(r.path, r.dir, r.gid); err != nil {
+		return err
+	}
+	if !r.recursive {
+		return nil
+	}
+	return filepath.Walk(r.path, func(path string, info os.FileInfo, err error) error {
+		if os.IsNotExist(err) {
+			return nil
+		}
+		if err != nil {
+			return err
+		}
+		if strings.HasPrefix(info.Name(), ".tmp-") {
+			if info.Mode().IsRegular() {
+				return nil
+			}
+		}
+		if info.Mode()&os.ModeSymlink != 0 && strings.HasPrefix(info.Name(), ".tmp-") {
+			return fmt.Errorf("unexpected runtime symlink %s", path)
+		}
+		perm := r.file
+		gid := r.gid
+		if r.match != nil {
+			if p, g, ok := r.match(path, info); ok {
+				perm, gid = p, g
+			} else if !info.IsDir() && r.file == 0 {
+				return nil
+			}
+		}
+		if info.IsDir() {
+			perm = r.dir
+		}
+		if err := setIfDiffers(path, perm, 0, gid); err != nil && !os.IsNotExist(err) {
+			return err
+		}
+		return nil
+	})
+}
+
+// setIfDiffers calls SetPermissions only when the mode or owner differs,
+// so a no-op run on a healthy tree does no chmod/chown.
+func setIfDiffers(path string, perm os.FileMode, uid, gid int) error {
+	info, err := os.Stat(path)
+	if err != nil {
+		return err
+	}
+	stat, ok := info.Sys().(*syscall.Stat_t)
+	if ok {
+		cur := info.Mode() & (os.ModePerm | os.ModeSetgid | os.ModeSetuid | os.ModeSticky)
+		if cur == perm && uid >= 0 && int(stat.Uid) == uid && gid >= 0 && int(stat.Gid) == gid {
+			return nil
+		}
+		if uid < 0 && gid >= 0 {
+			if cur == perm && int(stat.Gid) == gid {
+				return nil
+			}
+		}
+		if uid >= 0 && gid < 0 {
+			if cur == perm && int(stat.Uid) == uid {
+				return nil
+			}
+		}
+	}
+	return fsx.SetPermissions(path, perm, uid, gid)
+}
+
 func FixRuntimePermissions(openvpnRoot string) error {
 	pkiDir := filepath.Join(openvpnRoot, "server", "pki")
 	_, pkiErr := os.Lstat(pkiDir)
@@ -187,86 +365,18 @@ func FixRuntimePermissions(openvpnRoot string) error {
 	if err != nil {
 		return err
 	}
+	if err := applyRules(permRules(openvpnRoot, gid)); err != nil {
+		return err
+	}
+	return fixRuntimeSpecial(openvpnRoot, pkiDir, gid)
+}
+
+// fixRuntimeSpecial covers the paths that are not part of the walker table:
+// sessions/usage flat files, the log file and rotated logs, the PKI walk,
+// and tls.key + mgmt password.
+func fixRuntimeSpecial(openvpnRoot, pkiDir string, gid int) error {
 	legacy := filepath.Join(openvpnRoot, "ovnode")
-	for _, dir := range []string{openvpnRoot, filepath.Join(openvpnRoot, "server"), pkiDir, filepath.Join(openvpnRoot, "ccd"), legacy, fsx.OVNodeDir()} {
-		if err := repairRuntimeDir(dir, 0o750|os.ModeSetgid, gid); err != nil {
-			return err
-		}
-	}
-	for _, name := range []string{"users", "sessions", "usage", "scripts", "state"} {
-		if err := repairRuntimeDir(filepath.Join(legacy, name), 0o750|os.ModeSetgid, gid); err != nil {
-			return err
-		}
-	}
-	for _, name := range []string{"clients", "limits", "disabled", "ovnode-active", "scripts"} {
-		source := filepath.Join(openvpnRoot, name)
-		if _, err := os.Lstat(source); os.IsNotExist(err) {
-			continue
-		} else if err != nil {
-			return err
-		}
-		if err := repairRuntimeDir(source, 0o750|os.ModeSetgid, gid); err != nil {
-			return err
-		}
-		if err := filepath.Walk(source, func(path string, info os.FileInfo, err error) error {
-			if os.IsNotExist(err) {
-				return nil
-			}
-			if err != nil {
-				return err
-			}
-			if info.Mode().IsRegular() && strings.HasPrefix(info.Name(), ".tmp-") {
-				return nil
-			}
-			perm := info.Mode() & (os.ModePerm | os.ModeSetgid | os.ModeSetuid | os.ModeSticky)
-			if info.IsDir() {
-				perm = 0o750 | os.ModeSetgid
-			} else if name == "limits" || name == "disabled" {
-				perm = 0o640
-			} else if name == "clients" {
-				perm = 0o600
-			} else if filepath.Ext(path) == ".ovpn" || filepath.Ext(path) == ".key" {
-				perm = 0o600
-			}
-			if err := fsx.SetPermissions(path, perm, 0, gid); err != nil && !os.IsNotExist(err) {
-				return err
-			}
-			return nil
-		}); err != nil {
-			return err
-		}
-	}
-	MigrateLegacy(openvpnRoot)
-	for _, usersDir := range []string{filepath.Join(legacy, "users"), fsx.UsersDir()} {
-		if err := repairRuntimeDir(usersDir, 0o750|os.ModeSetgid, gid); err != nil {
-			return err
-		}
-		if err := filepath.Walk(usersDir, func(path string, info os.FileInfo, err error) error {
-			if os.IsNotExist(err) {
-				return nil
-			}
-			if err != nil {
-				return err
-			}
-			if info.Mode().IsRegular() && strings.HasPrefix(info.Name(), ".tmp-") {
-				return nil
-			}
-			perm := os.FileMode(0o600)
-			if info.IsDir() {
-				perm = 0o750 | os.ModeSetgid
-			} else if info.Name() == "state" || info.Name() == "limit" || info.Name() == "disabled" || info.Name() == "name" {
-				perm = 0o640
-			} else if info.Name() == "cert.pem" || info.Name() == "ca.pem" {
-				perm = 0o644
-			}
-			if err := fsx.SetPermissions(path, perm, 0, gid); err != nil && !os.IsNotExist(err) {
-				return err
-			}
-			return nil
-		}); err != nil {
-			return err
-		}
-	}
+	_ = legacy
 	for _, dir := range []string{fsx.SessionsDir(), fsx.UsageDir()} {
 		if err := repairRuntimeDir(dir, 0o770|os.ModeSetgid, gid); err != nil {
 			return err
@@ -276,13 +386,17 @@ func FixRuntimePermissions(openvpnRoot string) error {
 			return err
 		}
 		for _, entry := range entries {
-			if entry.Type().IsRegular() && strings.HasPrefix(entry.Name(), ".tmp-") {
-				continue
+			if strings.HasPrefix(entry.Name(), ".tmp-") {
+				if entry.Type().IsRegular() {
+					continue
+				}
+				return fmt.Errorf("unexpected runtime symlink %s", filepath.Join(dir, entry.Name()))
 			}
 			if entry.IsDir() {
 				return fmt.Errorf("unexpected runtime directory %s", filepath.Join(dir, entry.Name()))
 			}
-			if err := fsx.SetPermissions(filepath.Join(dir, entry.Name()), 0o660, 0, gid); err != nil && !os.IsNotExist(err) {
+			path := filepath.Join(dir, entry.Name())
+			if err := setIfDiffers(path, 0o660, 0, gid); err != nil && !os.IsNotExist(err) {
 				return err
 			}
 		}
@@ -302,25 +416,46 @@ func FixRuntimePermissions(openvpnRoot string) error {
 	if err := log.Close(); err != nil {
 		return err
 	}
-	if err := fsx.SetPermissions(fsx.LogFile(), 0o660, 0, gid); err != nil {
+	if err := setIfDiffers(fsx.LogFile(), 0o660, 0, gid); err != nil {
 		return err
 	}
 	for i := 1; i <= 7; i++ {
 		for _, suffix := range []string{"", ".gz"} {
 			path := fmt.Sprintf("%s.%d%s", fsx.LogFile(), i, suffix)
-			if err := fsx.SetPermissions(path, 0o640, 0, gid); err != nil && !os.IsNotExist(err) {
+			if err := setIfDiffers(path, 0o640, 0, gid); err != nil && !os.IsNotExist(err) {
 				return err
 			}
 		}
 	}
-	if err := filepath.Walk(pkiDir, func(path string, info os.FileInfo, err error) error {
+	if err := fixPKIPerms(pkiDir, gid); err != nil {
+		return err
+	}
+	for _, path := range []string{filepath.Join(openvpnRoot, "server", "tls.key"), fsx.MgmtPassFile()} {
+		if _, err := os.Lstat(path); os.IsNotExist(err) {
+			continue
+		} else if err != nil {
+			return err
+		}
+		perm, group := os.FileMode(0o600), 0
+		if path == fsx.MgmtPassFile() {
+			perm, group = 0o640, gid
+		}
+		if err := setIfDiffers(path, perm, 0, group); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+func fixPKIPerms(pkiDir string, gid int) error {
+	return filepath.Walk(pkiDir, func(path string, info os.FileInfo, err error) error {
 		if os.IsNotExist(err) {
 			return nil
 		}
 		if err != nil {
 			return err
 		}
-		if info.Mode().IsRegular() && strings.HasPrefix(info.Name(), ".tmp-") {
+		if strings.HasPrefix(info.Name(), ".tmp-") && info.Mode().IsRegular() {
 			return nil
 		}
 		private := strings.Contains(path+"/", "/private/")
@@ -337,28 +472,11 @@ func FixRuntimePermissions(openvpnRoot string) error {
 		} else if info.Name() != "crl.pem" && info.Name() != "ca.crt" {
 			return nil
 		}
-		if err := fsx.SetPermissions(path, perm, 0, group); err != nil && !os.IsNotExist(err) {
+		if err := setIfDiffers(path, perm, 0, group); err != nil && !os.IsNotExist(err) {
 			return err
 		}
 		return nil
-	}); err != nil {
-		return err
-	}
-	for _, path := range []string{filepath.Join(openvpnRoot, "server", "tls.key"), fsx.MgmtPassFile()} {
-		if _, err := os.Lstat(path); os.IsNotExist(err) {
-			continue
-		} else if err != nil {
-			return err
-		}
-		perm, group := os.FileMode(0o600), 0
-		if path == fsx.MgmtPassFile() {
-			perm, group = 0o640, gid
-		}
-		if err := fsx.SetPermissions(path, perm, 0, group); err != nil {
-			return err
-		}
-	}
-	return nil
+	})
 }
 
 func repairRuntimeDir(path string, perm os.FileMode, gid int) error {

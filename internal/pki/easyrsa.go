@@ -140,6 +140,16 @@ func EnsureDirTree() error {
 	return nil
 }
 
+// RepairServerKeyPerms fixes the server key and certificate that a
+// renewal or PKI push just replaced. Unlike the full tree repair, it
+// only touches those two files.
+func RepairServerKeyPerms() error {
+	if err := fsx.SetPermissions(ServerKey(), 0o600, -1, -1); err != nil {
+		return err
+	}
+	return fsx.SetPermissions(ServerCert(), 0o644, -1, -1)
+}
+
 // EnsureSecretPerms repairs permissions on secret material.
 func EnsureSecretPerms() {
 	_ = fsx.SetPermissions(filepath.Join(PKIDir(), "private"), 0o700, -1, -1)

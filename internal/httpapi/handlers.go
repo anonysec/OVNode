@@ -6,11 +6,9 @@ package httpapi
 import (
 	"fmt"
 	"net/http"
-	"os"
 	"strconv"
 	"time"
 
-	"ovnode/internal/fsx"
 	"ovnode/internal/logging"
 	"ovnode/internal/ovpn"
 	"ovnode/internal/pki"
@@ -29,9 +27,6 @@ func (s *Server) handleHealth(w http.ResponseWriter, r *http.Request) {
 // keys are additive diagnostics, so the node's health is visible without
 // SSH.
 func (s *Server) handleStatus(w http.ResponseWriter, r *http.Request) {
-	if !s.authorize(w, r, false) {
-		return
-	}
 	errors1h, warnings1h, lastError := logging.Stats()
 	healthy := pki.Healthy()
 	status := "running"
@@ -68,9 +63,6 @@ func (s *Server) handleStatus(w http.ResponseWriter, r *http.Request) {
 // The records come from the in-memory ring buffer the agent writes into, so
 // a node that was never polled still has its own history.
 func (s *Server) handleLogs(w http.ResponseWriter, r *http.Request) {
-	if !s.authorize(w, r, false) {
-		return
-	}
 	level := r.URL.Query().Get("level")
 	if level == "" {
 		level = "WARNING"
@@ -106,9 +98,6 @@ func (s *Server) handleLogs(w http.ResponseWriter, r *http.Request) {
 // handleConfigGet answers the live endpoint settings, so the panel can
 // detect a drift against what it last pushed.
 func (s *Server) handleConfigGet(w http.ResponseWriter, r *http.Request) {
-	if !s.authorize(w, r, false) {
-		return
-	}
 	writeOK(w, "Configuration retrieved successfully", ovpn.ReadConfig())
 }
 
@@ -118,9 +107,6 @@ func (s *Server) handleConfigGet(w http.ResponseWriter, r *http.Request) {
 // against hot_reload (hot) — so the panel can sequence around a restart
 // without re-deriving the diff itself.
 func (s *Server) handleConfigPost(w http.ResponseWriter, r *http.Request) {
-	if !s.authorize(w, r, false) {
-		return
-	}
 	var req ovpn.ChangeConfigRequest
 	if err := decodeBody(w, r, &req); err != nil {
 		writeFail(w, "Invalid configuration payload")
@@ -130,9 +116,9 @@ func (s *Server) handleConfigPost(w http.ResponseWriter, r *http.Request) {
 		writeOK(w, "No changes requested", nil)
 		return
 	}
-	res := ovpn.ChangeConfigResult{}
-	if !ovpn.ChangeConfig(req, &res) {
-		writeFail(w, "Failed to change settings")
+	res, err := ovpn.ChangeConfig(req)
+	if err != nil {
+		writeFail(w, err.Error())
 		return
 	}
 	logging.Info("configuration applied (restart_required=%t, hot_reload=%t)",
@@ -148,14 +134,11 @@ func (s *Server) handleConfigPost(w http.ResponseWriter, r *http.Request) {
 // The failure is reported inside the envelope, so a broken OpenVPN cannot
 // take the API down with it.
 func (s *Server) handleRestart(w http.ResponseWriter, r *http.Request) {
-	if !s.authorize(w, r, true) {
-		return
-	}
 	restarted := ovpn.RestartOpenVPN()
 	running := ovpn.OpenVPNIsRunning()
 	if !restarted {
 		logging.Error("panel-triggered OpenVPN restart failed")
-		writeEnvelope(w, false, "OpenVPN restart failed",
+		writeEnvelope(w, http.StatusOK, false, "OpenVPN restart failed",
 			map[string]any{"openvpn_running": running})
 		return
 	}
@@ -166,7 +149,9 @@ func (s *Server) handleRestart(w http.ResponseWriter, r *http.Request) {
 // handleRenewCert renews the OpenVPN server certificate and restarts
 // OpenVPN, so the clients reconnect against the new one.
 func (s *Server) handleRenewCert(w http.ResponseWriter, r *http.Request) {
-	if !s.authorize(w, r, true) {
+	if err := pki.RepairServerKeyPerms(); err != nil {
+		logging.Error("server certificate renewal failed: %v", err)
+		writeFail(w, "Server certificate renewal failed — check the node logs")
 		return
 	}
 	if err := pki.RenewServerCert(); err != nil {
@@ -174,6 +159,7 @@ func (s *Server) handleRenewCert(w http.ResponseWriter, r *http.Request) {
 		writeFail(w, "Server certificate renewal failed — check the node logs")
 		return
 	}
+	_ = pki.RepairServerKeyPerms()
 	if !ovpn.RestartOpenVPN() {
 		writeFail(w, "Certificate renewed, but OpenVPN did not restart — restart it manually")
 		return
@@ -182,28 +168,12 @@ func (s *Server) handleRenewCert(w http.ResponseWriter, r *http.Request) {
 		map[string]any{"server_expiry": pki.CertExpiry(pki.ServerCert())})
 }
 
-// appDir resolves the installed application directory.
-func (s *Server) appDir() string {
-	appDir := fsx.EnvOr("APP_DIR", "")
-	if appDir == "" {
-		for _, c := range []string{"/opt/ovnode", "/usr/local/ovnode"} {
-			if _, err := os.Stat(c + "/install.sh"); err == nil {
-				appDir = c
-				break
-			}
-		}
-	}
-	if appDir == "" {
-		appDir = "/opt/ovnode"
-	}
-	return appDir
-}
+// appDir returns the installed application directory computed once
+// in NewServer.
+func (s *Server) appDir() string { return s.appDirPath }
 
 // handleUpdate triggers the node's self-update.
 func (s *Server) handleUpdate(w http.ResponseWriter, r *http.Request) {
-	if !s.authorize(w, r, true) {
-		return
-	}
 	var body struct {
 		Version string `json:"version"`
 	}

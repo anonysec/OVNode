@@ -11,6 +11,7 @@ import (
 	"os/exec"
 	"strconv"
 	"strings"
+	"sync"
 	"time"
 )
 
@@ -21,8 +22,65 @@ var months = map[string]int{
 	"Jul": 7, "Aug": 8, "Sep": 9, "Oct": 10, "Nov": 11, "Dec": 12,
 }
 
+type crlCacheEntry struct {
+	mtime     time.Time
+	caMtime   time.Time
+	days      int
+	matchesCA bool
+	crlExists bool
+}
+
+// crlCache is one small struct keyed by CRL file mtime. /sync/status
+// calls all three CRL helpers on every poll; without this it re-reads
+// and re-parses the same files each time. The CA mtime is folded in so
+// a pushed CA invalidates the match result.
+var crlCache struct {
+	mu    sync.Mutex
+	entry crlCacheEntry
+	have  bool
+}
+
+func crlCacheCurrent() (crlCacheEntry, bool) {
+	crlCache.mu.Lock()
+	defer crlCache.mu.Unlock()
+	if !crlCache.have {
+		return crlCacheEntry{}, false
+	}
+	fi, err := os.Stat(CRLFile())
+	if err != nil {
+		if os.IsNotExist(err) && !crlCache.entry.crlExists {
+			// A pushed CA invalidates the match result even when the CRL
+			// is still missing.
+			if ca, err := os.Stat(CACert()); err == nil && ca.ModTime().Equal(crlCache.entry.caMtime) {
+				return crlCache.entry, true
+			}
+		}
+		return crlCacheEntry{}, false
+	}
+	if !fi.ModTime().Equal(crlCache.entry.mtime) {
+		return crlCacheEntry{}, false
+	}
+	if ca, err := os.Stat(CACert()); err != nil {
+		return crlCacheEntry{}, false
+	} else if !ca.ModTime().Equal(crlCache.entry.caMtime) {
+		return crlCacheEntry{}, false
+	}
+	return crlCache.entry, true
+}
+
+func crlCacheStore(e crlCacheEntry) {
+	crlCache.mu.Lock()
+	defer crlCache.mu.Unlock()
+	crlCache.entry = e
+	crlCache.have = true
+}
+
 // CRLDaysRemaining returns days until CRL nextUpdate, or -1 if unreadable.
+// The result is cached by CRL file mtime.
 func CRLDaysRemaining() int {
+	if e, ok := crlCacheCurrent(); ok && e.crlExists {
+		return e.days
+	}
 	out, err := exec.Command("openssl", "crl", "-nextupdate", "-noout", "-in", CRLFile()).Output()
 	if err != nil {
 		return -1
@@ -30,6 +88,19 @@ func CRLDaysRemaining() int {
 	d := DaysUntilOpensslDate(string(out))
 	if d == nil {
 		return -1
+	}
+	if fi, err := os.Stat(CRLFile()); err == nil {
+		e := crlCacheEntry{mtime: fi.ModTime(), days: *d, crlExists: true}
+		if ca, err := os.Stat(CACert()); err == nil {
+			e.caMtime = ca.ModTime()
+		}
+		if prev, ok := crlCacheCurrent(); ok {
+			e = prev
+			e.days = *d
+			e.mtime = fi.ModTime()
+			e.crlExists = true
+		}
+		crlCacheStore(e)
 	}
 	return *d
 }
@@ -125,8 +196,17 @@ func EnsureCRLChecked() error {
 // crl-verify then rejects every client. Returning true when no CRL exists
 // keeps a fresh node from being reported as mismatched.
 func CRLMatchesCA() bool {
+	if e, ok := crlCacheCurrent(); ok {
+		return e.matchesCA
+	}
 	if _, err := os.Stat(CRLFile()); err != nil {
-		return os.IsNotExist(err)
+		res := os.IsNotExist(err)
+		e := crlCacheEntry{matchesCA: res}
+		if ca, err := os.Stat(CACert()); err == nil {
+			e.caMtime = ca.ModTime()
+		}
+		crlCacheStore(e)
+		return res
 	}
 	crlPEM, err := os.ReadFile(CRLFile())
 	if err != nil {
@@ -152,7 +232,19 @@ func CRLMatchesCA() bool {
 	if err != nil {
 		return false
 	}
-	return crl.CheckSignatureFrom(cert) == nil
+	res := crl.CheckSignatureFrom(cert) == nil
+	if fi, err := os.Stat(CRLFile()); err == nil {
+		e := crlCacheEntry{mtime: fi.ModTime(), matchesCA: res, crlExists: true}
+		if ca, err := os.Stat(CACert()); err == nil {
+			e.caMtime = ca.ModTime()
+		}
+		if prev, ok := crlCacheCurrent(); ok {
+			e.matchesCA = res
+			e.days = prev.days
+		}
+		crlCacheStore(e)
+	}
+	return res
 }
 
 // ReadTLSCryptKey returns the tls-crypt key or "".

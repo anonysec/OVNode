@@ -12,9 +12,6 @@ import (
 
 // handleUsage answers the per-user traffic counters.
 func (s *Server) handleUsage(w http.ResponseWriter, r *http.Request) {
-	if !s.authorize(w, r, false) {
-		return
-	}
 	usage, err := ovpn.UsersUsage()
 	if err != nil {
 		writeOK(w, "Usage sample unavailable", map[string]any{
@@ -39,9 +36,6 @@ func (s *Server) handleUsage(w http.ResponseWriter, r *http.Request) {
 // handleSessions answers the live sessions, the stale markers and the
 // login-health counters.
 func (s *Server) handleSessions(w http.ResponseWriter, r *http.Request) {
-	if !s.authorize(w, r, false) {
-		return
-	}
 	hours := 8
 	if raw := r.URL.Query().Get("hours"); raw != "" {
 		if n, err := strconv.Atoi(raw); err == nil {

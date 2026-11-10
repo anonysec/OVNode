@@ -104,7 +104,7 @@ func TestTreeOpenVPNRunningIgnoresForeignInstances(t *testing.T) {
 	if err := os.WriteFile(filepath.Join(serverDir, "ovnode.pid"), []byte("999999\n"), 0o644); err != nil {
 		t.Fatal(err)
 	}
-	if TreeOpenVPNRunning() {
+	if OpenVPNIsRunning() {
 		t.Fatal("a dead pid file reports a running OpenVPN")
 	}
 }

@@ -4,15 +4,13 @@
 package ratelimit
 
 import (
-	"crypto/sha256"
-	"encoding/hex"
-	"sort"
+	"slices"
 	"sync"
 	"time"
 )
 
 const (
-	window       = 60 * time.Second
+	span60s      = 60 * time.Second
 	failedWindow = 5 * time.Minute
 	maxRequests  = 120
 	globalMax    = 600
@@ -21,174 +19,92 @@ const (
 	maxBuckets   = 10000
 )
 
-type bucket struct {
+type timeEntry struct {
 	ts   []time.Time
 	last time.Time
 }
 
+type window struct {
+	max  int
+	span time.Duration
+	hits map[string]timeEntry
+}
+
 type Limiter struct {
-	mu        sync.Mutex
-	lastPrune time.Time
-	buckets   map[string]*bucket
-	global    *bucket
-	heavy     map[string]*bucket
-	failed    map[string]*bucket
+	mu     sync.Mutex
+	t      *window
+	global *window
+	heavy  *window
+	failed *window
 }
 
 func New() *Limiter {
 	return &Limiter{
-		buckets: map[string]*bucket{},
-		global:  &bucket{},
-		heavy:   map[string]*bucket{},
-		failed:  map[string]*bucket{},
+		t:      &window{max: maxRequests, span: span60s, hits: map[string]timeEntry{}},
+		global: &window{max: globalMax, span: span60s, hits: map[string]timeEntry{}},
+		heavy:  &window{max: heavyMax, span: span60s, hits: map[string]timeEntry{}},
+		failed: &window{max: failedMax, span: failedWindow, hits: map[string]timeEntry{}},
 	}
 }
 
-func keyFor(client string) string {
-	h := sha256.Sum256([]byte(client))
-	return hex.EncodeToString(h[:])[:32]
+func (w *window) trim(now time.Time) {
+	for k, e := range w.hits {
+		i := 0
+		for i < len(e.ts) && now.Sub(e.ts[i]) >= w.span {
+			i++
+		}
+		if i > 0 {
+			e.ts = e.ts[i:]
+		}
+		if len(e.ts) == 0 {
+			delete(w.hits, k)
+			continue
+		}
+		if i > 0 {
+			w.hits[k] = e
+		}
+	}
 }
 
-// trimExpired drops timestamps older than the window in place.
-func trimExpired(b *bucket, now time.Time, w time.Duration) {
-	i := 0
-	for i < len(b.ts) && now.Sub(b.ts[i]) >= w {
-		i++
-	}
-	if i > 0 {
-		b.ts = b.ts[i:]
-	}
-}
-
-func (l *Limiter) prune(now time.Time) {
-	if !l.lastPrune.IsZero() && now.Sub(l.lastPrune) < 10*time.Second &&
-		len(l.buckets) < maxBuckets && len(l.heavy) < maxBuckets &&
-		len(l.failed) < maxBuckets {
+func (w *window) cap(now time.Time) {
+	if len(w.hits) < maxBuckets {
 		return
 	}
-	l.lastPrune = now
-
-	pruneMap := func(m map[string]*bucket, w time.Duration) {
-		for k, b := range m {
-			trimExpired(b, now, w)
-			if len(b.ts) == 0 {
-				delete(m, k)
-			}
-		}
-		if len(m) >= maxBuckets {
-			// Evict the oldest 10% in one pass, so the map stays below
-			// maxBuckets and the next inserts do not sort again.
-			target := maxBuckets - maxBuckets/10
-			type kv struct {
-				k    string
-				last time.Time
-			}
-			keys := make([]kv, 0, len(m))
-			for k, b := range m {
-				keys = append(keys, kv{k, b.last})
-			}
-			sort.Slice(keys, func(i, j int) bool { return keys[i].last.Before(keys[j].last) })
-			excess := len(m) - target
-			for i := 0; i < excess && i < len(keys); i++ {
-				delete(m, keys[i].k)
-			}
-		}
+	keys := make([]string, 0, len(w.hits))
+	for k := range w.hits {
+		keys = append(keys, k)
 	}
-
-	pruneMap(l.buckets, window)
-	pruneMap(l.heavy, window)
-	pruneMap(l.failed, failedWindow)
-
-	// global single bucket
-	trimExpired(l.global, now, window)
+	target := maxBuckets - maxBuckets/10
+	slices.SortFunc(keys, func(a, b string) int { return w.hits[a].last.Compare(w.hits[b].last) })
+	for i := 0; i < len(keys)-target; i++ {
+		delete(w.hits, keys[i])
+	}
 }
 
-func (l *Limiter) Allow(client string) (bool, time.Duration) {
+func (w *window) allow(key string) (bool, time.Duration) {
 	now := time.Now()
-	key := keyFor(client)
-	l.mu.Lock()
-	defer l.mu.Unlock()
-	l.prune(now)
-
-	b, ok := l.buckets[key]
-	if !ok {
-		b = &bucket{}
-		l.buckets[key] = b
-	}
-	trimExpired(b, now, window)
-	if len(b.ts) >= maxRequests {
-		b.last = now
-		retry := window - now.Sub(b.ts[0])
+	w.trim(now)
+	w.cap(now)
+	e := w.hits[key]
+	if len(e.ts) >= w.max {
+		retry := w.span - now.Sub(e.ts[0])
 		if retry < time.Second {
 			retry = time.Second
 		}
 		return false, retry
 	}
-	b.ts = append(b.ts, now)
-	b.last = now
-	l.prune(now)
+	e.ts = append(e.ts, now)
+	e.last = now
+	w.hits[key] = e
 	return true, 0
 }
 
-func (l *Limiter) AllowHeavy(client string) (bool, time.Duration) {
+func (w *window) blocked(key string) (bool, time.Duration) {
 	now := time.Now()
-	key := keyFor(client)
-	l.mu.Lock()
-	defer l.mu.Unlock()
-	l.prune(now)
-
-	b, ok := l.heavy[key]
-	if !ok {
-		b = &bucket{}
-		l.heavy[key] = b
-	}
-	trimExpired(b, now, window)
-	if len(b.ts) >= heavyMax {
-		b.last = now
-		retry := window - now.Sub(b.ts[0])
-		if retry < time.Second {
-			retry = time.Second
-		}
-		return false, retry
-	}
-	b.ts = append(b.ts, now)
-	b.last = now
-	return true, 0
-}
-
-func (l *Limiter) AllowGlobal() (bool, time.Duration) {
-	now := time.Now()
-	l.mu.Lock()
-	defer l.mu.Unlock()
-	l.prune(now)
-
-	b := l.global
-	trimExpired(b, now, window)
-	if len(b.ts) >= globalMax {
-		retry := window - now.Sub(b.ts[0])
-		if retry < time.Second {
-			retry = time.Second
-		}
-		return false, retry
-	}
-	b.ts = append(b.ts, now)
-	return true, 0
-}
-
-// FailedBlocked reports whether client is currently locked out for repeated
-// failed authentication, without recording a new failure.
-func (l *Limiter) FailedBlocked(client string) (bool, time.Duration) {
-	now := time.Now()
-	key := keyFor(client)
-	l.mu.Lock()
-	defer l.mu.Unlock()
-	b := l.failed[key]
-	if b == nil {
-		return false, 0
-	}
-	trimExpired(b, now, failedWindow)
-	if len(b.ts) >= failedMax {
-		retry := failedWindow - now.Sub(b.ts[0])
+	w.trim(now)
+	e := w.hits[key]
+	if len(e.ts) >= w.max {
+		retry := w.span - now.Sub(e.ts[0])
 		if retry < time.Second {
 			retry = time.Second
 		}
@@ -197,44 +113,45 @@ func (l *Limiter) FailedBlocked(client string) (bool, time.Duration) {
 	return false, 0
 }
 
-// RecordFailedAuth records one failed authentication attempt for client.
-func (l *Limiter) RecordFailedAuth(client string) {
+func (w *window) record(key string) {
 	now := time.Now()
-	key := keyFor(client)
-	l.mu.Lock()
-	defer l.mu.Unlock()
-	b, ok := l.failed[key]
-	if !ok {
-		b = &bucket{}
-		l.failed[key] = b
-	}
-	trimExpired(b, now, failedWindow)
-	b.ts = append(b.ts, now)
-	b.last = now
+	w.trim(now)
+	e := w.hits[key]
+	e.ts = append(e.ts, now)
+	e.last = now
+	w.hits[key] = e
 }
 
-func (l *Limiter) AllowFailedAuth(client string) (bool, time.Duration) {
-	now := time.Now()
-	key := keyFor(client)
+func (l *Limiter) Allow(client string) (bool, time.Duration) {
 	l.mu.Lock()
 	defer l.mu.Unlock()
-	l.prune(now)
-
-	b, ok := l.failed[key]
-	if !ok {
-		b = &bucket{}
-		l.failed[key] = b
-	}
-	trimExpired(b, now, failedWindow)
-	if len(b.ts) >= failedMax {
-		retry := failedWindow - now.Sub(b.ts[0])
-		if retry < time.Second {
-			retry = time.Second
-		}
-		b.last = now
-		return false, retry
-	}
-	b.ts = append(b.ts, now)
-	b.last = now
-	return true, 0
+	return l.t.allow(client)
+}
+func (l *Limiter) AllowHeavy(client string) (bool, time.Duration) {
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	return l.heavy.allow(client)
+}
+func (l *Limiter) AllowGlobal() (bool, time.Duration) {
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	return l.global.allow("")
+}
+func (l *Limiter) FailedBlocked(client string) (bool, time.Duration) {
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	return l.failed.blocked(client)
+}
+func (l *Limiter) RecordFailedAuth(client string) {
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	l.failed.record(client)
+}
+func (l *Limiter) prune(now time.Time) {
+	l.t.trim(now)
+	l.t.cap(now)
+	l.global.trim(now)
+	l.heavy.trim(now)
+	l.heavy.cap(now)
+	l.failed.trim(now)
 }

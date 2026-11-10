@@ -56,14 +56,7 @@ func Connect(cfg config.Hook, arg string) int {
 	safeIP := Sanitize(orUnknown(trustedIP))
 	safePort := Sanitize(orUnknown(trustedPort))
 
-	// Reject CNs whose sanitized form differs, so distinct names cannot
-	// collapse onto one store entry / limit / disabled flag.
-	if safeCN != cn {
-		logging.Event(cfg.LogFile, "CN=%s (sanitized=%s) rejected: malformed; REJECT", safeCN, safeCN)
-		return 1
-	}
-	// Fail closed on malformed input.
-	if !HookCNValid(safeCN) {
+	if !validHookCN(cn, safeCN) {
 		logging.Event(cfg.LogFile, "CN=%s (sanitized=%s) rejected: malformed; REJECT", safeCN, safeCN)
 		return 1
 	}
@@ -109,21 +102,10 @@ func Connect(cfg config.Hook, arg string) int {
 	if limit == 0 {
 		// Unlimited still gets an accounting marker, under the session
 		// lock so a delayed disconnect cannot interleave.
-		gen := newGeneration()
-		marker := store.Marker{
-			CommonName:  safeCN,
-			TrustedIP:   trustedIP,
-			TrustedPort: trustedPort,
-			PoolIP:      poolIP,
-			Created:     time.Now().Unix(),
-			SessionID:   key + "." + gen,
-			ConnectedAt: connStart,
-		}
+		marker := newMarker(safeCN, trustedIP, trustedPort, poolIP, key, connStart)
 		if err := store.Lock(filepath.Join(cfg.SessionsDir, ".lock."+safeCN), 0o660, func() error {
-			// Bank a displaced/crashed old generation before replacing
-			// its marker (same primitive as takeover).
-			sessions := liveRows(ovpn.SessionsForCN(cfg.StatusFile, safeCN))
-			if err := bankDisplacedGeneration(cfg, safeCN, key, poolIP, sessions); err != nil {
+			if err := bankDisplacedGeneration(cfg, safeCN, key, poolIP,
+				liveRows(ovpn.SessionsForCN(cfg.StatusFile, safeCN))); err != nil {
 				return err
 			}
 			return store.WriteMarker(filepath.Join(cfg.SessionsDir, key), marker)
@@ -151,6 +133,102 @@ func Connect(cfg config.Hook, arg string) int {
 	return exit
 }
 
+func validHookCN(cn, safeCN string) bool {
+	// Reject CNs whose sanitized form differs, so distinct names cannot
+	// collapse onto one store entry / limit / disabled flag.
+	return safeCN == cn && HookCNValid(safeCN)
+}
+
+func newMarker(safeCN, trustedIP, trustedPort, poolIP, key string, connStart int64) store.Marker {
+	return store.Marker{
+		CommonName:  safeCN,
+		TrustedIP:   trustedIP,
+		TrustedPort: trustedPort,
+		PoolIP:      poolIP,
+		Created:     time.Now().Unix(),
+		SessionID:   key + "." + newGeneration(),
+		ConnectedAt: connStart,
+	}
+}
+
+// liveSessions is the hook's one live-session read: the management socket
+// when it answers, otherwise the status file.
+func liveSessions(cfg config.Hook, safeCN string) []ovpn.Session {
+	return liveRows(ovpn.LiveSessionsForCN(cfg.StatusFile, safeCN))
+}
+
+// freshMarkerCount counts markers of this CN written in the marker window
+// and absent from the live list: a connect accepted seconds ago is live
+// before the status file or management has echoed it.
+func freshMarkerCount(cfg config.Hook, safeCN string, sessions []ovpn.Session, ownKey string) int {
+	seen := make(map[string]bool, len(sessions))
+	for _, s := range sessions {
+		if s.VirtualAddress != "" {
+			seen[s.VirtualAddress] = true
+		}
+		if s.RealAddress != "" {
+			seen[s.RealAddress] = true
+		}
+	}
+	now := time.Now().Unix()
+	count := 0
+	entries, err := os.ReadDir(cfg.SessionsDir)
+	if err != nil {
+		return 0
+	}
+	for _, e := range entries {
+		if e.IsDir() || e.Name() == ownKey || !strings.HasPrefix(e.Name(), safeCN+".") {
+			continue
+		}
+		m, ok := store.ReadMarker(filepath.Join(cfg.SessionsDir, e.Name()))
+		if !ok {
+			continue
+		}
+		created := m.Created
+		if created == 0 {
+			created = m.ConnectedAt
+		}
+		if created == 0 || now-created > 10 || now-created < -10 {
+			continue
+		}
+		if seen[m.PoolIP] || seen[m.TrustedIP+":"+m.TrustedPort] {
+			continue
+		}
+		count++
+	}
+	return count
+}
+
+// freshMarkerPresent reports whether any marker of this CN was written
+// in the marker window. A fresh marker means the previous hook accepted a
+// session seconds ago, so a dead management socket cannot prove the old
+// session is gone.
+func freshMarkerPresent(cfg config.Hook, safeCN string) bool {
+	now := time.Now().Unix()
+	entries, err := os.ReadDir(cfg.SessionsDir)
+	if err != nil {
+		return false
+	}
+	for _, e := range entries {
+		if e.IsDir() || !strings.HasPrefix(e.Name(), safeCN+".") {
+			continue
+		}
+		m, ok := store.ReadMarker(filepath.Join(cfg.SessionsDir, e.Name()))
+		if !ok {
+			continue
+		}
+		created := m.Created
+		if created == 0 {
+			created = m.ConnectedAt
+		}
+		if created == 0 || now-created > 10 || now-created < -10 {
+			continue
+		}
+		return true
+	}
+	return false
+}
+
 // connectLocked is the policy under the per-CN lock.
 func connectLocked(
 	cfg config.Hook,
@@ -160,10 +238,11 @@ func connectLocked(
 ) int {
 	safeIP := Sanitize(orUnknown(trustedIP))
 	safePort := Sanitize(orUnknown(trustedPort))
-	// One status read for the whole hook: the live session count of this
-	// CN decides admission.
-	sessions := liveRows(ovpn.SessionsForCN(cfg.StatusFile, safeCN))
-	count := len(sessions)
+	// One live read for the whole hook: the live session count of this
+	// CN decides admission. Fresh markers the live list has not echoed yet
+	// count as live too.
+	sessions := liveSessions(cfg, safeCN)
+	count := len(sessions) + freshMarkerCount(cfg, safeCN, sessions, key)
 
 	if count >= limit {
 		if limit != 1 {
@@ -176,16 +255,7 @@ func connectLocked(
 		}
 	}
 
-	gen := newGeneration()
-	marker := store.Marker{
-		CommonName:  safeCN,
-		TrustedIP:   trustedIP,
-		TrustedPort: trustedPort,
-		PoolIP:      poolIP,
-		Created:     time.Now().Unix(),
-		SessionID:   key + "." + gen,
-		ConnectedAt: connStart,
-	}
+	marker := newMarker(safeCN, trustedIP, trustedPort, poolIP, key, connStart)
 	// If this key holds a previous generation (takeover/pool reuse), bank
 	// its last observed status bytes as closed before overwriting the
 	// marker: the delayed disconnect of the old generation will be
@@ -273,6 +343,12 @@ func takeover(
 			cn, orUnknown(trustedIP), orUnknown(trustedPort), orNone(poolIP))
 		return false
 	default:
+		if freshMarkerPresent(cfg, safeCN) {
+			logging.Event(cfg.LogFile,
+				"CN=%s ip=%s:%s pool=%s takeover could not verify old session termination; REJECT",
+				cn, orUnknown(trustedIP), orUnknown(trustedPort), orNone(poolIP))
+			return false
+		}
 		logging.Event(cfg.LogFile,
 			"CN=%s ip=%s:%s pool=%s limit=1 status=%d; management unavailable; DEGRADE (markers replaced, corpse reaped by ping-restart)",
 			cn, orUnknown(trustedIP), orUnknown(trustedPort), orNone(poolIP), count)

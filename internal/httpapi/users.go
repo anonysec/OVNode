@@ -91,9 +91,6 @@ var errInvalidUserID = errors.New("invalid user id (must be UUID or simple id)")
 
 // handleUserCreate provisions a user: certificate, profile, name and limit.
 func (s *Server) handleUserCreate(w http.ResponseWriter, r *http.Request) {
-	if !s.authorize(w, r, true) {
-		return
-	}
 	var body createUserRequest
 	if err := decodeBody(w, r, &body); err != nil {
 		writeFail(w, "Invalid user payload")
@@ -119,9 +116,6 @@ func (s *Server) handleUserCreate(w http.ResponseWriter, r *http.Request) {
 
 // handleUserStatus activates or deactivates a user.
 func (s *Server) handleUserStatus(w http.ResponseWriter, r *http.Request) {
-	if !s.authorize(w, r, false) {
-		return
-	}
 	var body userStatusRequest
 	if err := decodeBody(w, r, &body); err != nil {
 		writeFail(w, "Invalid user payload")
@@ -160,9 +154,6 @@ func (s *Server) handleUserStatus(w http.ResponseWriter, r *http.Request) {
 
 // handleUserLimit sets the max simultaneous logins of a user.
 func (s *Server) handleUserLimit(w http.ResponseWriter, r *http.Request) {
-	if !s.authorize(w, r, false) {
-		return
-	}
 	var body userLimitRequest
 	if err := decodeBody(w, r, &body); err != nil {
 		writeFail(w, "Invalid user payload")
@@ -193,9 +184,6 @@ func (s *Server) handleUserLimit(w http.ResponseWriter, r *http.Request) {
 
 // handleUserDelete revokes the certificate of a user and removes its tree.
 func (s *Server) handleUserDelete(w http.ResponseWriter, r *http.Request) {
-	if !s.authorize(w, r, true) {
-		return
-	}
 	cn, err := store.SafeCN(strings.TrimSpace(r.PathValue("uid")))
 	if err != nil {
 		writeFail(w, errInvalidUserID.Error())
@@ -222,9 +210,6 @@ func (s *Server) handleUserDelete(w http.ResponseWriter, r *http.Request) {
 // only_stale is the safe mode: it never kills a live session, it only drops
 // the markers whose session is gone.
 func (s *Server) handleUserDisconnect(w http.ResponseWriter, r *http.Request) {
-	if !s.authorize(w, r, false) {
-		return
-	}
 	cn, err := store.SafeCN(strings.TrimSpace(r.PathValue("uid")))
 	if err != nil {
 		writeFail(w, errInvalidUserID.Error())
@@ -248,9 +233,6 @@ func (s *Server) handleUserDisconnect(w http.ResponseWriter, r *http.Request) {
 
 // handleResetUsage zeroes the banked traffic counters of a user.
 func (s *Server) handleResetUsage(w http.ResponseWriter, r *http.Request) {
-	if !s.authorize(w, r, false) {
-		return
-	}
 	cn, err := store.SafeCN(strings.TrimSpace(r.PathValue("uid")))
 	if err != nil {
 		writeFail(w, errInvalidUserID.Error())
@@ -269,9 +251,6 @@ func (s *Server) handleResetUsage(w http.ResponseWriter, r *http.Request) {
 // with "client" or carry a "<ca>" block), so the profile is built here on
 // the first download.
 func (s *Server) handleDownloadOVPN(w http.ResponseWriter, r *http.Request) {
-	if !s.authorize(w, r, true) {
-		return
-	}
 	cn, err := store.SafeCN(strings.TrimSpace(r.PathValue("uid")))
 	if err != nil {
 		writeFail(w, errInvalidUserID.Error())
@@ -294,9 +273,6 @@ func (s *Server) handleDownloadOVPN(w http.ResponseWriter, r *http.Request) {
 // A per-item failure lands in "failed": one broken user must not fail the
 // whole sweep.
 func (s *Server) handleBulkLimits(w http.ResponseWriter, r *http.Request) {
-	if !s.authorize(w, r, false) {
-		return
-	}
 	var body bulkLimitsRequest
 	if err := decodeBody(w, r, &body); err != nil {
 		writeFail(w, "Invalid user payload")
@@ -337,9 +313,6 @@ func (s *Server) handleBulkLimits(w http.ResponseWriter, r *http.Request) {
 // The panel owns the PKI: it signs the user certificate and pushes it here.
 // The node stores it passively and never invokes a local CA.
 func (s *Server) handlePushCreds(w http.ResponseWriter, r *http.Request) {
-	if !s.authorize(w, r, false) {
-		return
-	}
 	cn, err := store.SafeCN(strings.TrimSpace(r.PathValue("cn")))
 	if err != nil {
 		writeFail(w, errInvalidUserID.Error())
@@ -370,9 +343,6 @@ func (s *Server) handlePushCreds(w http.ResponseWriter, r *http.Request) {
 // paths server.conf reads, then OpenVPN is reloaded (never restarted) when
 // it is running.
 func (s *Server) handlePushPKI(w http.ResponseWriter, r *http.Request) {
-	if !s.authorize(w, r, true) {
-		return
-	}
 	var body pushPKIRequest
 	if err := decodeBody(w, r, &body); err != nil {
 		writeFail(w, "Invalid PKI payload")
@@ -462,5 +432,6 @@ func (s *Server) handlePushPKI(w http.ResponseWriter, r *http.Request) {
 	if ovpn.OpenVPNIsRunning() {
 		reloaded = ovpn.ReloadOpenVPN()
 	}
+	_ = pki.RepairServerKeyPerms()
 	writeOK(w, "PKI stored", map[string]any{"reloaded": reloaded})
 }

@@ -202,6 +202,12 @@ func RecordSessionUsage(usageDir, cn, sessionID string, bytes uint64, closed boo
 			}
 		}
 		sess, ok := st.Sessions[sessionID]
+		if ok && !closed && sess.Bytes == bytes && !sess.Closed {
+			// Bytes unchanged and the session is not finalising: no
+			// write. Opening a temp file and fsyncing on every poll.
+			result = st
+			return nil
+		}
 		if !ok {
 			sess = UsageSession{MarkerKey: markerKeyOf(sessionID)}
 		}
