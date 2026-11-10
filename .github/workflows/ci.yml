@@ -41,6 +41,8 @@ jobs:
           # Pinned: bump deliberately (Dependabot does not track go install).
           go install github.com/securego/gosec/v2/cmd/gosec@v2.30.0
           gosec -exclude-dir=internal/fsx/testdata -exclude=G104,G301,G302,G306,G304,G703,G204 ./...
+          go install golang.org/x/tools/cmd/deadcode@latest
+          deadcode ./...
       - name: Shellcheck
         run: shellcheck -S warning install.sh lib.sh ovnode.sh scripts/smoke-test.sh
       - name: Contract drift check
