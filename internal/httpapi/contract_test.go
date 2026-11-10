@@ -67,6 +67,7 @@ var contract = []contractRow{
 		Response: []string{"removed_markers", "killed_sessions"}},
 	{Method: http.MethodPost, Path: "/sync/user/{uid}/reset-usage"},
 	{Method: http.MethodGet, Path: "/sync/download/ovpn/{uid}", ResponseRaw: true},
+	{Method: http.MethodGet, Path: "/sync/backup", ResponseRaw: true},
 	{Method: http.MethodPost, Path: "/sync/users",
 		Request:  []string{"users[].id", "users[].max_logins"},
 		Response: []string{"applied", "failed"}},

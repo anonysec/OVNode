@@ -160,6 +160,7 @@ func (s *Server) routes() *http.ServeMux {
 	mux.HandleFunc("POST /sync/user/{uid}/disconnect", s.guard(s.handleUserDisconnect, false))
 	mux.HandleFunc("POST /sync/user/{uid}/reset-usage", s.guard(s.handleResetUsage, false))
 	mux.HandleFunc("GET /sync/download/ovpn/{uid}", s.gzipSkip(s.guard(s.handleDownloadOVPN, true)))
+	mux.HandleFunc("GET /sync/backup", s.gzipSkip(s.guard(s.handleBackup, true)))
 	mux.HandleFunc("POST /sync/users", s.guard(s.handleBulkLimits, false))
 	mux.HandleFunc("PUT /sync/users/{cn}", s.guard(s.handlePushCreds, false))
 	mux.HandleFunc("PUT /sync/pki", s.guard(s.handlePushPKI, true))
