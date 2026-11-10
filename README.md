@@ -6,7 +6,7 @@ The VPN server half of an [OVManager](https://github.com/anonysec/OVManager) dep
   <img src=".github/assets/banner.svg" alt="OVNode — the VPN server agent for OVManager" width="820">
   <br><br>
 
-  [![Version](https://img.shields.io/badge/version-2.0.2-blue)](CHANGELOG.md)
+  [![Version](https://img.shields.io/badge/version-2.0.3-blue)](CHANGELOG.md)
   [![License: MIT](https://img.shields.io/badge/License-MIT-green.svg)](LICENSE)
   [![CI](https://github.com/anonysec/OVNode/actions/workflows/ci.yml/badge.svg)](https://github.com/anonysec/OVNode/actions/workflows/ci.yml)
   [![Go](https://img.shields.io/badge/go-1.27-00ADD8?logo=go&logoColor=white)](go.mod)
@@ -16,7 +16,7 @@ The VPN server half of an [OVManager](https://github.com/anonysec/OVManager) dep
 
 ## Project Status
 
-> **Stable release (v2.0.2)**
+> **Stable release (v2.0.3)**
 >
 > This repository is a stable, production-ready release. The API, configuration format and deployment model are frozen for this line; the changelog lists every change. Use it on VPN servers.
 
@@ -326,7 +326,7 @@ The production installer consumes release binaries (verified against the release
 
 MIT. See [LICENSE](LICENSE).
 
-OVManager and OVNode are independent repositories released on the same line (currently `2.0.2`). The OVManager installer can install OVNode on the same host; register the node in OVManager under **Nodes → Add Node**. The node never calls the panel — see the OVManager guide [Adding nodes](https://anonysec.github.io/OVManager/wiki/nodes.html).
+OVManager and OVNode are independent repositories released on the same line (currently `2.0.3`). The OVManager installer can install OVNode on the same host; register the node in OVManager under **Nodes → Add Node**. The node never calls the panel — see the OVManager guide [Adding nodes](https://anonysec.github.io/OVManager/wiki/nodes.html).
 
 ## Dev builds
 Install a rolling dev build: `OVN_VERSION=dev bash <(curl -sSL https://raw.githubusercontent.com/anonysec/OVNode/main/install.sh)`. Dev versions look like `dev-YYYYMMDD.N-<sha>`.
