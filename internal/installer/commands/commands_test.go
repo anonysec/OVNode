@@ -82,6 +82,7 @@ func TestWriteEnvShape(t *testing.T) {
 		t.Fatal(err)
 	}
 	want := "NODE_NAME=eu-1\n" +
+		"OVNODE_INSTANCE=ovnode\n" +
 		"DATA_DIR=" + filepath.Join(dir, "data") + "\n" +
 		"OVNODE_DATA_DIR=" + filepath.Join(dir, "data") + "\n" +
 		"SERVICE_PORT=2083\n" +
@@ -91,8 +92,10 @@ func TestWriteEnvShape(t *testing.T) {
 		"OVNODE_RUNTIME_USER=ovnode-vpn\n" +
 		"OVNODE_RUNTIME_GROUP=ovnode-vpn\n" +
 		"TLS_METHOD=selfsigned\n" +
+		"MANAGEMENT_PORT=7526\n" +
 		"OVNODE_OPENVPN_ROOT=/var/lib/ovnode/openvpn\n" +
 		"OVNODE_NAT_CONF=/etc/default/ovnode-nat\n" +
+		"OVNODE_LOG_DIR=/var/log/ovnode\n" +
 		"OVNODE_PANEL_ALLOW=203.0.113.9\n"
 	if string(data) != want {
 		t.Fatalf(".env = %q\nwant %q", data, want)

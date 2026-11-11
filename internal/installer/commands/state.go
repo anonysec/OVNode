@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"strconv"
 	"strings"
 )
 
@@ -23,6 +24,8 @@ type Config struct {
 	AppDir      string
 	DataBase    string
 	OpenVPNRoot string
+	LogDir      string
+	MgmtPort    int
 
 	Version string
 	Repo    string
@@ -99,29 +102,42 @@ func FromEnv() *Config {
 }
 
 func (c *Config) resolveDirs() {
+	if c.Instance == "" {
+		c.Instance = "ovnode"
+	}
 	if v := os.Getenv("OVN_APP_DIR"); v != "" {
 		c.AppDir = v
-	} else if c.Instance != "" {
-		c.AppDir = "/opt/" + c.Instance
 	} else {
-		c.AppDir = "/opt/ovnode"
+		c.AppDir = "/opt/" + c.Instance
 	}
 	if v := os.Getenv("OVN_DATA_BASE"); v != "" {
 		c.DataBase = v
-	} else if c.Instance != "" {
-		c.DataBase = "/var/lib/" + c.Instance
 	} else {
-		c.DataBase = "/var/lib/ovnode"
+		c.DataBase = "/var/lib/" + c.Instance
 	}
-	// OpenVPN root: per-instance so multiple ovnode instances (and other
-	// projects' OpenVPN) never share /etc/openvpn. Override via
-	// OVN_OPENVPN_ROOT for custom locations.
 	if v := os.Getenv("OVN_OPENVPN_ROOT"); v != "" {
 		c.OpenVPNRoot = v
-	} else if c.Instance != "" && c.Instance != "ovnode" {
-		c.OpenVPNRoot = "/var/lib/" + c.Instance + "/openvpn"
 	} else {
-		c.OpenVPNRoot = "/var/lib/ovnode/openvpn"
+		c.OpenVPNRoot = "/var/lib/" + c.Instance + "/openvpn"
+	}
+	if v := os.Getenv("OVN_LOG_DIR"); v != "" {
+		c.LogDir = v
+	} else {
+		c.LogDir = "/var/log/" + c.Instance
+	}
+	// Management port: unique per instance to avoid conflicts on 127.0.0.1.
+	if v := os.Getenv("OVN_MGMT_PORT"); v != "" {
+		if n, err := strconv.Atoi(v); err == nil && n >= 1 && n <= 65535 {
+			c.MgmtPort = n
+		}
+	}
+	if c.MgmtPort == 0 {
+		// Hash instance name to a port in 7505..7604.
+		h := 0
+		for _, ch := range c.Instance {
+			h = h*31 + int(ch)
+		}
+		c.MgmtPort = 7505 + (h % 100)
 	}
 }
 

@@ -14,6 +14,7 @@ func (c *Config) writeEnv() error {
 	}
 	var b strings.Builder
 	fmt.Fprintf(&b, "NODE_NAME=%s\n", c.NodeName)
+	fmt.Fprintf(&b, "OVNODE_INSTANCE=%s\n", c.Instance)
 	fmt.Fprintf(&b, "DATA_DIR=%s\n", c.DataDir())
 	fmt.Fprintf(&b, "OVNODE_DATA_DIR=%s\n", c.DataDir())
 	fmt.Fprintf(&b, "SERVICE_PORT=%s\n", c.Port)
@@ -27,8 +28,10 @@ func (c *Config) writeEnv() error {
 	fmt.Fprintf(&b, "OVNODE_RUNTIME_USER=%s\n", c.RuntimeUser)
 	fmt.Fprintf(&b, "OVNODE_RUNTIME_GROUP=%s\n", c.RuntimeGroup)
 	fmt.Fprintf(&b, "TLS_METHOD=%s\n", c.TLSMethod)
+	fmt.Fprintf(&b, "MANAGEMENT_PORT=%d\n", c.MgmtPort)
 	fmt.Fprintf(&b, "OVNODE_OPENVPN_ROOT=%s\n", c.OpenVPNRoot)
 	fmt.Fprintf(&b, "OVNODE_NAT_CONF=%s\n", c.natConfigPath())
+	fmt.Fprintf(&b, "OVNODE_LOG_DIR=%s\n", c.LogDir)
 	if c.ExtraPorts != "" {
 		fmt.Fprintf(&b, "OVNODE_EXTRA_PORTS=%s\n", c.ExtraPorts)
 	}
