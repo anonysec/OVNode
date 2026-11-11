@@ -68,10 +68,37 @@ func Enforce(panelID string) error {
 		if panelID == "" {
 			return os.ErrPermission
 		}
-		if now0-cache.rec.LastSeen > leaseSeconds {
-			// Lease expired: fall through to the write.
+		// Re-read the file to get the latest last_seen, as the cache might be stale.
+		fi, err := os.Stat(path)
+		if err == nil && !fi.ModTime().Equal(cache.mtime) {
+			cache.have = false
+		}
+		if cache.have {
+			data, err := os.ReadFile(path)
+			if err == nil {
+				var r record
+				if json.Unmarshal(data, &r) == nil && r.PanelID == panelID {
+					cache.rec = &r
+					cache.mtime = fi.ModTime()
+				} else {
+					cache.have = false
+				}
+			} else {
+				cache.have = false
+			}
+		}
+		if !cache.have || cache.rec == nil || cache.rec.PanelID != panelID {
+			// Cache is stale or panelID changed, fall through to write.
 		} else {
-			return os.ErrPermission
+			now0 := time.Now().Unix()
+			if now0-cache.rec.LastSeen < 60 {
+				return nil
+			}
+			if now0-cache.rec.LastSeen > leaseSeconds {
+				// Lease expired: fall through to the write.
+			} else {
+				return os.ErrPermission
+			}
 		}
 	}
 	if err := os.MkdirAll(dir, 0o755); err != nil {
