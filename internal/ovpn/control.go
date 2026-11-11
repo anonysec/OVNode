@@ -23,15 +23,45 @@ var changeConfigMu sync.Mutex
 
 // ChangeConfigRequest mirrors the panel's pushed settings.
 type ChangeConfigRequest struct {
-	OVPNPort      any     `json:"ovpn_port"`
-	Protocol      string  `json:"protocol"`
-	TunnelAddress string  `json:"tunnel_address"`
-	SetNewSetting *bool   `json:"set_new_setting"`
-	DNS1          *string `json:"dns1"`
-	DNS2          *string `json:"dns2"`
-	EnableIPv6    *bool   `json:"enable_ipv6"`
-	IPv6Prefix    *string `json:"ipv6_prefix"`
-	ExtraPorts    any     `json:"extra_ports"`
+	Settings      *SettingsPatch `json:"settings"`
+	OVPNPort      any            `json:"ovpn_port"`
+	Protocol      string         `json:"protocol"`
+	TunnelAddress string         `json:"tunnel_address"`
+	SetNewSetting *bool          `json:"set_new_setting"`
+	DNS1          *string        `json:"dns1"`
+	DNS2          *string        `json:"dns2"`
+	EnableIPv6    *bool          `json:"enable_ipv6"`
+	IPv6Prefix    *string        `json:"ipv6_prefix"`
+	ExtraPorts    any            `json:"extra_ports"`
+}
+
+// SettingsPatch carries a partial settings update from the panel. Every field
+// is optional; omitted fields keep their current value.
+type SettingsPatch struct {
+	Protocol         *string   `json:"Protocol"`
+	Port             *int      `json:"Port"`
+	TunnelAddress    *string   `json:"TunnelAddress"`
+	ExtraPorts       *[]int    `json:"ExtraPorts"`
+	MaxClients       *int      `json:"MaxClients"`
+	KeepalivePing    *int      `json:"KeepalivePing"`
+	KeepaliveTimeout *int      `json:"KeepaliveTimeout"`
+	ExplicitExit     *bool     `json:"ExplicitExitNotify"`
+	RedirectGateway  *bool     `json:"RedirectGateway"`
+	BlockOutsideDNS  *bool     `json:"BlockOutsideDns"`
+	ClientToClient   *bool     `json:"ClientToClient"`
+	DNSPrimary       *string   `json:"DnsPrimary"`
+	DNSSecondary     *string   `json:"DnsSecondary"`
+	DNSDomain        *string   `json:"DnsDomain"`
+	PushRoutes       *[]string `json:"PushRoutes"`
+	IPv6Enabled      *bool     `json:"Ipv6Enabled"`
+	IPv6Prefix       *string   `json:"Ipv6Prefix"`
+	TunMTU           *int      `json:"TunMtu"`
+	Mssfix           *int      `json:"Mssfix"`
+	CipherFirst      *string   `json:"CipherFirst"`
+	TLSMin           *string   `json:"TlsMin"`
+	RenegSec         *int      `json:"RenegSec"`
+	InactiveTimeout  *int      `json:"InactiveTimeout"`
+	Verb             *int      `json:"Verb"`
 }
 
 // ChangeConfigResult classifies how the change was applied.
@@ -67,6 +97,7 @@ func ReadConfig() map[string]any {
 		cfg = settings.Defaults()
 	}
 	return map[string]any{
+		"settings":       cfg,
 		"port":           cfg.Port,
 		"proto":          cfg.Protocol,
 		"tunnel_address": cfg.TunnelAddress,
@@ -87,11 +118,135 @@ func ChangeConfig(req ChangeConfigRequest) (ChangeConfigResult, error) {
 			logging.Syslog("ChangeConfig panic: %v", r)
 		}
 	}()
+	if req.Settings != nil {
+		return applySettingsPatch(*req.Settings)
+	}
 	c, err := parseConfigRequest(req)
 	if err != nil {
 		return ChangeConfigResult{}, err
 	}
 	return applyConfigChange(c)
+}
+
+// applySettingsPatch merges a partial settings update, regenerates the
+// configuration and restarts or reloads the children.
+func applySettingsPatch(patch SettingsPatch) (ChangeConfigResult, error) {
+	old, err := settings.Load()
+	if err != nil {
+		return ChangeConfigResult{}, fmt.Errorf("could not read node settings")
+	}
+	next := old
+	if patch.Protocol != nil {
+		proto, ok := settings.NormalizeProtocol(*patch.Protocol)
+		if !ok {
+			return ChangeConfigResult{}, fmt.Errorf("protocol must be tcp, udp or both")
+		}
+		next.Protocol = proto
+	}
+	if patch.Port != nil {
+		next.Port = *patch.Port
+	}
+	if patch.TunnelAddress != nil {
+		next.TunnelAddress = *patch.TunnelAddress
+	}
+	if patch.ExtraPorts != nil {
+		next.ExtraPorts = *patch.ExtraPorts
+	}
+	if patch.MaxClients != nil {
+		next.MaxClients = *patch.MaxClients
+	}
+	if patch.KeepalivePing != nil {
+		next.KeepalivePing = *patch.KeepalivePing
+	}
+	if patch.KeepaliveTimeout != nil {
+		next.KeepaliveTimeout = *patch.KeepaliveTimeout
+	}
+	if patch.ExplicitExit != nil {
+		next.ExplicitExit = *patch.ExplicitExit
+	}
+	if patch.RedirectGateway != nil {
+		next.RedirectGateway = *patch.RedirectGateway
+	}
+	if patch.BlockOutsideDNS != nil {
+		next.BlockOutsideDNS = *patch.BlockOutsideDNS
+	}
+	if patch.ClientToClient != nil {
+		next.ClientToClient = *patch.ClientToClient
+	}
+	if patch.DNSPrimary != nil {
+		next.DNSPrimary = *patch.DNSPrimary
+	}
+	if patch.DNSSecondary != nil {
+		next.DNSSecondary = *patch.DNSSecondary
+	}
+	if patch.DNSDomain != nil {
+		next.DNSDomain = *patch.DNSDomain
+	}
+	if patch.PushRoutes != nil {
+		next.PushRoutes = *patch.PushRoutes
+	}
+	if patch.IPv6Enabled != nil {
+		next.IPv6Enabled = *patch.IPv6Enabled
+	}
+	if patch.IPv6Prefix != nil {
+		next.IPv6Prefix = *patch.IPv6Prefix
+	}
+	if patch.TunMTU != nil {
+		next.TunMTU = *patch.TunMTU
+	}
+	if patch.Mssfix != nil {
+		next.Mssfix = *patch.Mssfix
+	}
+	if patch.CipherFirst != nil {
+		next.CipherFirst = *patch.CipherFirst
+	}
+	if patch.TLSMin != nil {
+		next.TLSMin = *patch.TLSMin
+	}
+	if patch.RenegSec != nil {
+		next.RenegSec = *patch.RenegSec
+	}
+	if patch.InactiveTimeout != nil {
+		next.InactiveTimeout = *patch.InactiveTimeout
+	}
+	if patch.Verb != nil {
+		next.Verb = *patch.Verb
+	}
+	if reflect.DeepEqual(next, old) {
+		return ChangeConfigResult{}, nil
+	}
+	if err := settings.Save(next); err != nil {
+		return ChangeConfigResult{}, err
+	}
+	rollback := func() {
+		_ = settings.Save(old)
+		EnsureServerConf()
+		_ = EnsureClientTemplate()
+		invalidateCachedOVPN()
+	}
+	EnsureServerConf()
+	if err := EnsureClientTemplate(); err != nil {
+		rollback()
+		return ChangeConfigResult{}, fmt.Errorf("client template: %w", err)
+	}
+	invalidateCachedOVPN()
+
+	restart := next.Protocol != old.Protocol ||
+		next.Port != old.Port ||
+		next.IPv6Enabled != old.IPv6Enabled ||
+		next.IPv6Prefix != old.IPv6Prefix
+	if restart {
+		if OpenVPNIsRunning() && !RestartOpenVPN() {
+			rollback()
+			return ChangeConfigResult{RestartRequired: true}, fmt.Errorf("OpenVPN restart failed")
+		}
+		return ChangeConfigResult{RestartRequired: true}, nil
+	}
+	if OpenVPNIsRunning() && !ReloadOpenVPN() {
+		rollback()
+		return ChangeConfigResult{}, fmt.Errorf("OpenVPN reload failed")
+	}
+	return ChangeConfigResult{HotReload: true}, nil
 }
 
 // applyConfigChange writes the settings file, regenerates every protocol's
