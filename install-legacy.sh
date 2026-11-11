@@ -49,7 +49,7 @@ DEFAULT_VPN=1194
 # real /etc/systemd/system. Unset it and the path is exactly what it was.
 SYSTEMD_DIR="${OVN_SYSTEMD_DIR:-/etc/systemd/system}"
 SYSTEMD_SERVICE="ovnode.service"
-OPENVPN_SERVICE="ovnode-openvpn.service"
+# OPENVPN_SERVICE removed — openvpn runs as a child of the agent (SYSTEMD_SERVICE).
 NAT_SERVICE="ovnode-nat.service"
 NAT_CONF="/etc/default/ovnode-nat"
 SYSCTL_CONF="/etc/sysctl.d/99-ovnode.conf"
@@ -684,30 +684,8 @@ ensure_openvpn_dirs() {
 }
 
 write_openvpn_unit() {
-    : # legacy: OpenVPN daemon is now a child of ovnode.service (write_systemd_unit does ExecStart); this function stays for uninstall cleanup only.
+    : # legacy: OpenVPN daemon is now a child of ovnode.service; no separate unit.
     return 0
-    # shellcheck disable=SC2317
-    cat > "$SYSTEMD_DIR/$OPENVPN_SERVICE" << UNIT
-[Unit]
-Description=OVNode OpenVPN daemon
-After=network-online.target
-Wants=network-online.target
-Documentation=https://github.com/anonysec/OVNode
-
-[Service]
-Type=simple
-ExecStart=/usr/sbin/openvpn --config $OPENVPN_ROOT/server/server.conf
-Restart=on-failure
-RestartSec=5
-LimitNOFILE=65536
-RuntimeDirectory=ovnode-openvpn
-RuntimeDirectoryMode=0755
-
-[Install]
-WantedBy=multi-user.target
-UNIT
-    systemctl daemon-reload >/dev/null 2>&1
-    systemctl enable "$OPENVPN_SERVICE" >/dev/null 2>&1 || true
 }
 
 start_openvpn_service() {
@@ -916,7 +894,7 @@ ${OPENVPN_ROOT}/server/openvpn.log {
     missingok
     notifempty
     postrotate
-        systemctl kill -s HUP $OPENVPN_SERVICE >/dev/null 2>&1 || true
+        systemctl kill -s HUP $SYSTEMD_SERVICE >/dev/null 2>&1 || true
     endscript
 }
 ROTATE
@@ -1666,11 +1644,9 @@ do_uninstall() {
     # Stopping the NAT unit runs its ExecStop cleanup (rules removed).
     systemctl_bounded stop "$NAT_SERVICE" 2>/dev/null || true
     systemctl_bounded stop "$SYSTEMD_SERVICE"
-    systemctl_bounded stop "$OPENVPN_SERVICE"
-    systemctl disable "$NAT_SERVICE" "$SYSTEMD_SERVICE" "$OPENVPN_SERVICE" 2>/dev/null || true
+    systemctl disable "$NAT_SERVICE" "$SYSTEMD_SERVICE" 2>/dev/null || true
     rm -f "$SYSTEMD_DIR/$NAT_SERVICE" \
           "$SYSTEMD_DIR/$SYSTEMD_SERVICE" \
-          "$SYSTEMD_DIR/$OPENVPN_SERVICE" \
           /etc/cron.d/ovnode-purge
     systemctl daemon-reload 2>/dev/null || true
 
@@ -1993,7 +1969,7 @@ main() {
     if [[ -z "${OVN_APP_DIR:-}" ]]; then APP_DIR="/opt/$INSTANCE_NAME"; fi
     if [[ -z "${OVN_DATA_BASE:-}" ]]; then DATA_BASE="/var/lib/$INSTANCE_NAME"; fi
     SYSTEMD_SERVICE="${INSTANCE_NAME}.service"
-    OPENVPN_SERVICE="${INSTANCE_NAME}-openvpn.service"
+    # OPENVPN_SERVICE removed — openvpn runs as a child of the agent (SYSTEMD_SERVICE).
     CLI_NAME="$INSTANCE_NAME"
 
     # Before anything touches $APP_DIR, before load_helpers, which downloads

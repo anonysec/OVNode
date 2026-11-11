@@ -26,7 +26,7 @@ LOG_DIR="$(env_get "${APP_DIR:-/opt/$INSTANCE}/.env" OVNODE_LOG_DIR 2>/dev/null 
 PAIRING_FILE="${OVN_DATA_DIR:-/var/lib/$INSTANCE_NAME}/state/pairing.json"
 DEFAULT_PORT=2083
 SYSTEMD_SERVICE="${INSTANCE_NAME}.service"
-OPENVPN_SERVICE="${SYSTEMD_SERVICE}"
+# OPENVPN_SERVICE removed — openvpn runs as a child of the agent (SYSTEMD_SERVICE).
 INSTALLER="$APP_DIR/install.sh"
 BIN_DIR="${OVN_BIN_DIR:-/usr/local/bin}"
 CLI_NAME="$INSTANCE_NAME"
@@ -156,7 +156,7 @@ do_status() {
 
         if has_systemd; then
             agent="$(systemctl is-active "$SYSTEMD_SERVICE" 2>/dev/null || true)"
-            openvpn="$(systemctl is-active "$OPENVPN_SERVICE" 2>/dev/null || true)"
+            openvpn="$(systemctl is-active "$SYSTEMD_SERVICE" 2>/dev/null || true)"
         fi
 
         local scheme="http"
@@ -213,7 +213,7 @@ node_autostart() {  # enable|disable
 }
 
 restart_vpn() {
-    if timeout "$STOP_TIMEOUT" systemctl restart "$OPENVPN_SERVICE" 2>/dev/null; then
+    if timeout "$STOP_TIMEOUT" systemctl restart "$SYSTEMD_SERVICE" 2>/dev/null; then
         render_ok "OpenVPN restarted (systemd)"
         return 0
     fi
@@ -365,11 +365,11 @@ do_restore() {
     # before extracting, or abort without touching the tree.
     local was_agent=0 was_vpn=0
     [[ "$(systemctl is-active "$SYSTEMD_SERVICE" 2>/dev/null)" == "active" ]] && was_agent=1
-    [[ "$(systemctl is-active "$OPENVPN_SERVICE" 2>/dev/null)" == "active" ]] && was_vpn=1
+    [[ "$(systemctl is-active "$SYSTEMD_SERVICE" 2>/dev/null)" == "active" ]] && was_vpn=1
     systemctl_bounded stop "$SYSTEMD_SERVICE" >/dev/null 2>&1 || true
-    systemctl_bounded stop "$OPENVPN_SERVICE" >/dev/null 2>&1 || true
+    systemctl_bounded stop "$SYSTEMD_SERVICE" >/dev/null 2>&1 || true
     if [[ "$was_agent" -eq 1 && "$(systemctl is-active "$SYSTEMD_SERVICE" 2>/dev/null)" == "active" ]] \
-        || [[ "$was_vpn" -eq 1 && "$(systemctl is-active "$OPENVPN_SERVICE" 2>/dev/null)" == "active" ]]; then
+        || [[ "$was_vpn" -eq 1 && "$(systemctl is-active "$SYSTEMD_SERVICE" 2>/dev/null)" == "active" ]]; then
         die "Restore aborted: service did not stop — the current state is untouched, safety copies hold pre-restore state" "$EX_ERROR"
     fi
     tar --no-absolute-filenames -xzf "$src" -C "$(restore_target_dir "$src")" \
@@ -948,7 +948,7 @@ parse_args() {
             --instance)   eval "$need2"; OVN_INSTANCE="$2"; INSTANCE_NAME="$2"; export OVN_INSTANCE
                           if [[ -z "${OVN_APP_DIR:-}" ]]; then APP_DIR="/opt/$INSTANCE_NAME"; fi
                           if [[ -z "${OVN_DATA_BASE:-}" ]]; then DATA_BASE="/var/lib/$INSTANCE_NAME"; fi
-                          SYSTEMD_SERVICE="${INSTANCE_NAME}.service"; OPENVPN_SERVICE="${SYSTEMD_SERVICE}"; CLI_NAME="$INSTANCE_NAME"; INSTALLER="$APP_DIR/install.sh"
+                          SYSTEMD_SERVICE="${INSTANCE_NAME}.service"; # OPENVPN_SERVICE removed — openvpn runs as a child of the agent (SYSTEMD_SERVICE).; CLI_NAME="$INSTANCE_NAME"; INSTALLER="$APP_DIR/install.sh"
                           shift 2 ;;
             update)       ACTION="update"; shift ;;
             uninstall|--uninstall) ACTION="uninstall"; shift ;;

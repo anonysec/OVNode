@@ -18,11 +18,8 @@ import (
 
 // SuperviseOpenVPN runs the OpenVPN daemon as a child of the agent process.
 //
-// Before there were two units (ovnode.service + ovnode-openvpn.service); both
-// pointed at the same tree and both had to be restarted together. Now
-// ovnode.service forks openvpn as a child and respawns it on exit — a single
-// unit owns the whole lifecycle. Returns true when a config exists and the
-// child was started; false otherwise.
+// Before OpenVPN ran as a separate unit; now it is a child of the agent and
+// is respawned by SuperviseOpenVPN. There is no separate unit to restart.
 func SuperviseOpenVPN(ctx context.Context) bool {
 	conf := settingFile()
 	if _, err := exec.LookPath("openvpn"); err != nil {
