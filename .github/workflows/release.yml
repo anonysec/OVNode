@@ -73,6 +73,6 @@ jobs:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
           gh release upload "v${VER}" --clobber \
-            install.sh install-legacy.sh \
+            install.sh \
             ovnode-linux-amd64 ovnode-linux-arm64 \
             SHA256SUMS

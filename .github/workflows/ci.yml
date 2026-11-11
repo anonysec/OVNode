@@ -59,7 +59,7 @@ jobs:
             exit 1
           fi
       - name: Installer regression tests
-        run: bash scripts/test-installer.sh
+        run: bash scripts/test-installer-go.sh
 
   lint:
     runs-on: ubuntu-latest

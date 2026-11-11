@@ -2,7 +2,7 @@
 # shellcheck disable=SC2034,SC2012,SC2015,SC2016,SC1091
 # Copyright (c) 2026 anonysec
 # SPDX-License-Identifier: MIT
-# Bootstrap: fetch, verify, then exec the Go installer. Legacy: install-legacy.sh.
+# Bootstrap: fetch, verify, then exec the Go installer.
 set -Eeuo pipefail
 VERSION="${OVN_VERSION:-${OVM_VERSION:-latest}}"
 REPO="${OVN_REPO:-anonysec/OVNode}"

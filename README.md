@@ -103,9 +103,8 @@ bash <(curl -sSL https://raw.githubusercontent.com/anonysec/OVNode/main/install.
 ```
 
 The bootstrap downloads the verified release binary, then runs the Go
-installer (`ovnode install`). The previous bash installer is shipped one
-release as `install-legacy.sh`.
-To answer every setting yourself, run the interactive installer instead:
+installer (`ovnode install`). To answer every setting yourself, run the
+interactive installer instead:
 
 ```bash
 bash <(curl -sSL https://raw.githubusercontent.com/anonysec/OVNode/main/install.sh) interactive

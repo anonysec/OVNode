@@ -21,7 +21,7 @@ check-bash:
 # Fresh-install and existing-install paths, end to end, with the release
 # fixture instead of the network.
 check-installer:
-	@bash scripts/test-installer.sh
+	@bash scripts/test-installer-go.sh
 
 lint:
 	@$(SHELL_FILES) -exec bash -n {} \;

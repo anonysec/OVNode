@@ -128,7 +128,7 @@ func (c *Config) fetchRelease(dest string) error {
 		return nil
 	}
 	// Without a bootstrap download there is nothing honest to do: the fake
-	// release fixture (test-installer.sh) only exercises bash. Return the
+	// release fixture (test-installer-go.sh) only exercises the harness. Return the
 	// same failures bash would.
 	repo := c.Repo
 	url := "https://github.com/" + repo + "/releases/download/v" + c.Version + "/ovnode-linux-" + archName()

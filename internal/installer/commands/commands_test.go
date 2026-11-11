@@ -107,7 +107,7 @@ func TestWriteEnvShape(t *testing.T) {
 }
 
 // TestInstallStateMatchesBash instantiates the seven states from
-// scripts/test-installer.sh and requires the same answer.
+// scripts/test-installer-go.sh and requires the same answer.
 func TestInstallStateMatchesBash(t *testing.T) {
 	t.Setenv("OVN_SYSTEMD_DIR", t.TempDir())
 	c := FromEnv()
