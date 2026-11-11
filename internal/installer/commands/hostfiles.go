@@ -99,6 +99,11 @@ func (c *Config) installAgentBinary() error {
 	if err := os.WriteFile(dst, data, 0o755); err != nil {
 		return err
 	}
+	// The downloaded bootstrap copy is not the canonical binary: the tree
+	// runs ovnode-server, and the bootstrap prefers it.
+	if src != dst {
+		_ = os.Remove(src)
+	}
 	legacy := filepath.Join(c.AppDir, "agent")
 	if legacy != dst {
 		_ = os.Remove(legacy)

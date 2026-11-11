@@ -28,8 +28,10 @@ if [[ "$LOCAL" -eq 1 ]]; then
   command -v go >/dev/null 2>&1 || fail "go is required for --local builds"
   mkdir -p "$AppDir"
   ( cd "$SRC_DIR" && go build -o "$AppDir/ovnode" ./cmd/ovnode ) || fail "local build failed"
-  "$AppDir/ovnode" assets write --dest "$AppDir" >/dev/null || true
-  exec "$AppDir/ovnode" install "$@"
+  BIN="$AppDir/ovnode-server"
+  [[ -x "$BIN" ]] || BIN="$AppDir/ovnode"
+  "$BIN" assets write --dest "$AppDir" >/dev/null || true
+  exec "$BIN" install "$@"
 fi
 if [[ "$VERSION" == "latest" ]]; then
   VERSION="$(curl -fsSL "https://api.github.com/repos/$REPO/releases/latest" 2>/dev/null | sed -n 's/.*"tag_name"[[:space:]]*:[[:space:]]*"v\([^"]*\)".*/\1/p' | head -n1)"
@@ -60,5 +62,10 @@ else
   rm -rf "$TMP"; trap - EXIT
   printf '  ok    release v%s verified and installed\n' "$VERSION" >&2
 fi
-"$AppDir/ovnode" assets write --dest "$AppDir" >/dev/null || true
-exec "$AppDir/ovnode" install "$@"
+# Prefer the installed agent: the bootstrap copy can be older than the tree
+# (an update stages a new ovnode-server), and the update path must run the
+# binary that belongs to the tree.
+BIN="$AppDir/ovnode-server"
+[[ -x "$BIN" ]] || BIN="$AppDir/ovnode"
+"$BIN" assets write --dest "$AppDir" >/dev/null || true
+exec "$BIN" install "$@"
