@@ -26,7 +26,7 @@ func TestVersionSpotsAgree(t *testing.T) {
 	}{
 		{"internal/version/version.go", regexp.MustCompile(`(?:const|var) Version = "([^"]+)"`)},
 		{"internal/assets/ovnode.sh", regexp.MustCompile(`(?m)^VERSION="([^"]+)"`)},
-		{"README.md", regexp.MustCompile(`badge/version-([0-9][^-]*)`)},
+		{"README.md", regexp.MustCompile(`badge/version-([0-9][A-Za-z0-9.\-]*?)-blue`)},
 	}
 	for _, spot := range spots {
 		data, err := os.ReadFile(filepath.Join(root, spot.file))
@@ -39,7 +39,8 @@ func TestVersionSpotsAgree(t *testing.T) {
 			t.Errorf("%s: no version match for %s", spot.file, spot.re)
 			continue
 		}
-		if got := string(m[1]); got != Version {
+		got := strings.ReplaceAll(string(m[1]), "--", "-")
+		if got != Version {
 			t.Errorf("%s says %q, but the binary reports %q", spot.file, got, Version)
 		}
 	}

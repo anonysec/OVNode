@@ -33,8 +33,9 @@ format:
 
 check-version:
 	@v=$$(grep -m1 'var Version' internal/version/version.go | cut -d'"' -f2); \
+	bv=$$(printf "%s" "$$v" | sed "s/-/--/g"); \
 	grep -q "VERSION=\"$$v\"" internal/assets/ovnode.sh || { echo "ovnode.sh version mismatch ($$v)"; exit 1; }; \
-	grep -q "badge/version-$$v-blue" README.md || { echo "README badge mismatch ($$v)"; exit 1; }; \
+	grep -q "badge/version-$$bv-blue" README.md || { echo "README badge mismatch ($$v)"; exit 1; }; \
 	echo "version parity OK: $$v"
 
 verify: lint check-version

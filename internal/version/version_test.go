@@ -11,7 +11,7 @@ import (
 // The version is shown in the installer banner, the operator menu and the
 // panel's node card. A malformed string there breaks all three at once, and
 // nothing else in the tree would notice.
-var versionPattern = regexp.MustCompile(`^\d+\.\d+\.\d+$`)
+var versionPattern = regexp.MustCompile(`^\d+\.\d+\.\d+(-[0-9A-Za-z.-]+)?$`)
 
 func TestVersionIsWellFormed(t *testing.T) {
 	if !versionPattern.MatchString(Version) {
