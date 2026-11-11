@@ -97,7 +97,7 @@ func Enforce(panelID string) error {
 			if now0-cache.rec.LastSeen > leaseSeconds {
 				// Lease expired: fall through to the write.
 			} else {
-				return os.ErrPermission
+				// Same panel refreshing mid-lease: fall through to write.
 			}
 		}
 	}
