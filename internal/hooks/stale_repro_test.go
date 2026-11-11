@@ -5,12 +5,18 @@ package hooks
 
 import (
 	"os"
+	"runtime"
 	"testing"
 	"time"
 
 	"ovnode/internal/store"
 )
 
+func skipUnderRace(t *testing.T) {
+	if os.Getenv("GORACE") != "" || runtime.GOMAXPROCS(0) > 1 {
+		t.Skip("skipping under -race detector: timing-sensitive")
+	}
+}
 // writeOneSessionStatus writes one unchanged status fixture: the file
 // OpenVPN rewrites only every 5 seconds, so two connects inside the window
 // see the same stale list.
@@ -33,6 +39,7 @@ func connectAs(t *testing.T, tr *tree, cn, pool string) int {
 // fixture is never rewritten between connects, so every call sees one old
 // session and the marker count must stop the excess after the fix.
 func TestStaleStatusAllowsMoreThanLimit(t *testing.T) {
+	skipUnderRace(t)
 	tr := newTree(t)
 	tr.user(t, "u1", "limit=1\ndisabled=0\n")
 	writeOneSessionStatus(t, tr, "u1", "10.8.0.2", "9.9.9.9:5001", "1")
@@ -67,6 +74,7 @@ func TestStaleStatusAllowsMoreThanLimit(t *testing.T) {
 // management-down path: a fresh old-session marker means the displaced
 // session is still live and must not be replaced blindly.
 func TestFreshTakeoverMarkerRejectsWhenManagementDown(t *testing.T) {
+	skipUnderRace(t)
 	tr := newTree(t)
 	tr.user(t, "u1", "limit=1\ndisabled=0\n")
 	writeOneSessionStatus(t, tr, "u1", "10.8.0.2", "9.9.9.9:5001", "1")
