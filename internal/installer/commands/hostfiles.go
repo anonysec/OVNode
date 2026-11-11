@@ -122,12 +122,12 @@ func (c *Config) installCLI() {
 func (c *Config) removeCLI() {
 	binDir := envOr("OVN_BIN_DIR", "/usr/local/bin")
 	_ = os.Remove(filepath.Join(binDir, c.CLIName))
-	_ = os.Remove(filepath.Join(envOr("OVN_COMPLETION_DIR", "/etc/bash_completion.d"), "ovnode"))
+	_ = os.Remove(c.completionPath())
 }
 
 // cronLine mirrors the ovnode-purge cron entry.
 func (c *Config) writeCron() error {
-	path := "/etc/cron.d/ovnode-purge"
+	path := c.cronPath()
 	line := fmt.Sprintf("0 3 * * * root %s hook purge-stale >/dev/null 2>&1\n", c.AgentBin())
 	return os.WriteFile(path, []byte(line), 0o644)
 }

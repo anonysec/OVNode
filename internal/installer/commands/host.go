@@ -4,7 +4,6 @@ import (
 	"fmt"
 	"os"
 	"os/exec"
-	"path/filepath"
 	"strings"
 	"syscall"
 )
@@ -87,8 +86,6 @@ func killProcess(pid int) bool {
 }
 
 // dirOf mirrors bash dirname.
-func dirOf(p string) string { return filepath.Dir(p) }
-
 // envOr reads an env var with fallback.
 func envOr(name, fallback string) string {
 	if v := os.Getenv(name); v != "" {

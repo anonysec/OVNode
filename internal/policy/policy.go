@@ -201,7 +201,7 @@ func natConfigPath() string {
 	if v := os.Getenv("OVNODE_NAT_CONF"); v != "" {
 		return v
 	}
-	return "/etc/default/ovnode-nat"
+	return "/etc/default/" + fsx.InstanceName() + "-nat"
 }
 
 func SyncNATConfig(primaryPort int, extraPorts []int) error {

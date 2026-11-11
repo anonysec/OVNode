@@ -149,6 +149,20 @@ func (c *Config) finalize() {
 	c.CLIName = c.Instance
 }
 
+// Host files the installer owns. Every one carries the instance name so a
+// second instance never overwrites or removes the first one's files.
+func (c *Config) logrotatePath() string {
+	return envOr("OVNODE_LOGROTATE_CONF", "/etc/logrotate.d/"+c.Instance)
+}
+func (c *Config) sysctlPath() string { return "/etc/sysctl.d/99-" + c.Instance + ".conf" }
+func (c *Config) cronPath() string   { return "/etc/cron.d/" + c.Instance + "-purge" }
+func (c *Config) completionPath() string {
+	return filepath.Join(envOr("OVN_COMPLETION_DIR", "/etc/bash_completion.d"), c.CLIName)
+}
+func (c *Config) instanceBackupDir(label string) string {
+	return filepath.Join("/var/backups", c.Instance+"-"+label)
+}
+
 // AgentBin mirrors bash AGENT_BIN.
 func (c *Config) AgentBin() string { return filepath.Join(c.AppDir, "ovnode-server") }
 

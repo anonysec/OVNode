@@ -40,10 +40,10 @@ func (c *Config) setupNAT(r Runner) error {
 	if err := os.MkdirAll("/etc/sysctl.d", 0o755); err != nil {
 		return err
 	}
-	if err := os.WriteFile("/etc/sysctl.d/99-ovnode.conf", []byte(sysctl), 0o644); err != nil {
+	if err := os.WriteFile(c.sysctlPath(), []byte(sysctl), 0o644); err != nil {
 		return err
 	}
-	_ = r.Run("sysctl", "-p", "/etc/sysctl.d/99-ovnode.conf")
+	_ = r.Run("sysctl", "-p", c.sysctlPath())
 	return r.Run(c.AgentBin(), "nat", "apply")
 }
 
@@ -60,7 +60,7 @@ func (c *Config) setupLogrotate() error {
 		return err
 	}
 	content := fmt.Sprintf("%s/server/openvpn.log {\n    size 10M\n    rotate 3\n    compress\n    missingok\n    notifempty\n    postrotate\n        systemctl kill -s HUP %s >/dev/null 2>&1 || true\n    endscript\n}\n", c.OpenVPNRoot, c.Service)
-	path := envOr("OVNODE_LOGROTATE_CONF", "/etc/logrotate.d/ovnode")
+	path := c.logrotatePath()
 	if err := os.WriteFile(path, []byte(content), 0o644); err != nil {
 		return err
 	}

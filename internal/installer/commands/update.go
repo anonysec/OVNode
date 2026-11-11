@@ -45,7 +45,7 @@ func Update(c *Config, runner Runner) error {
 	u := &updateCtx{from: from, safety: safety, identity: identity}
 	_ = u
 	// [2/6] Stage — fetch and stage the candidate.
-	stage := filepath.Join(dirOf(c.AppDir), ".ovnode.staging")
+	stage := c.AppDir + ".staging"
 	_ = os.RemoveAll(stage)
 	if err := os.MkdirAll(stage, 0o755); err != nil {
 		return err
@@ -63,7 +63,7 @@ func Update(c *Config, runner Runner) error {
 	}
 	_ = installer.WriteUpdateState(u.statePath(c), "activating", from, c.Version, safety, identity)
 	// [4/6] Activate — atomic rename, previous is kept for failover.
-	previous := filepath.Join(dirOf(c.AppDir), ".ovnode.previous")
+	previous := c.AppDir + ".previous"
 	_ = os.RemoveAll(previous)
 	if err := os.Rename(c.AppDir, previous); err != nil {
 		// Previous tree vanished mid-flight: maintenance stays, journal says so.
@@ -121,8 +121,8 @@ func Update(c *Config, runner Runner) error {
 func failover(c *Config, u *updateCtx, runner Runner) error {
 	// Same ordering as node_failover: stop, restore previous + state, restart.
 	_ = systemctlBounded(runner, "stop", c.Service)
-	previous := filepath.Join(dirOf(c.AppDir), ".ovnode.previous")
-	stage := filepath.Join(dirOf(c.AppDir), ".ovnode.staging")
+	previous := c.AppDir + ".previous"
+	stage := c.AppDir + ".staging"
 	_ = os.RemoveAll(stage)
 	_ = os.Rename(c.AppDir, stage)
 	if err := os.Rename(previous, c.AppDir); err != nil {

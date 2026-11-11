@@ -50,9 +50,9 @@ func Uninstall(c *Config, runner Runner) error {
 	for _, u := range []string{c.NatService, c.Service} {
 		_ = os.Remove(filepath.Join(sd, u))
 	}
-	_ = os.Remove("/etc/cron.d/ovnode-purge")
+	_ = os.Remove(c.cronPath())
 	_ = systemctlDirect(runner, "daemon-reload")
-	for _, p := range []string{"/etc/default/ovnode-nat", "/etc/sysctl.d/99-ovnode.conf", "/etc/logrotate.d/ovnode"} {
+	for _, p := range []string{c.natConfigPath(), c.sysctlPath(), c.logrotatePath()} {
 		_ = os.Remove(p)
 	}
 	c.removeCLI()
@@ -63,13 +63,13 @@ func Uninstall(c *Config, runner Runner) error {
 	if c.Purge {
 		// Pre-delete backups preserve exactly what was removed, matching
 		// bash backup_dir then rm -rf.
-		if err := backupDir(c.DataBase, "node-pre-purge"); err != nil {
+		if err := backupDir(c.DataBase, c.instanceBackupDir("pre-purge-data")); err != nil {
 			fmt.Fprintf(os.Stderr, "warning: %v\n", err)
 		}
 		if err := os.RemoveAll(c.DataBase); err != nil && !os.IsNotExist(err) {
 			return err
 		}
-		if err := backupDir(c.OpenVPNRoot, "openvpn-pre-purge"); err != nil {
+		if err := backupDir(c.OpenVPNRoot, c.instanceBackupDir("pre-purge-openvpn")); err != nil {
 			fmt.Fprintf(os.Stderr, "warning: %v\n", err)
 		}
 		if err := os.RemoveAll(c.OpenVPNRoot); err != nil && !os.IsNotExist(err) {
@@ -82,11 +82,10 @@ func Uninstall(c *Config, runner Runner) error {
 	return nil
 }
 
-func backupDir(path, label string) error {
+func backupDir(path, dst string) error {
 	if _, err := os.Stat(path); err != nil {
 		return nil
 	}
-	dst := filepath.Join("/var/backups", label)
 	if err := os.MkdirAll(dst, 0o755); err != nil {
 		return err
 	}

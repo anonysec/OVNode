@@ -205,3 +205,27 @@ func TestDestFlagWins(t *testing.T) {
 		t.Errorf("DataBase = %q, want /tmp/ovnode-dest-probe/data", c.DataBase)
 	}
 }
+
+// Instance-scoped host files: a second instance must not overwrite the first
+// one's logrotate, cron, sysctl or backup paths.
+func TestHostPathsAreInstanceScoped(t *testing.T) {
+	t.Setenv("OVNODE_LOGROTATE_CONF", "")
+	t.Setenv("OVN_COMPLETION_DIR", "")
+	c := &Config{Instance: "udp443", CLIName: "udp443"}
+	for _, tc := range []struct{ name, got, want string }{
+		{"logrotate", c.logrotatePath(), "/etc/logrotate.d/udp443"},
+		{"cron", c.cronPath(), "/etc/cron.d/udp443-purge"},
+		{"sysctl", c.sysctlPath(), "/etc/sysctl.d/99-udp443.conf"},
+		{"completion", c.completionPath(), "/etc/bash_completion.d/udp443"},
+		{"data backup", c.instanceBackupDir("pre-purge-data"), "/var/backups/udp443-pre-purge-data"},
+		{"nat", c.natConfigPath(), "/etc/default/udp443-nat"},
+	} {
+		if tc.got != tc.want {
+			t.Errorf("%s = %q, want %q", tc.name, tc.got, tc.want)
+		}
+	}
+	defaultInstance := &Config{Instance: "ovnode"}
+	if got := defaultInstance.natConfigPath(); got != "/etc/default/ovnode-nat" {
+		t.Errorf("default nat path = %q", got)
+	}
+}

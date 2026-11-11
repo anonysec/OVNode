@@ -483,7 +483,7 @@ func planSnapshots(c cfgChange) []snapshot {
 	}
 	if c.extraProvided {
 		snap(policy.PortsStatePath())
-		snap("/etc/default/ovnode-nat")
+		snap("/etc/default/" + fsx.InstanceName() + "-nat")
 	}
 	return snapshots
 }
