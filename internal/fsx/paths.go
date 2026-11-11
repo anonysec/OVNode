@@ -26,7 +26,14 @@ func loadEnvFile() {
 	if d := os.Getenv("OVN_APP_DIR"); d != "" {
 		paths = append(paths, filepath.Join(d, ".env"))
 	}
-	paths = append(paths, "/opt/ovnode/.env", "/etc/openvpn/ovnode/.env", "/var/lib/ovnode/openvpn/.env")
+	instance := "ovnode"
+	if v := os.Getenv("OVNODE_INSTANCE"); v != "" {
+		instance = v
+	}
+	if v := os.Getenv("OVN_INSTANCE"); v != "" {
+		instance = v
+	}
+	paths = append(paths, "/opt/"+instance+"/.env", "/etc/openvpn/"+instance+"/.env", "/var/lib/"+instance+"/openvpn/.env")
 	// Instance-aware: search for any instance's .env (PasarGuard-style).
 	if matches, err := filepath.Glob("/opt/*/.env"); err == nil {
 		paths = append(paths, matches...)

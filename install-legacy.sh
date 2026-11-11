@@ -36,8 +36,8 @@ SRC="release"
 # Honor either spelling of the version pin.
 VERSION="${OVN_VERSION:-${OVM_VERSION:-$VERSION}}"
 # OVN_APP_DIR lets tests run status/uninstall on a box already hosting a node.
-APP_DIR="${OVN_APP_DIR:-/opt/ovnode}"
-DATA_BASE="${OVN_DATA_BASE:-/var/lib/ovnode}"
+APP_DIR="${OVN_APP_DIR:-/opt/${INSTANCE_NAME:-ovnode}}"
+DATA_BASE="${OVN_DATA_BASE:-/var/lib/${INSTANCE_NAME:-ovnode}}"
 INSTANCE_NAME="${OVN_INSTANCE:-}"
 OPENVPN_ROOT="${OVN_OPENVPN_ROOT:-/var/lib/${INSTANCE_NAME:-ovnode}/openvpn}"
 # The agent and the OpenVPN hook are the same Go binary. It lives where the

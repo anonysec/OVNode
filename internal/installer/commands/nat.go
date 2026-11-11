@@ -3,6 +3,7 @@ package commands
 import (
 	"fmt"
 	"os"
+	"ovnode/internal/fsx"
 	"strings"
 )
 
@@ -70,7 +71,7 @@ func (c *Config) setupLogrotate() error {
 		} else {
 			hookLog = "/var/log/" + c.Instance + "/hook-events.log"
 			if c.Instance == "" {
-				hookLog = "/var/log/ovnode/hook-events.log"
+				hookLog = "/var/log/" + fsx.InstanceName() + "/hook-events.log"
 			}
 		}
 	}

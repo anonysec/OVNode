@@ -306,11 +306,11 @@ func runAssets() {
 func runProbeCheck() {
 	// Read the .env for the port and key.
 	appDir := os.Getenv("OVN_APP_DIR")
+	instance := os.Getenv("OVNODE_INSTANCE")
+	if instance == "" {
+		instance = "ovnode"
+	}
 	if appDir == "" {
-		instance := os.Getenv("OVNODE_INSTANCE")
-		if instance == "" {
-			instance = "ovnode"
-		}
 		appDir = "/opt/" + instance
 	}
 	envGet := func(key string) string {
@@ -318,7 +318,7 @@ func runProbeCheck() {
 		if v := os.Getenv("OVNODE_OPENVPN_ROOT"); v != "" {
 			paths = append(paths, filepath.Dir(v)+"/.env")
 		}
-		paths = append(paths, "/etc/openvpn/ovnode/.env", "/var/lib/ovnode/openvpn/.env")
+		paths = append(paths, "/etc/openvpn/"+instance+"/.env", "/var/lib/"+instance+"/openvpn/.env")
 		if matches, err := filepath.Glob("/opt/*/.env"); err == nil {
 			paths = append(paths, matches...)
 		}
