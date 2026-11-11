@@ -259,6 +259,14 @@ func renderServerConf(cur string, c cfgChange) string {
 // renderClientTemplate renders the new client template: proto plus the
 // remote lines for the primary and extra ports.
 func renderClientTemplate(cur string, c cfgChange) string {
+	// Connection-block mode: the template carries one or more
+	// <connection>...</connection> blocks, each with its own remote/proto.
+	// Just substitute the "auto" placeholder with the real tunnel address.
+	if strings.Contains(cur, "<connection>") {
+		out := cur
+		out = strings.ReplaceAll(out, "remote auto ", "remote "+c.tunnelAddr+" ")
+		return out
+	}
 	tmplLines := strings.Split(cur, "\n")
 	var tmplOut []string
 	for _, ln := range tmplLines {
