@@ -311,6 +311,14 @@ func ReadUserProfile(cn string) ([]byte, error) {
 		if err != nil {
 			return err
 		}
+		// Regenerate when the cached profile is older than the client
+		// template, so template edits (mssfix, ciphers, ...) take effect
+		// without manual cache invalidation.
+		if fi, err := os.Stat(path); err == nil {
+			if tfi, terr := os.Stat(templateFile()); terr == nil && tfi.ModTime().After(fi.ModTime()) {
+				_ = os.Remove(path)
+			}
+		}
 		if _, err := os.Stat(path); os.IsNotExist(err) {
 			if err := createUserLocked(cn, "", -1, nil); err != nil {
 				return err
