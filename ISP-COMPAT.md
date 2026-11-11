@@ -1,6 +1,6 @@
 # Iranian ISP Compatibility Matrix
 
-Tested on VPS `23.88.54.254` (OVNode v2.0.3, OpenVPN 2.7.0).
+Tested on VPS `23.88.54.254` (OVNode v2.0.0, OpenVPN 2.7.0).
 
 | Protocol / Port | MCI | MTN (Irancell) |
 |---|---|---|
