@@ -292,3 +292,23 @@ func TestWriteSettingsSeedsTheModel(t *testing.T) {
 		t.Fatal("ipv6 flag was not seeded")
 	}
 }
+
+// An update renames the staged tree over the app dir. Without .env and the
+// scripts, systemd cannot load the environment file and the service fails.
+func TestStageStaticAssetsCarriesEnvAndScripts(t *testing.T) {
+	oldDir, stage := t.TempDir(), t.TempDir()
+	if err := os.WriteFile(filepath.Join(oldDir, ".env"), []byte("Instance=x\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(oldDir, "VERSION"), []byte("2.0.0\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := stageStaticAssets(oldDir, stage); err != nil {
+		t.Fatal(err)
+	}
+	for _, name := range []string{".env", "VERSION", "install.sh", "ovnode.sh", "lib.sh"} {
+		if _, err := os.Stat(filepath.Join(stage, name)); err != nil {
+			t.Errorf("%s missing from the staged tree: %v", name, err)
+		}
+	}
+}

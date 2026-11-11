@@ -6,12 +6,39 @@ import (
 	"path/filepath"
 	"strings"
 
+	"ovnode/internal/assets"
 	"ovnode/internal/installer"
 	"ovnode/internal/version"
 )
 
 type updateCtx struct {
 	from, safety, identity string
+}
+
+// stageStaticAssets carries everything the new tree needs besides the binary:
+// the identity file, the version marker and the embedded shell scripts. The
+// update renames the staged directory into place, so without this the service
+// starts with no EnvironmentFile and systemd refuses to spawn it.
+func stageStaticAssets(oldDir, stage string) error {
+	for _, item := range []struct {
+		name string
+		mode os.FileMode
+	}{{".env", 0o600}, {"VERSION", 0o644}} {
+		data, err := os.ReadFile(filepath.Join(oldDir, item.name))
+		if err != nil {
+			if os.IsNotExist(err) {
+				continue
+			}
+			return err
+		}
+		if err := os.WriteFile(filepath.Join(stage, item.name), data, item.mode); err != nil {
+			return err
+		}
+	}
+	if _, err := assets.Write(stage); err != nil {
+		return err
+	}
+	return nil
 }
 
 // Update reproduces do_update, including the failover ordering.
@@ -51,6 +78,9 @@ func Update(c *Config, runner Runner) error {
 		return err
 	}
 	if err := c.fetchRelease(filepath.Join(stage, "ovnode")); err != nil {
+		return err
+	}
+	if err := stageStaticAssets(c.AppDir, stage); err != nil {
 		return err
 	}
 	// [3/6] Maintenance
