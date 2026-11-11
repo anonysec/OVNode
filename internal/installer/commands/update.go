@@ -25,6 +25,11 @@ func Update(c *Config, runner Runner) error {
 	if err := checkRoot(); err != nil {
 		return fmt.Errorf("%w: %d", ErrRoot, ExitError)
 	}
+	if !c.Local {
+		if err := c.resolveVersion(); err != nil {
+			return err
+		}
+	}
 	if err := c.operationBegin("update"); err != nil {
 		return err
 	}

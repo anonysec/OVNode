@@ -44,6 +44,9 @@ func Install(c *Config, runner Runner) error {
 	}
 	// [2/7] Download — skipped on --local, which builds from a checkout.
 	if !c.Local {
+		if err := c.resolveVersion(); err != nil {
+			return err
+		}
 		if err := c.fetchRelease(filepath.Join(c.AppDir, "ovnode")); err != nil {
 			return err
 		}
