@@ -18,9 +18,9 @@ import (
 // file: the pool IP survives a reconnect, the real address does not.
 func TestUserDiagnosticsCountsLiveSessionsAndStaleMarkers(t *testing.T) {
 	root := t.TempDir()
-	t.Setenv("OVNODE_OPENVPN_ROOT", root)
-	t.Setenv("OVNODE_DATA_DIR", root+"/ovnode-data")
-	t.Setenv("OVNODE_LOG_FILE", filepath.Join(root, "hook-events.log"))
+	t.Setenv("OpenVpnRoot", root)
+	t.Setenv("DataDir", root+"/ovnode-data")
+	t.Setenv("LogFile", filepath.Join(root, "hook-events.log"))
 	sessionsDir := filepath.Join(root, "ovnode-data", "sessions")
 	if err := os.MkdirAll(sessionsDir, 0o755); err != nil {
 		t.Fatal(err)
@@ -74,10 +74,10 @@ func TestUserDiagnosticsCountsLiveSessionsAndStaleMarkers(t *testing.T) {
 // security view reads.
 func TestUserDiagnosticsClassifiesHookEvents(t *testing.T) {
 	root := t.TempDir()
-	t.Setenv("OVNODE_OPENVPN_ROOT", root)
-	t.Setenv("OVNODE_DATA_DIR", root+"/ovnode-data")
+	t.Setenv("OpenVpnRoot", root)
+	t.Setenv("DataDir", root+"/ovnode-data")
 	logFile := filepath.Join(root, "hook-events.log")
-	t.Setenv("OVNODE_LOG_FILE", logFile)
+	t.Setenv("LogFile", logFile)
 	if err := os.MkdirAll(filepath.Join(root, "ovnode-data", "sessions"), 0o755); err != nil {
 		t.Fatal(err)
 	}
@@ -128,10 +128,10 @@ func TestUserDiagnosticsClassifiesHookEvents(t *testing.T) {
 // maps the common names before it answers.
 func TestUserDiagnosticsMapsTheCNToTheDisplayName(t *testing.T) {
 	root := t.TempDir()
-	t.Setenv("OVNODE_OPENVPN_ROOT", root)
-	t.Setenv("OVNODE_DATA_DIR", root+"/ovnode-data")
+	t.Setenv("OpenVpnRoot", root)
+	t.Setenv("DataDir", root+"/ovnode-data")
 	logFile := filepath.Join(root, "hook-events.log")
-	t.Setenv("OVNODE_LOG_FILE", logFile)
+	t.Setenv("LogFile", logFile)
 	userDir := filepath.Join(root, "ovnode-data", "users", "42")
 	if err := os.MkdirAll(userDir, 0o755); err != nil {
 		t.Fatal(err)

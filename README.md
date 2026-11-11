@@ -77,7 +77,7 @@ The VPN server half of an [OVManager](https://github.com/anonysec/OVManager) dep
 - Multi-port: one OpenVPN instance reachable on several ports, with every profile listing all of them as `remote` lines so clients fail over when an ISP blocks one.
 - Optional IPv6: a ULA pool and an IPv6 route push.
 - Panel-managed DNS: the resolvers the panel pushes win over installer defaults, and survive a configuration regeneration.
-- `OVN_NO_NAT=1` skips forwarding, NAT and port redirects when you would rather handle them yourself.
+- `NoNat=1` skips forwarding, NAT and port redirects when you would rather handle them yourself.
 
 ### 🔧 Operations
 - `ovnode update` takes a verified snapshot of the identity file, the node data directory, the OpenVPN root and the API TLS files, then swaps in the release and restores the snapshot if the new one does not come up healthy.
@@ -114,23 +114,23 @@ bash <(curl -sSL https://raw.githubusercontent.com/anonysec/OVNode/main/internal
 
 ```bash
 curl -fsSL https://raw.githubusercontent.com/anonysec/OVNode/main/internal/assets/install.sh -o install.sh
-OVN_NAME=eu-1 OVN_VPN_PORTS=1194,443,8443 OVN_IPV6=1 bash install.sh -y
+NodeName=eu-1 VpnPorts=1194,443,8443 Ipv6=1 bash install.sh -y
 ```
 
 | Variable | Default | Meaning |
 | --- | --- | --- |
-| `OVN_NAME` | `ovnode` | Node name — must match the panel exactly |
-| `OVN_KEY` | generated | API key, minimum 16 characters |
-| `OVN_PORT` | `2083` | Sync API port the panel connects to |
-| `OVN_VPN_PORTS` | `1194` | VPN ports; the first listens, the rest are redirected to it and listed in every `.ovpn` |
-| `OVN_PROTO` | `udp` | `udp` or `tcp` |
-| `OVN_TLS` | `selfsigned` | `selfsigned`, `letsencrypt`, `letsencrypt-ip` or `custom` |
-| `OVN_TLS_DOMAIN` | — | Domain, for the Let's Encrypt modes |
-| `OVN_TLS_KEY`, `OVN_TLS_CERT` | — | File paths, for `OVN_TLS=custom` |
-| `OVN_IPV6` | off | `1` adds a ULA pool and an IPv6 route push |
-| `OVN_NO_NAT` | off | `1` skips forwarding, NAT and port redirects — you handle them |
-| `OVN_QUIET` | off | `1` suppresses progress logs |
-| `OVN_REPO` | `anonysec/OVNode` | Pull releases from a fork |
+| `NodeName` | `ovnode` | Node name — must match the panel exactly |
+| `ApiKey` | generated | API key, minimum 16 characters |
+| `ApiPort` | `2083` | Sync API port the panel connects to |
+| `VpnPorts` | `1194` | VPN ports; the first listens, the rest are redirected to it and listed in every `.ovpn` |
+| `Proto` | `udp` | `udp` or `tcp` |
+| `TlsMethod` | `selfsigned` | `selfsigned`, `letsencrypt`, `letsencrypt-ip` or `custom` |
+| `TlsDomain` | — | Domain, for the Let's Encrypt modes |
+| `TlsKey`, `TlsCert` | — | File paths, for `TlsMethod=custom` |
+| `Ipv6` | off | `1` adds a ULA pool and an IPv6 route push |
+| `NoNat` | off | `1` skips forwarding, NAT and port redirects — you handle them |
+| `Quiet` | off | `1` suppresses progress logs |
+| `Repo` | `anonysec/OVNode` | Pull releases from a fork |
 
 
 A run with `-y` never prompts and reports its outcome as an exit code, so a script branches on `$?` instead of parsing output. A run *without* `-y` and without a terminal stops and says so, rather than picking answers for you:
@@ -167,11 +167,11 @@ If the card shows a private address (`10.x`, `192.168.x`), the server is behind 
 | `/var/lib/ovnode` | The agent's own data. `DATA_DIR` in `.env` names it |
 | `/var/backups` | Backup archives written by `ovnode backup` |
 
-The agent's runtime settings use `OVNODE_*` names and live in `/opt/ovnode/.env`; they are separate from the installer's `OVN_*` variables above. Every one is documented in [.env.example](.env.example). The OpenVPN root is isolated per instance — multiple ovnode instances (or other projects' OpenVPN) never share `/etc/openvpn`.
+The agent's runtime settings live in `/opt/ovnode/.env`; OpenVPN tuning lives in `/var/lib/ovnode/state/openvpn.json` and is managed from the panel. Every runtime key is documented in [.env.example](.env.example). The OpenVPN root is isolated per instance — multiple ovnode instances (or other projects' OpenVPN) never share `/etc/openvpn`.
 
-Fresh managed installs create the `ovnode-vpn` system user/group unless a runtime identity was chosen. `OVN_RUNTIME_USER` and `OVN_RUNTIME_GROUP` select an existing identity at install time; a user-only override uses that user's primary group. Identity-creation failures stop installation.
+Fresh managed installs create the `ovnode-vpn` system user/group unless a runtime identity was chosen. `RuntimeUser` and `RuntimeGroup` select an existing identity at install time; a user-only override uses that user's primary group. Identity-creation failures stop installation.
 
-Updates preserve explicit `OVNODE_RUNTIME_USER`/`OVNODE_RUNTIME_GROUP` settings and existing OpenVPN `user`/`group` directives. Legacy `nobody`/`nogroup` installations are not silently moved to `ovnode-vpn`. They still share their runtime access with other services using that identity; choose a dedicated identity explicitly when migrating. On systems where the legacy group is named `nobody`, retain that group setting rather than assuming `nogroup` exists.
+Updates preserve explicit `RuntimeUser`/`RuntimeGroup` settings and existing OpenVPN `user`/`group` directives. Legacy `nobody`/`nogroup` installations are not silently moved to `ovnode-vpn`. They still share their runtime access with other services using that identity; choose a dedicated identity explicitly when migrating. On systems where the legacy group is named `nobody`, retain that group setting rather than assuming `nogroup` exists.
 
 Hooks receive their effective data, log and management paths through OpenVPN `setenv` directives. They do not need access to the private `.env`. Startup repairs policy to root-owned, runtime-group-readable `0640` files and shared session/usage files to `0660`, with setgid directories preserving group access after API writes. The owned hook log uses `0660` and its runtime group on creation and rotation; existing shared log parents and unrelated files are left unchanged. Private keys and profiles remain `0600`.
 
@@ -247,7 +247,7 @@ Run `sudo bash scripts/smoke-test.sh` on a fresh node to verify the install.
 Each instance keeps its own app and data directories and command name:
 
 ```bash
-OVN_INSTANCE=node2 bash install.sh   # or: bash install.sh --instance node2
+Instance=node2 bash install.sh   # or: bash install.sh --instance node2
 node2 status
 ```
 
@@ -298,7 +298,7 @@ Full documentation is published at **<https://anonysec.github.io/OVManager/>** �
 
 In this repository:
 
-- [.env.example](.env.example) — every `OVNODE_*` runtime setting.
+- [.env.example](.env.example) — every runtime setting.
 - [SECURITY.md](SECURITY.md) — how to report a vulnerability.
 - [CHANGELOG.md](CHANGELOG.md) — what changed in each release.
 
@@ -307,7 +307,7 @@ In this repository:
 ```bash
 git clone https://github.com/anonysec/OVNode.git /opt/ovnode
 cd /opt/ovnode
-cp .env.example .env   # REQUIRED: set API_KEY, min 16 chars
+cp .env.example .env   # REQUIRED: set ApiKey, min 16 chars
 go build ./cmd/ovnode
 ./ovnode serve
 ```
@@ -328,4 +328,4 @@ MIT. See [LICENSE](LICENSE).
 OVManager and OVNode are independent repositories released on the same line (currently `2.0.0`). The OVManager installer can install OVNode on the same host; register the node in OVManager under **Nodes → Add Node**. The node never calls the panel — see the OVManager guide [Adding nodes](https://anonysec.github.io/OVManager/wiki/nodes.html).
 
 ## Dev builds
-Install a rolling dev build: `OVN_VERSION=dev bash <(curl -sSL https://raw.githubusercontent.com/anonysec/OVNode/main/internal/assets/install.sh)`. Dev versions look like `dev-YYYYMMDD.N-<sha>`.
+Install a rolling dev build: `Version=dev bash <(curl -sSL https://raw.githubusercontent.com/anonysec/OVNode/main/internal/assets/install.sh)`. Dev versions look like `dev-YYYYMMDD.N-<sha>`.

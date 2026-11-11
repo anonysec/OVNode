@@ -74,6 +74,9 @@ func Install(c *Config, runner Runner) error {
 	if err := c.ensureOpenVPNDirs(); err != nil {
 		return err
 	}
+	if err := c.writeSettings(); err != nil {
+		return err
+	}
 	if err := c.installAgentBinary(); err != nil {
 		return err
 	}

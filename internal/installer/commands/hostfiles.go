@@ -6,7 +6,7 @@ import (
 	"path/filepath"
 )
 
-func (c *Config) systemdDir() string { return envOr("OVN_SYSTEMD_DIR", "/etc/systemd/system") }
+func (c *Config) systemdDir() string { return envOr("SystemdDir", "/etc/systemd/system") }
 func (c *Config) natConfigPath() string {
 	if c.Instance == "" || c.Instance == "ovnode" {
 		return "/etc/default/ovnode-nat"
@@ -112,7 +112,7 @@ func (c *Config) installCLI() {
 	if err != nil {
 		return
 	}
-	binDir := envOr("OVN_BIN_DIR", "/usr/local/bin")
+	binDir := envOr("BinDir", "/usr/local/bin")
 	if err := os.MkdirAll(binDir, 0o755); err != nil {
 		return
 	}
@@ -120,7 +120,7 @@ func (c *Config) installCLI() {
 }
 
 func (c *Config) removeCLI() {
-	binDir := envOr("OVN_BIN_DIR", "/usr/local/bin")
+	binDir := envOr("BinDir", "/usr/local/bin")
 	_ = os.Remove(filepath.Join(binDir, c.CLIName))
 	_ = os.Remove(c.completionPath())
 }

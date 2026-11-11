@@ -56,8 +56,8 @@ func runEasyRSAWithTimeout(timeout int, pkiDir string, args ...string) error {
 		"EASYRSA_BATCH=1",
 		"HOME=" + homeDir(),
 	}
-	if DebugEnabled || fsx.Env("DEBUG", "") != "" {
-		fmt.Fprintf(os.Stderr, "DEBUG easyrsa: dir=%s args=%v\n", cmd.Dir, cmd.Args)
+	if DebugEnabled || fsx.Get("Debug", "") != "" {
+		fmt.Fprintf(os.Stderr, "Debug easyrsa: dir=%s args=%v\n", cmd.Dir, cmd.Args)
 	}
 	// ensure PATH default
 	if os.Getenv("PATH") == "" {

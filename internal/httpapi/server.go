@@ -60,14 +60,14 @@ type Server struct {
 // NewServer builds the server from the environment.
 func NewServer() *Server {
 	s := &Server{limiter: ratelimit.New(), started: time.Now()}
-	port := fsx.EnvOr("SERVICE_PORT", "")
+	port := fsx.EnvOr("ApiPort", "")
 	if port == "" {
 		port = "2083"
 	}
 	s.Addr = ":" + port
-	s.APIKey = fsx.EnvOr("API_KEY", "")
-	cf := fsx.EnvOr("SSL_CERTFILE", "")
-	kf := fsx.EnvOr("SSL_KEYFILE", "")
+	s.APIKey = fsx.EnvOr("ApiKey", "")
+	cf := fsx.EnvOr("TlsCertFile", "")
+	kf := fsx.EnvOr("TlsKeyFile", "")
 	if cf == "" {
 		cf = pki.ServerCert()
 	}
@@ -76,8 +76,8 @@ func NewServer() *Server {
 	}
 	s.CertFile = cf
 	s.KeyFile = kf
-	s.panelAllow, s.allowEmpty = parsePanelAllow(os.Getenv("OVNODE_PANEL_ALLOW"))
-	s.appDirPath = fsx.EnvOr("APP_DIR", "")
+	s.panelAllow, s.allowEmpty = parsePanelAllow(os.Getenv("ApiAllowedCidrs"))
+	s.appDirPath = fsx.EnvOr("AppDir", "")
 	if s.appDirPath == "" {
 		for _, c := range []string{"/opt/" + fsx.InstanceName(), "/usr/local/" + fsx.InstanceName()} {
 			if _, err := os.Stat(c + "/install.sh"); err == nil {
@@ -173,7 +173,7 @@ func (s *Server) panelAllowMiddleware(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if s.allowEmpty {
 			panelAllowWarned.Do(func() {
-				logging.Warn("OVNODE_PANEL_ALLOW is empty — panel allowlist disabled (any IP with valid API key accepted)")
+				logging.Warn("ApiAllowedCidrs is empty — panel allowlist disabled (any IP with valid API key accepted)")
 			})
 			next.ServeHTTP(w, r)
 			return
@@ -305,11 +305,11 @@ func (s *Server) ListenAndServe(ctx context.Context) error {
 }
 
 // TLSMaterial resolves cert+key like Python _tls_material: operator override
-// (SSL_CERTFILE/SSL_KEYFILE) wins, then the PKI server pair. Missing or
+// (TlsCertFile/TlsKeyFile) wins, then the PKI server pair. Missing or
 // unreadable file is fatal — no plaintext fallback.
 func TLSMaterial() (string, string, error) {
-	cert := fsx.EnvOr("SSL_CERTFILE", "")
-	key := fsx.EnvOr("SSL_KEYFILE", "")
+	cert := fsx.EnvOr("TlsCertFile", "")
+	key := fsx.EnvOr("TlsKeyFile", "")
 	if cert == "" {
 		cert = pki.ServerCert()
 	}
@@ -335,7 +335,7 @@ func TLSMaterial() (string, string, error) {
 
 // setupPrintedPath is the marker that makes the first-boot print happen once.
 func setupPrintedPath() string {
-	dir := fsx.EnvOr("DATA_DIR", "/var/lib/"+fsx.InstanceName())
+	dir := fsx.EnvOr("DataDir", "/var/lib/"+fsx.InstanceName())
 	return filepath.Join(dir, ".setup-printed")
 }
 
@@ -363,9 +363,9 @@ func printSetupIfFirstBoot() bool {
 	if _, err := os.Stat(marker); err == nil {
 		return false
 	}
-	port := fsx.EnvOr("SERVICE_PORT", "2083")
-	key := fsx.EnvOr("API_KEY", "")
-	certFile := fsx.EnvOr("SSL_CERTFILE", "")
+	port := fsx.EnvOr("ApiPort", "2083")
+	key := fsx.EnvOr("ApiKey", "")
+	certFile := fsx.EnvOr("TlsCertFile", "")
 	if certFile == "" {
 		certFile = pki.ServerCert()
 	}
@@ -409,10 +409,10 @@ func Run() error {
 	}
 	s := NewServer()
 	if len(s.APIKey) < 16 {
-		return fmt.Errorf("API_KEY must be at least 16 characters")
+		return fmt.Errorf("ApiKey must be at least 16 characters")
 	}
 	if len(s.APIKey) < 32 {
-		logging.Warn("API_KEY shorter than 32 characters; use openssl rand -hex 32 for new nodes")
+		logging.Warn("ApiKey shorter than 32 characters; use openssl rand -hex 32 for new nodes")
 	}
 	cert, key, err := TLSMaterial()
 	if err != nil {

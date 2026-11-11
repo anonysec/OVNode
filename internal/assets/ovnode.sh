@@ -14,33 +14,33 @@ set -Eeuo pipefail
 VERSION="2.0.0"
 _INVOKED_NAME="$(basename "${BASH_SOURCE[0]:-$0}")"
 _INVOKED_NAME="${_INVOKED_NAME%.sh}"
-INSTANCE_NAME="${OVN_INSTANCE:-$_INVOKED_NAME}"
+INSTANCE_NAME="${Instance:-$_INVOKED_NAME}"
 : "${INSTANCE_NAME:=ovnode}"
-APP_DIR="${OVN_APP_DIR:-/opt/$INSTANCE_NAME}"
-DATA_BASE="${OVN_DATA_BASE:-/var/lib/$INSTANCE_NAME}"
-INSTANCE="${OVNODE_INSTANCE:-ovnode}"
-OPENVPN_ROOT="$(env_get "${APP_DIR:-/opt/$INSTANCE}/.env" OVNODE_OPENVPN_ROOT 2>/dev/null || true)"; : "${OPENVPN_ROOT:=/var/lib/$INSTANCE/openvpn}"
-LOG_DIR="$(env_get "${APP_DIR:-/opt/$INSTANCE}/.env" OVNODE_LOG_DIR 2>/dev/null || true)"; : "${LOG_DIR:=/var/log/$INSTANCE}"
+AppDir="${AppDir:-/opt/$INSTANCE_NAME}"
+DATA_BASE="${DataDir:-/var/lib/$INSTANCE_NAME}"
+INSTANCE="${Instance:-$INSTANCE_NAME}"
+OPENVPN_ROOT="$(env_get "${AppDir:-/opt/$INSTANCE}/.env" OpenVpnRoot 2>/dev/null || true)"; : "${OPENVPN_ROOT:=/var/lib/$INSTANCE/openvpn}"
+LOG_DIR="$(env_get "${AppDir:-/opt/$INSTANCE}/.env" LogDir 2>/dev/null || true)"; : "${LOG_DIR:=/var/log/$INSTANCE}"
 # Panel pairing record — one panel owns the node; `ovnode auth disconnect` is
 # the release, so the path has to be known to the CLI as well as the agent.
-PAIRING_FILE="${OVN_DATA_DIR:-/var/lib/$INSTANCE_NAME}/state/pairing.json"
+PAIRING_FILE="${DataDir:-/var/lib/$INSTANCE_NAME}/state/pairing.json"
 DEFAULT_PORT=2083
 SYSTEMD_SERVICE="${INSTANCE_NAME}.service"
 # OPENVPN_SERVICE removed — openvpn runs as a child of the agent (SYSTEMD_SERVICE).
-INSTALLER="$APP_DIR/install.sh"
-BIN_DIR="${OVN_BIN_DIR:-/usr/local/bin}"
+INSTALLER="$AppDir/install.sh"
+BIN_DIR="${BinDir:-/usr/local/bin}"
 CLI_NAME="$INSTANCE_NAME"
-# OVN_COMPLETION_DIR override exists for hermetic tests, like OVN_APP_DIR.
-COMPLETION_DIR="${OVN_COMPLETION_DIR:-/etc/bash_completion.d}"
+# CompletionDir override exists for hermetic tests, like AppDir.
+COMPLETION_DIR="${CompletionDir:-/etc/bash_completion.d}"
 
 # Exit codes (documented in --help; stable for automation)
 EX_OK=0 EX_ERROR=1 EX_USAGE=2 EX_ALREADY=3 EX_NOTINSTALLED=4
 
 # ── Settings (env defaults OVN_*, overridden by CLI flags) ─────────────
 ACTION=""
-YES="${OVN_YES:-0}"
-PURGE="${OVN_PURGE:-0}"
-QUIET="${OVN_QUIET:-0}"
+YES="${Yes:-0}"
+PURGE="${Purge:-0}"
+QUIET="${Quiet:-0}"
 FIX=0
 SHOW_ALL=0
 PIN=""
@@ -53,7 +53,7 @@ TLS_ACTION="" TLS_DOMAIN="" TLS_KEY="" TLS_CERT="" TLS_REGENERATE=0
 # auth's action. Empty means the bare form: show the credential, then list what
 # can be done about it.
 AUTH_ACTION=""
-NODE_NAME="${OVN_NAME:-}"
+NODE_NAME="${Instance:-}"
 
 # Shared helpers (output, prompts, TLS, menus), all defined in lib.sh and
 # never copied here.
@@ -69,10 +69,10 @@ _SELF_DIR="$(cd -- "$(dirname -- "${BASH_SOURCE[0]:-$0}")" && pwd)"
 for _lib in lib.sh; do
     if [[ -f "$_SELF_DIR/$_lib" ]]; then
         _libdir="$_SELF_DIR"
-    elif [[ -f "$APP_DIR/$_lib" ]]; then
-        _libdir="$APP_DIR"
+    elif [[ -f "$AppDir/$_lib" ]]; then
+        _libdir="$AppDir"
     else
-        printf '\n  Error: %s not found (looked in %s and %s)\n' "$_lib" "$_SELF_DIR" "$APP_DIR" >&2
+        printf '\n  Error: %s not found (looked in %s and %s)\n' "$_lib" "$_SELF_DIR" "$AppDir" >&2
         exit 1
     fi
     # shellcheck disable=SC1091
@@ -92,7 +92,7 @@ UV_BIN=""
 # ── Update / uninstall ─────────────────────────────────────────────────
 # Both are implemented in install.sh and delegated, so there is one copy.
 run_installer() {
-    [[ -e "$APP_DIR" ]] || [[ "$1" == "uninstall" ]] || die "Not installed ($APP_DIR missing)" "$EX_NOTINSTALLED"
+    [[ -e "$AppDir" ]] || [[ "$1" == "uninstall" ]] || die "Not installed ($AppDir missing)" "$EX_NOTINSTALLED"
     [[ -x "$INSTALLER" ]] || die "Installer missing ($INSTALLER)" "$EX_ERROR"
     exec "$INSTALLER" "$@"
 }
@@ -140,18 +140,18 @@ do_status() {
     local installed=false mode="none" node="" port="" tls="none"
     local agent="unknown" health="unknown" openvpn="unknown" agent_version=""
 
-    if [[ -f "$APP_DIR/.env" ]]; then
+    if [[ -f "$AppDir/.env" ]]; then
         # Readable, not merely present: swallowing the permission error left a
         # healthy node reporting "Agent inactive / Health unreachable / Version
         # unknown" and exiting 0.
-        [[ -r "$APP_DIR/.env" ]] || die "Cannot read $APP_DIR/.env — run with sudo." "$EX_ERROR"
+        [[ -r "$AppDir/.env" ]] || die "Cannot read $AppDir/.env — run with sudo." "$EX_ERROR"
         installed=true
-        node="$(env_get "$APP_DIR/.env" NODE_NAME)"; : "${node:=ovnode}"
-        port="$(env_get "$APP_DIR/.env" SERVICE_PORT)"; : "${port:=$DEFAULT_PORT}"
-        tls="$(env_get "$APP_DIR/.env" TLS_METHOD)"; : "${tls:=selfsigned}"
+        node="$(env_get "$AppDir/.env" Instance)"; : "${node:=ovnode}"
+        port="$(env_get "$AppDir/.env" ApiPort)"; : "${port:=$DEFAULT_PORT}"
+        tls="$(tls_method_of "$AppDir/.env")"; : "${tls:=selfsigned}"
         mode="native"
 
-        agent_version="$("$APP_DIR/ovnode-server" version 2>/dev/null || "$APP_DIR/agent" version 2>/dev/null || true)"
+        agent_version="$("$AppDir/ovnode-server" version 2>/dev/null || "$AppDir/agent" version 2>/dev/null || true)"
         : "${agent_version:=$VERSION}"
 
         if has_systemd; then
@@ -188,7 +188,7 @@ do_status() {
         # working node, and the exit code is what a script checks anyway — this
         # is for the person, and a person should not have to notice a missing
         # subject in a table of values.
-        render_fail "not installed" "$APP_DIR/.env missing"
+        render_fail "not installed" "$AppDir/.env missing"
     fi
 
     [[ "$installed" == "true" ]] || exit "$EX_NOTINSTALLED"
@@ -196,7 +196,7 @@ do_status() {
 
 # systemd waits up to TimeoutStopSec for a stuck unit; bound the wait so an
 # uninstall/update never looks frozen, then force the unit.
-STOP_TIMEOUT="${OVN_STOP_TIMEOUT:-20}"
+STOP_TIMEOUT="${StopTimeout:-20}"
 
 node_service_action() {  # start|stop|restart
     systemctl "$1" "$SYSTEMD_SERVICE" || die "systemctl $1 $SYSTEMD_SERVICE failed"
@@ -340,8 +340,8 @@ do_restore() {
     validate_archive_members "$src" || die "Backup contains unsafe members (path traversal or symlink): $name" "$EX_ERROR"
 
     local port tls scheme
-    port="$(env_get "$APP_DIR/.env" SERVICE_PORT)"; : "${port:=$DEFAULT_PORT}"
-    tls="$(env_get "$APP_DIR/.env" TLS_METHOD)"; : "${tls:=selfsigned}"
+    port="$(env_get "$AppDir/.env" ApiPort)"; : "${port:=$DEFAULT_PORT}"
+    tls="$(tls_method_of "$AppDir/.env")"; : "${tls:=selfsigned}"
     scheme="http"; [[ "$tls" != "none" ]] && scheme="https"
 
     render_kv "Restoring" "$name"
@@ -468,17 +468,17 @@ node_tls() {
     # `ovnode tls cert` prints the panel-facing certificate the way
     # `ovnode auth key` prints the API key: the whole PEM, bold, ready to copy.
     if [[ "${TLS_ACTION:-}" == "cert" || "${TLS_ACTION:-}" == "certificate" ]]; then
-        local envfile="$APP_DIR/.env"
+        local envfile="$AppDir/.env"
         [[ -f "$envfile" ]] || die "Not installed ($envfile missing)" "$EX_NOTINSTALLED"
         check_root
         local certfile
-        certfile="$(env_get "$envfile" SSL_CERTFILE)"
+        certfile="$(env_get "$envfile" TlsCertFile)"
         [[ -n "$certfile" ]] || certfile="/etc/ovnode/tls/fullchain.pem"
         [[ -f "$certfile" ]] || die "Certificate file not found: $certfile" "$EX_ERROR"
         local node port tls scheme host
-        node="$(env_get "$envfile" NODE_NAME)"; : "${node:=ovnode}"
-        port="$(env_get "$envfile" SERVICE_PORT)"; : "${port:=$DEFAULT_PORT}"
-        tls="$(env_get "$envfile" TLS_METHOD)"; : "${tls:=selfsigned}"
+        node="$(env_get "$envfile" Instance)"; : "${node:=ovnode}"
+        port="$(env_get "$envfile" ApiPort)"; : "${port:=$DEFAULT_PORT}"
+        tls="$(tls_method_of "$envfile")"; : "${tls:=selfsigned}"
         scheme="http"; [[ "$tls" != "none" ]] && scheme="https"
         host="$(primary_ip)"
         render_line ""
@@ -489,7 +489,7 @@ node_tls() {
         render_line "  paste this into the panel: Nodes → Add Node"
         return 0
     fi
-    local envfile="$APP_DIR/.env"
+    local envfile="$AppDir/.env"
     local method="selfsigned" keyfile="" certfile="" expiry=""
     # Bare, it reports and lists. The numbered menu it used to open is the one
     # thing a script cannot answer, and the two questions it asked — what am I
@@ -500,9 +500,9 @@ node_tls() {
     # not be met with an error from the thing it was about to offer.
     if [[ -z "$TLS_ACTION" ]]; then
         if [[ -f "$envfile" ]]; then
-            method="$(env_get "$envfile" TLS_METHOD)"; : "${method:=selfsigned}"
-            keyfile="$(env_get "$envfile" SSL_KEYFILE)"
-            certfile="$(env_get "$envfile" SSL_CERTFILE)"
+            method="$(tls_method_of "$envfile")"; : "${method:=selfsigned}"
+            keyfile="$(env_get "$envfile" TlsKeyFile)"
+            certfile="$(env_get "$envfile" TlsCertFile)"
             expiry="$(openssl x509 -enddate -noout -in "$certfile" 2>/dev/null | cut -d= -f2 || true)"
         else
             render_warn "not installed — the paths below are where the installer would put them"
@@ -557,10 +557,10 @@ node_tls() {
 # files happened to land. setup_tls writes wherever the chosen method wants,
 # which is not necessarily either of those.
 node_tls_install_to_declared() {
-    local want_key="$1" want_cert="$2" envfile="$APP_DIR/.env"
+    local want_key="$1" want_cert="$2" envfile="$AppDir/.env"
     local decl_key decl_cert
-    decl_key="$(env_get "$envfile" SSL_KEYFILE)"
-    decl_cert="$(env_get "$envfile" SSL_CERTFILE)"
+    decl_key="$(env_get "$envfile" TlsKeyFile)"
+    decl_cert="$(env_get "$envfile" TlsCertFile)"
     [[ -n "$decl_key" && -n "$decl_cert" ]] || return 0   # TLS is off; nothing to serve
     [[ "$decl_key" == "$want_key" ]] && return 0
     mkdir -p "$(dirname "$decl_key")" "$(dirname "$decl_cert")" \
@@ -575,7 +575,7 @@ node_tls_install_to_declared() {
 
 # Roll back to the newest pre-update code snapshot (update failover).
 do_rollback() {
-    [[ -d "$APP_DIR" ]] || die "Not installed ($APP_DIR missing)" "$EX_NOTINSTALLED"
+    [[ -d "$AppDir" ]] || die "Not installed ($AppDir missing)" "$EX_NOTINSTALLED"
     # An interrupted transaction owns recovery: rollback must not fight it.
     if [[ -f "$(node_data_dir)/update-maintenance" ]]; then
         die "An update transaction is interrupted — run: ovnode recover-update" "$EX_ERROR"
@@ -594,11 +594,11 @@ do_rollback() {
     [[ "$YES" -eq 1 ]] || confirm "Restore the pre-update tree and restart?" || exit "$EX_OK"
     validate_archive_members "$snap" || die "Snapshot contains unsafe members: $snap" "$EX_ERROR"
     local port tls scheme
-    port="$(env_get "$APP_DIR/.env" SERVICE_PORT)"; : "${port:=$DEFAULT_PORT}"
-    tls="$(env_get "$APP_DIR/.env" TLS_METHOD)"; : "${tls:=selfsigned}"
+    port="$(env_get "$AppDir/.env" ApiPort)"; : "${port:=$DEFAULT_PORT}"
+    tls="$(tls_method_of "$AppDir/.env")"; : "${tls:=selfsigned}"
     scheme="http"; [[ "$tls" != "none" ]] && scheme="https"
     systemctl_bounded stop "$SYSTEMD_SERVICE" >/dev/null 2>&1 || true
-    tar --no-absolute-filenames -xzf "$snap" -C "$(dirname "$APP_DIR")" >/dev/null 2>&1 \
+    tar --no-absolute-filenames -xzf "$snap" -C "$(dirname "$AppDir")" >/dev/null 2>&1 \
         || die "Rollback extract failed — snapshot kept at $snap" "$EX_ERROR"
     run "Restarting node agent" systemctl_bounded restart "$SYSTEMD_SERVICE"
     if wait_health "${scheme}://127.0.0.1:${port}/sync/health" 45; then
@@ -616,18 +616,18 @@ do_rollback() {
 # comes first and the action follows from it. Same shape as the panel's
 # `ovmanager auth`, so the rule is learned once for both tools.
 do_auth() {
-    [[ -f "$APP_DIR/.env" ]] || die "OVNode is not installed." "$EX_NOTINSTALLED"
+    [[ -f "$AppDir/.env" ]] || die "OVNode is not installed." "$EX_NOTINSTALLED"
     check_root
 
     local node port tls key scheme host
-    node="$(env_get "$APP_DIR/.env" NODE_NAME)"
+    node="$(env_get "$AppDir/.env" Instance)"
     [[ -n "$node" ]] || node="ovnode"
-    port="$(env_get "$APP_DIR/.env" SERVICE_PORT)"
+    port="$(env_get "$AppDir/.env" ApiPort)"
     [[ -n "$port" ]] || port="$DEFAULT_PORT"
-    tls="$(env_get "$APP_DIR/.env" TLS_METHOD)"
+    tls="$(tls_method_of "$AppDir/.env")"
     [[ -n "$tls" ]] || tls="selfsigned"
-    key="$(env_get "$APP_DIR/.env" API_KEY)"
-    [[ -n "$key" ]] || die "No API key found in $APP_DIR/.env" "$EX_ERROR"
+    key="$(env_get "$AppDir/.env" ApiKey)"
+    [[ -n "$key" ]] || die "No API key found in $AppDir/.env" "$EX_ERROR"
 
     scheme="http"
     if [[ "$tls" != "none" ]]; then scheme="https"; fi
@@ -641,7 +641,7 @@ do_auth() {
             # copies into the panel, so both are shown here, bold, like the key
             # always was. The certificate is public; the key is not.
             render_key "API key" "$key"
-            certfile="$(env_get "$APP_DIR/.env" SSL_CERTFILE)"
+            certfile="$(env_get "$AppDir/.env" TlsCertFile)"
             [[ -n "$certfile" ]] || certfile="/etc/ovnode/tls/fullchain.pem"
             if [[ -f "$certfile" ]]; then
                 render_key "Certificate" "$(cat "$certfile")"
@@ -675,7 +675,7 @@ do_auth() {
 # operator would have no way to see that the file their backups carry had
 # changed under them. So the key is generated, shown, and left for them.
 auth_rotate() {
-    local envfile="$APP_DIR/.env" new
+    local envfile="$AppDir/.env" new
     # Same generator and length the installer uses, so a rotated key is
     # indistinguishable from an installed one — anything that validates length
     # or shape keeps working.
@@ -685,7 +685,7 @@ auth_rotate() {
     render_ok "new API key"
     render_key "API key" "$new"
     render_line "  change one line in $envfile:"
-    render_line "    API_KEY=$new"
+    render_line "    ApiKey=$new"
     render_line "  then: ovnode restart, and give the panel the same key"
     render_line "  the old key stops working the moment the agent restarts"
 }
@@ -710,7 +710,7 @@ auth_disconnect() {
 # here and nowhere else, so the honest answer is "all of it, and here is the
 # file" — which is worth saying once, in a place an operator can look.
 do_info() {
-    [[ -f "$APP_DIR/.env" ]] || die "OVNode is not installed." "$EX_NOTINSTALLED"
+    [[ -f "$AppDir/.env" ]] || die "OVNode is not installed." "$EX_NOTINSTALLED"
     check_root
     local info_file
     info_file="$(node_data_dir)/setup-info"
@@ -719,14 +719,14 @@ do_info() {
         return 0
     fi
     # Older installs have no setup-info file: print the live values.
-    local envfile="$APP_DIR/.env" certfile node port tls scheme host key
-    node="$(env_get "$envfile" NODE_NAME)"; : "${node:=ovnode}"
-    port="$(env_get "$envfile" SERVICE_PORT)"; : "${port:=$DEFAULT_PORT}"
-    tls="$(env_get "$envfile" TLS_METHOD)"; : "${tls:=selfsigned}"
-    key="$(env_get "$envfile" API_KEY)"
+    local envfile="$AppDir/.env" certfile node port tls scheme host key
+    node="$(env_get "$envfile" Instance)"; : "${node:=ovnode}"
+    port="$(env_get "$envfile" ApiPort)"; : "${port:=$DEFAULT_PORT}"
+    tls="$(tls_method_of "$envfile")"; : "${tls:=selfsigned}"
+    key="$(env_get "$envfile" ApiKey)"
     scheme="http"; [[ "$tls" != "none" ]] && scheme="https"
     host="$(primary_ip)"
-    certfile="$(env_get "$envfile" SSL_CERTFILE)"; [[ -n "$certfile" ]] || certfile="/etc/ovnode/tls/fullchain.pem"
+    certfile="$(env_get "$envfile" TlsCertFile)"; [[ -n "$certfile" ]] || certfile="/etc/ovnode/tls/fullchain.pem"
     printf '# OVNode connection details\n'
     printf 'Address: %s\n' "$host"
     printf 'Port: %s\n' "$port"
@@ -748,7 +748,7 @@ pick_editor() {
 }
 
 do_edit() {
-    [[ -f "$APP_DIR/.env" ]] || die "OVNode is not installed." "$EX_NOTINSTALLED"
+    [[ -f "$AppDir/.env" ]] || die "OVNode is not installed." "$EX_NOTINSTALLED"
     check_root
     local file="${OPENVPN_ROOT}/server/server.conf"
     [[ -f "$file" ]] || die "OpenVPN server config not found: $file" "$EX_ERROR"
@@ -759,9 +759,9 @@ do_edit() {
 }
 
 do_edit_env() {
-    [[ -f "$APP_DIR/.env" ]] || die "OVNode is not installed." "$EX_NOTINSTALLED"
+    [[ -f "$AppDir/.env" ]] || die "OVNode is not installed." "$EX_NOTINSTALLED"
     check_root
-    local file="$APP_DIR/.env"
+    local file="$AppDir/.env"
     local editor
     editor="$(pick_editor)" || die "No editor found (set EDITOR)" "$EX_ERROR"
     "$editor" "$file"
@@ -769,7 +769,7 @@ do_edit_env() {
 }
 
 do_config() {
-    local envfile="$APP_DIR/.env"
+    local envfile="$AppDir/.env"
     [[ -f "$envfile" ]] || die "OVNode is not installed." "$EX_NOTINSTALLED"
     check_root
     render_line ""
@@ -779,12 +779,12 @@ do_config() {
     while IFS='=' read -r key value; do
         [[ -n "$key" && "$key" != \#* ]] || continue
         case "$key" in
-            API_KEY)
+            ApiKey)
                 # Never printed. `ovnode auth key` is where it is shown, once,
                 # on purpose — a value that appears in two places is a value
                 # that ends up in a screenshot.
                 render_kv "$key" "set — see: ovnode auth key" ;;
-            TLS_METHOD|SSL_KEYFILE|SSL_CERTFILE)
+            TLS_METHOD|TlsKeyFile|TlsCertFile)
                 render_kv "$key" "$value  — read by ovnode tls" ;;
             *)
                 render_kv "$key" "$value" ;;
@@ -911,20 +911,20 @@ show_help_full() {
     --keep N            backup: how many backups to keep
     --purge             uninstall: also delete data and PKI
     -v, --version V     update: pin a release, e.g. -v v1.0.15
-    -q, --quiet         Suppress progress logs        [OVN_QUIET=1]
+    -q, --quiet         Suppress progress logs        [Quiet=1]
     -h, --help          This help
 
   ENVIRONMENT
-    OVN_YES=1           same as -y
-    OVN_PURGE=1         same as --purge
-    OVN_QUIET=1         same as -q
+    Yes=1           same as -y
+    Purge=1         same as --purge
+    Quiet=1         same as -q
     CI=true             implies -y
 
   .env
     Written once by the installer and never by this tool. It owns the boot
-    settings outright — NODE_NAME, DATA_DIR, SERVICE_PORT, API_KEY, OPENVPN_PORT,
-    TLS_METHOD, SSL_KEYFILE, SSL_CERTFILE — because the agent cannot open its
-    state without DATA_DIR and cannot bind without the ports. Edit it freely;
+    settings outright — Instance, DataDir, ApiPort, ApiKey,
+    TlsKeyFile, TlsCertFile — because the agent cannot open its
+    state without DataDir and cannot bind without the ports. Edit it freely;
     changes take effect on restart.
 
     `ovnode auth rotate` prints a new key and the line to change rather than
@@ -935,7 +935,7 @@ show_help_full() {
     re-enrolling the node.
 
   Update and uninstall are implemented in install.sh — this script delegates to
-  $APP_DIR/install.sh so there is exactly one copy of each.
+  $AppDir/install.sh so there is exactly one copy of each.
 EOF
     exit "$EX_OK"
 }
@@ -945,10 +945,10 @@ parse_args() {
     while [[ $# -gt 0 ]]; do
         case "$1" in
             status)       ACTION="status"; shift ;;
-            --instance)   eval "$need2"; OVN_INSTANCE="$2"; INSTANCE_NAME="$2"; export OVN_INSTANCE
-                          if [[ -z "${OVN_APP_DIR:-}" ]]; then APP_DIR="/opt/$INSTANCE_NAME"; fi
-                          if [[ -z "${OVN_DATA_BASE:-}" ]]; then DATA_BASE="/var/lib/$INSTANCE_NAME"; fi
-                          SYSTEMD_SERVICE="${INSTANCE_NAME}.service"; # OPENVPN_SERVICE removed — openvpn runs as a child of the agent (SYSTEMD_SERVICE).; CLI_NAME="$INSTANCE_NAME"; INSTALLER="$APP_DIR/install.sh"
+            --instance)   eval "$need2"; Instance="$2"; INSTANCE_NAME="$2"; export Instance
+                          if [[ -z "${AppDir:-}" ]]; then AppDir="/opt/$INSTANCE_NAME"; fi
+                          if [[ -z "${DataDir:-}" ]]; then DATA_BASE="/var/lib/$INSTANCE_NAME"; fi
+                          SYSTEMD_SERVICE="${INSTANCE_NAME}.service"; # OPENVPN_SERVICE removed — openvpn runs as a child of the agent (SYSTEMD_SERVICE).; CLI_NAME="$INSTANCE_NAME"; INSTALLER="$AppDir/install.sh"
                           shift 2 ;;
             update)       ACTION="update"; shift ;;
             uninstall|--uninstall) ACTION="uninstall"; shift ;;

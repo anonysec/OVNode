@@ -15,7 +15,7 @@ import (
 )
 
 func TestTraversalOnlyParentReadProcess(t *testing.T) {
-	path := os.Getenv("OVNODE_TEST_TRAVERSAL_FILE")
+	path := os.Getenv("TestTRAVERSAL_FILE")
 	if path == "" {
 		return
 	}
@@ -67,7 +67,7 @@ func TestOpenFileNoFollowAllowsTraversalOnlyParents(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()
 	cmd := exec.CommandContext(ctx, exe, "-test.run=^TestTraversalOnlyParentReadProcess$")
-	cmd.Env = append(os.Environ(), "OVNODE_TEST_TRAVERSAL_FILE="+path)
+	cmd.Env = append(os.Environ(), "TestTRAVERSAL_FILE="+path)
 	cmd.SysProcAttr = &syscall.SysProcAttr{Credential: &syscall.Credential{Uid: 65533, Gid: 65533}}
 	if output, err := cmd.CombinedOutput(); err != nil {
 		t.Fatalf("checked read required listing an unrelated parent: %v\n%s", err, output)

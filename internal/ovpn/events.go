@@ -108,7 +108,7 @@ func classifyReject(message string) (string, string, string) {
 
 // hookEventLogPath returns the path of the hook event log.
 func hookEventLogPath() string {
-	if v := fsx.Env("LOG_FILE", ""); v != "" {
+	if v := fsx.Get("LogFile", ""); v != "" {
 		return v
 	}
 	return filepath.Join(fsx.LogDir(), "hook-events.log")

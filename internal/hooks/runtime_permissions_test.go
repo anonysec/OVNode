@@ -15,7 +15,7 @@ import (
 )
 
 func TestHookRuntimeRepairProcess(t *testing.T) {
-	jail := os.Getenv("OVNODE_TEST_RUNTIME_JAIL")
+	jail := os.Getenv("TestRUNTIME_JAIL")
 	if jail == "" {
 		return
 	}
@@ -25,7 +25,7 @@ func TestHookRuntimeRepairProcess(t *testing.T) {
 	if err := os.Chdir("/"); err != nil {
 		t.Fatal(err)
 	}
-	for _, key := range []string{"OVN_APP_DIR", "OVNODE_OPENVPN_ROOT", "OVNODE_DATA_DIR", "OVNODE_USERS_DIR", "OVNODE_SESSIONS_DIR", "OVNODE_USAGE_DIR", "OVNODE_LOG_DIR", "OVNODE_LOG_FILE"} {
+	for _, key := range []string{"AppDir", "OpenVpnRoot", "DataDir", "UsersDir", "SessionsDir", "UsageDir", "LogDir", "LogFile"} {
 		if err := os.Setenv(key, strings.TrimPrefix(os.Getenv(key), jail)); err != nil {
 			t.Fatal(err)
 		}
@@ -36,7 +36,7 @@ func TestHookRuntimeRepairProcess(t *testing.T) {
 }
 
 func TestHookRuntimeAccessProcess(t *testing.T) {
-	if os.Getenv("OVNODE_TEST_RUNTIME_ACCESS") == "" {
+	if os.Getenv("TestRUNTIME_ACCESS") == "" {
 		return
 	}
 	cfg := config.HookFromEnv()
@@ -51,7 +51,7 @@ func TestHookRuntimeAccessProcess(t *testing.T) {
 	}
 	for _, path := range []string{
 		filepath.Join(cfg.UsersDir, cn, "key.pem"), filepath.Join(cfg.UsersDir, cn, "client.ovpn"),
-		filepath.Join(cfg.OpenVPNRoot, "server/pki/private/ca.key"), filepath.Join(os.Getenv("OVN_APP_DIR"), ".env"),
+		filepath.Join(cfg.OpenVPNRoot, "server/pki/private/ca.key"), filepath.Join(os.Getenv("AppDir"), ".env"),
 	} {
 		if _, err := os.ReadFile(path); err == nil {
 			t.Errorf("runtime UID read protected secret %s", path)
@@ -73,7 +73,7 @@ func TestHookRuntimeAccessProcess(t *testing.T) {
 }
 
 func TestHookUnrelatedUIDProcess(t *testing.T) {
-	if os.Getenv("OVNODE_TEST_RUNTIME_ACCESS") == "" {
+	if os.Getenv("TestRUNTIME_ACCESS") == "" {
 		return
 	}
 	cfg := config.HookFromEnv()

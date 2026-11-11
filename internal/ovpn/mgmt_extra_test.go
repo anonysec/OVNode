@@ -7,14 +7,14 @@ import (
 )
 
 func TestValidateMgmtHost(t *testing.T) {
-	t.Setenv("OVNODE_ALLOW_REMOTE_MGMT", "")
+	t.Setenv("AllowRemoteMgmt", "")
 	if err := validateMgmtHost("127.0.0.1"); err != nil {
 		t.Fatal(err)
 	}
 	if err := validateMgmtHost("8.8.8.8"); err == nil {
 		t.Fatal("expected refusal")
 	}
-	t.Setenv("OVNODE_ALLOW_REMOTE_MGMT", "1")
+	t.Setenv("AllowRemoteMgmt", "1")
 	if err := validateMgmtHost("8.8.8.8"); err != nil {
 		t.Fatal(err)
 	}

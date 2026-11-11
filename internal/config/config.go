@@ -45,7 +45,7 @@ type Hook struct {
 
 // HookFromEnv reads the hook configuration.
 //
-// OVNODE_MANAGEMENT_HOST beats the legacy OVNODE_MGMT_HOST, and a broken
+// ManagementHost is the only management host key; a broken
 // numeric override falls back to the default rather than failing the hook:
 // the management port is not worth refusing a client over.
 func HookFromEnv() Hook {
@@ -59,24 +59,24 @@ func HookFromEnv() Hook {
 		StatusFile:   fsx.StatusFile(),
 		LogDir:       fsx.LogDir(),
 		LogFile:      fsx.LogFile(),
-		MgmtHost:     fsx.EnvOr("OVNODE_MANAGEMENT_HOST", fsx.EnvOr("OVNODE_MGMT_HOST", DefaultMgmtHost)),
+		MgmtHost:     fsx.EnvOr("ManagementHost", DefaultMgmtHost),
 		MgmtPassFile: fsx.MgmtPassFile(),
 		OpenVPNRoot:  root,
 		MgmtPort:     DefaultMgmtPort,
 		SessionTTL:   DefaultSessionTTL,
 	}
-	if v := fsx.EnvOr("OVNODE_MANAGEMENT_PORT", ""); v != "" {
+	if v := fsx.EnvOr("ManagementPort", ""); v != "" {
 		if p, err := strconv.Atoi(v); err == nil && p >= 1 && p <= 65535 {
 			h.MgmtPort = p
 		} else {
-			logging.Event(h.LogFile, "OVNODE_MANAGEMENT_PORT invalid (%s); falling back to %d", v, DefaultMgmtPort)
+			logging.Event(h.LogFile, "ManagementPort invalid (%s); falling back to %d", v, DefaultMgmtPort)
 		}
 	}
-	if v := fsx.EnvOr("OVNODE_SESSION_TTL", ""); v != "" {
+	if v := fsx.EnvOr("SessionTtlSeconds", ""); v != "" {
 		if t, err := strconv.Atoi(v); err == nil && t > 0 {
 			h.SessionTTL = t
 		} else {
-			logging.Event(h.LogFile, "OVNODE_SESSION_TTL invalid (%s); falling back to %d", v, DefaultSessionTTL)
+			logging.Event(h.LogFile, "SessionTtlSeconds invalid (%s); falling back to %d", v, DefaultSessionTTL)
 		}
 	}
 	return h

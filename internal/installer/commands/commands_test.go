@@ -6,6 +6,7 @@ package commands
 import (
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 )
 
@@ -15,8 +16,8 @@ import (
 // box without a node) exit 4 without downloading anything.
 func TestParseMatchesBashContract(t *testing.T) {
 	dir := t.TempDir()
-	t.Setenv("OVN_SYSTEMD_DIR", t.TempDir())
-	t.Setenv("OVN_APP_DIR", dir)
+	t.Setenv("SystemdDir", t.TempDir())
+	t.Setenv("AppDir", dir)
 	cfg, action, err := Parse([]string{"--panel-ip", "203.0.113.9", "-y"})
 	if err != nil {
 		t.Fatal(err)
@@ -33,9 +34,9 @@ func TestParseMatchesBashContract(t *testing.T) {
 	}
 
 	// Env-only path must behave like the flag path.
-	t.Setenv("OVN_PORT", "8443")
-	t.Setenv("OVN_KEY", "0123456789abcdef")
-	t.Setenv("OVN_PANEL_IP", "198.51.100.7")
+	t.Setenv("ApiPort", "8443")
+	t.Setenv("ApiKey", "0123456789abcdef")
+	t.Setenv("PanelIp", "198.51.100.7")
 	cfg2, action2, err := Parse(nil)
 	if err != nil {
 		t.Fatal(err)
@@ -57,8 +58,8 @@ func TestParseMatchesBashContract(t *testing.T) {
 // TestWriteEnvShape pins the .env key order and 0600 mode to write_env.
 func TestWriteEnvShape(t *testing.T) {
 	dir := t.TempDir()
-	t.Setenv("OVN_APP_DIR", dir)
-	t.Setenv("OVN_DATA_BASE", filepath.Join(dir, "data"))
+	t.Setenv("AppDir", dir)
+	t.Setenv("DataDir", filepath.Join(dir, "data"))
 	cfg, _, err := Parse([]string{"--panel-ip", "203.0.113.9", "-y"})
 	if err != nil {
 		t.Fatal(err)
@@ -81,22 +82,16 @@ func TestWriteEnvShape(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	want := "NODE_NAME=eu-1\n" +
-		"OVNODE_INSTANCE=ovnode\n" +
-		"DATA_DIR=" + filepath.Join(dir, "data") + "\n" +
-		"OVNODE_DATA_DIR=" + filepath.Join(dir, "data") + "\n" +
-		"SERVICE_PORT=2083\n" +
-		"API_KEY=0123456789abcdef0123456789abcdef\n" +
-		"OPENVPN_PORT=1194\n" +
-		"OVNODE_PROTO=udp\n" +
-		"OVNODE_RUNTIME_USER=ovnode-vpn\n" +
-		"OVNODE_RUNTIME_GROUP=ovnode-vpn\n" +
-		"TLS_METHOD=selfsigned\n" +
-		"OVNODE_MANAGEMENT_PORT=7526\n" +
-		"OVNODE_OPENVPN_ROOT=/var/lib/ovnode/openvpn\n" +
-		"OVNODE_NAT_CONF=/etc/default/ovnode-nat\n" +
-		"OVNODE_LOG_DIR=/var/log/ovnode\n" +
-		"OVNODE_PANEL_ALLOW=203.0.113.9\n"
+	want := "Instance=ovnode\n" +
+		"DataDir=" + filepath.Join(dir, "data") + "\n" +
+		"OpenVpnRoot=/var/lib/ovnode/openvpn\n" +
+		"LogDir=/var/log/ovnode\n" +
+		"ApiPort=2083\n" +
+		"ApiKey=0123456789abcdef0123456789abcdef\n" +
+		"RuntimeUser=ovnode-vpn\n" +
+		"RuntimeGroup=ovnode-vpn\n" +
+		"LogLevel=info\n" +
+		"ApiAllowedCidrs=203.0.113.9\n"
 	if string(data) != want {
 		t.Fatalf(".env = %q\nwant %q", data, want)
 	}
@@ -109,7 +104,7 @@ func TestWriteEnvShape(t *testing.T) {
 // TestInstallStateMatchesBash instantiates the seven states from
 // scripts/test-installer-go.sh and requires the same answer.
 func TestInstallStateMatchesBash(t *testing.T) {
-	t.Setenv("OVN_SYSTEMD_DIR", t.TempDir())
+	t.Setenv("SystemdDir", t.TempDir())
 	c := FromEnv()
 
 	c.AppDir = filepath.Join(t.TempDir(), "missing")
@@ -160,11 +155,11 @@ func TestInstallStateMatchesBash(t *testing.T) {
 // --instance must move every derived path, not just the label: the previous
 // build kept /opt/ovnode and installed over the default instance.
 func TestInstanceFlagDerivesPaths(t *testing.T) {
-	t.Setenv("OVN_APP_DIR", "")
-	t.Setenv("OVN_DATA_BASE", "")
-	t.Setenv("OVN_OPENVPN_ROOT", "")
+	t.Setenv("AppDir", "")
+	t.Setenv("DataDir", "")
+	t.Setenv("OpenVpnRoot", "")
 	t.Setenv("OVN_LOG_DIR", "")
-	t.Setenv("OVN_INSTANCE", "")
+	t.Setenv("Instance", "")
 	c, action, err := Parse([]string{"install", "--instance", "udp443"})
 	if err != nil {
 		t.Fatal(err)
@@ -193,7 +188,7 @@ func TestInstanceFlagDerivesPaths(t *testing.T) {
 // --dest must beat the derived app dir; the previous validate() re-derived it
 // and silently installed into /opt/<instance>.
 func TestDestFlagWins(t *testing.T) {
-	t.Setenv("OVN_APP_DIR", "")
+	t.Setenv("AppDir", "")
 	c, _, err := Parse([]string{"install", "--local", "--dest", "/tmp/ovnode-dest-probe"})
 	if err != nil {
 		t.Fatal(err)
@@ -209,8 +204,8 @@ func TestDestFlagWins(t *testing.T) {
 // Instance-scoped host files: a second instance must not overwrite the first
 // one's logrotate, cron, sysctl or backup paths.
 func TestHostPathsAreInstanceScoped(t *testing.T) {
-	t.Setenv("OVNODE_LOGROTATE_CONF", "")
-	t.Setenv("OVN_COMPLETION_DIR", "")
+	t.Setenv("LogrotateConf", "")
+	t.Setenv("CompletionDir", "")
 	c := &Config{Instance: "udp443", CLIName: "udp443"}
 	for _, tc := range []struct{ name, got, want string }{
 		{"logrotate", c.logrotatePath(), "/etc/logrotate.d/udp443"},
@@ -227,5 +222,40 @@ func TestHostPathsAreInstanceScoped(t *testing.T) {
 	defaultInstance := &Config{Instance: "ovnode"}
 	if got := defaultInstance.natConfigPath(); got != "/etc/default/ovnode-nat" {
 		t.Errorf("default nat path = %q", got)
+	}
+}
+
+// The example file is the documentation the installer points at. Every key it
+// writes must be documented there, and the file must not document keys that
+// no longer exist.
+func TestEnvExampleMatchesWriter(t *testing.T) {
+	data, err := os.ReadFile(filepath.Join("..", "..", "..", ".env.example"))
+	if err != nil {
+		t.Fatalf("read env.example: %v", err)
+	}
+	documented := map[string]bool{}
+	for _, line := range strings.Split(string(data), "\n") {
+		line = strings.TrimSpace(line)
+		if line == "" || strings.HasPrefix(line, "#") {
+			continue
+		}
+		k, _, ok := strings.Cut(line, "=")
+		if ok {
+			documented[strings.TrimSpace(k)] = true
+		}
+	}
+	written := []string{
+		"Instance", "DataDir", "OpenVpnRoot", "LogDir", "ApiPort", "ApiKey",
+		"RuntimeUser", "RuntimeGroup", "LogLevel", "ApiAllowedCidrs",
+		"TlsCertFile", "TlsKeyFile",
+	}
+	for _, key := range written {
+		if !documented[key] {
+			t.Errorf("%s is written by the installer but missing from env.example", key)
+		}
+		delete(documented, key)
+	}
+	for key := range documented {
+		t.Errorf("env.example documents %s, which the installer no longer writes", key)
 	}
 }

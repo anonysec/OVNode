@@ -27,15 +27,15 @@ func Parse(args []string) (*Config, string, error) {
 			if i >= len(args) {
 				return nil, "", fmt.Errorf("--port needs a value")
 			}
-			fmt.Fprintln(os.Stderr, deprecatedFlag("--port", "set OVN_PORT instead"))
+			fmt.Fprintln(os.Stderr, deprecatedFlag("--port", "set ApiPort instead"))
 			c.Port = args[i]
 			i++
 		case "-p", "--key":
 			if i >= len(args) {
 				return nil, "", fmt.Errorf("%s needs a value", arg)
 			}
-			fmt.Fprintln(os.Stderr, deprecatedFlag(arg, "set OVN_KEY instead"))
-			fmt.Fprintln(os.Stderr, "  warning: API key on the command line is visible to other users (ps); prefer OVN_KEY=...")
+			fmt.Fprintln(os.Stderr, deprecatedFlag(arg, "set ApiKey instead"))
+			fmt.Fprintln(os.Stderr, "  warning: API key on the command line is visible to other users (ps); prefer ApiKey=...")
 			c.APIKey = args[i]
 			i++
 		case "-v", "--version":
@@ -50,7 +50,7 @@ func Parse(args []string) (*Config, string, error) {
 			if i >= len(args) {
 				return nil, "", fmt.Errorf("%s needs a value", arg)
 			}
-			fmt.Fprintln(os.Stderr, deprecatedFlag(arg, "set OVN_VPN_PORTS instead"))
+			fmt.Fprintln(os.Stderr, deprecatedFlag(arg, "set VpnPorts instead"))
 			c.VPNPorts = args[i]
 			i++
 		case "--proto":
@@ -64,7 +64,7 @@ func Parse(args []string) (*Config, string, error) {
 			if i >= len(args) {
 				return nil, "", fmt.Errorf("--name needs a value")
 			}
-			fmt.Fprintln(os.Stderr, deprecatedFlag("--name", "set OVN_NAME instead"))
+			fmt.Fprintln(os.Stderr, deprecatedFlag("--name", "set NodeName instead"))
 			c.NodeName = args[i]
 			i++
 		case "--instance":
@@ -84,7 +84,7 @@ func Parse(args []string) (*Config, string, error) {
 			if i >= len(args) {
 				return nil, "", fmt.Errorf("--tls needs a value")
 			}
-			fmt.Fprintln(os.Stderr, deprecatedFlag("--tls", "set OVN_TLS instead"))
+			fmt.Fprintln(os.Stderr, deprecatedFlag("--tls", "set TlsMethod instead"))
 			switch args[i] {
 			case "1", "selfsigned":
 				c.TLSMethod = "selfsigned"
@@ -102,21 +102,21 @@ func Parse(args []string) (*Config, string, error) {
 			if i >= len(args) {
 				return nil, "", fmt.Errorf("--tls-domain needs a value")
 			}
-			fmt.Fprintln(os.Stderr, deprecatedFlag("--tls-domain", "set OVN_TLS_DOMAIN instead"))
+			fmt.Fprintln(os.Stderr, deprecatedFlag("--tls-domain", "set TlsDomain instead"))
 			c.TLSDomain = args[i]
 			i++
 		case "--tls-key":
 			if i >= len(args) {
 				return nil, "", fmt.Errorf("--tls-key needs a value")
 			}
-			fmt.Fprintln(os.Stderr, deprecatedFlag("--tls-key", "set OVN_TLS_KEY instead"))
+			fmt.Fprintln(os.Stderr, deprecatedFlag("--tls-key", "set TlsKey instead"))
 			c.TLSKey = args[i]
 			i++
 		case "--tls-cert":
 			if i >= len(args) {
 				return nil, "", fmt.Errorf("--tls-cert needs a value")
 			}
-			fmt.Fprintln(os.Stderr, deprecatedFlag("--tls-cert", "set OVN_TLS_CERT instead"))
+			fmt.Fprintln(os.Stderr, deprecatedFlag("--tls-cert", "set TlsCert instead"))
 			c.TLSCert = args[i]
 			i++
 		case "--local":
@@ -144,18 +144,18 @@ func Parse(args []string) (*Config, string, error) {
 			c.PanelIP = args[i]
 			i++
 		case "--ipv6":
-			fmt.Fprintln(os.Stderr, deprecatedFlag("--ipv6", "set OVN_IPV6=1 instead"))
+			fmt.Fprintln(os.Stderr, deprecatedFlag("--ipv6", "set Ipv6=1 instead"))
 			c.IPv6 = true
 		case "--no-nat":
-			fmt.Fprintln(os.Stderr, deprecatedFlag("--no-nat", "set OVN_NO_NAT=1 instead"))
+			fmt.Fprintln(os.Stderr, deprecatedFlag("--no-nat", "set NoNat=1 instead"))
 			c.NoNAT = true
 		case "--yes", "-y":
 			c.Yes = true
 		case "--purge":
-			fmt.Fprintln(os.Stderr, deprecatedFlag("--purge", "set OVN_PURGE=1 instead"))
+			fmt.Fprintln(os.Stderr, deprecatedFlag("--purge", "set Purge=1 instead"))
 			c.Purge = true
 		case "--quiet", "-q":
-			fmt.Fprintln(os.Stderr, deprecatedFlag(arg, "set OVN_QUIET=1 instead"))
+			fmt.Fprintln(os.Stderr, deprecatedFlag(arg, "set Quiet=1 instead"))
 			c.Quiet = true
 		case "install":
 			action = "install"

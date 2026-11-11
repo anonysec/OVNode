@@ -30,8 +30,8 @@ func setupNATConf(t *testing.T, initial string) (string, string, string) {
 	if err := os.WriteFile(filepath.Join(appDir, "ovnode-server"), []byte(script), 0o755); err != nil {
 		t.Fatalf("write fake agent: %v", err)
 	}
-	t.Setenv("OVNODE_NAT_CONF", conf)
-	t.Setenv("OVN_APP_DIR", appDir)
+	t.Setenv("NatConf", conf)
+	t.Setenv("AppDir", appDir)
 	return conf, record, appDir
 }
 
@@ -55,15 +55,15 @@ func TestSyncNATConfigNotEnrolled(t *testing.T) {
 }
 
 func TestSyncNATConfigOptOutSkipsApply(t *testing.T) {
-	conf, record, _ := setupNATConf(t, "# OVNode NAT configuration\nVPN_NAT_ENABLED=0\nVPN_PRIMARY_PORT=1194\nVPN_EXTRA_PORTS=\n")
+	conf, record, _ := setupNATConf(t, "# OVNode NAT configuration\nVpnNatEnabled=0\nVpnPrimaryPort=1194\nVpnExtraPorts=\n")
 	if err := SyncNATConfig(2053, []int{1194}); err != nil {
 		t.Fatalf("opt-out sync: %v", err)
 	}
 	content := readFile(t, conf)
-	if !strings.Contains(content, "VPN_NAT_ENABLED=0") {
+	if !strings.Contains(content, "VpnNatEnabled=0") {
 		t.Fatalf("opt-out not retained:\n%s", content)
 	}
-	if !strings.Contains(content, "VPN_PRIMARY_PORT=2053") || !strings.Contains(content, "VPN_EXTRA_PORTS=1194") {
+	if !strings.Contains(content, "VpnPrimaryPort=2053") || !strings.Contains(content, "VpnExtraPorts=1194") {
 		t.Fatalf("ports not rewritten on opt-out:\n%s", content)
 	}
 	if _, err := os.Stat(record); !os.IsNotExist(err) {
@@ -72,14 +72,14 @@ func TestSyncNATConfigOptOutSkipsApply(t *testing.T) {
 }
 
 func TestSyncNATConfigEnabledApplies(t *testing.T) {
-	conf, record, _ := setupNATConf(t, "VPN_NAT_ENABLED=1\nVPN_PRIMARY_PORT=1194\nVPN_EXTRA_PORTS=\n")
+	conf, record, _ := setupNATConf(t, "VpnNatEnabled=1\nVpnPrimaryPort=1194\nVpnExtraPorts=\n")
 	if err := SyncNATConfig(2053, []int{1194}); err != nil {
 		t.Fatalf("enabled sync: %v", err)
 	}
 	content := readFile(t, conf)
-	if !strings.Contains(content, "VPN_NAT_ENABLED=1") ||
-		!strings.Contains(content, "VPN_PRIMARY_PORT=2053") ||
-		!strings.Contains(content, "VPN_EXTRA_PORTS=1194") {
+	if !strings.Contains(content, "VpnNatEnabled=1") ||
+		!strings.Contains(content, "VpnPrimaryPort=2053") ||
+		!strings.Contains(content, "VpnExtraPorts=1194") {
 		t.Fatalf("config not rewritten:\n%s", content)
 	}
 	args := readFile(t, record)
@@ -89,7 +89,7 @@ func TestSyncNATConfigEnabledApplies(t *testing.T) {
 }
 
 func TestSyncNATConfigApplyFailureRestoresPrevious(t *testing.T) {
-	initial := "VPN_NAT_ENABLED=1\nVPN_PRIMARY_PORT=1194\nVPN_EXTRA_PORTS=8443\n"
+	initial := "VpnNatEnabled=1\nVpnPrimaryPort=1194\nVpnExtraPorts=8443\n"
 	conf, _, appDir := setupNATConf(t, initial)
 	// Failing agent binary.
 	if err := os.WriteFile(filepath.Join(appDir, "ovnode-server"), []byte("#!/bin/sh\nexit 1\n"), 0o755); err != nil {

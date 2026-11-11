@@ -4,7 +4,10 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"strconv"
 	"strings"
+
+	"ovnode/internal/settings"
 )
 
 // writeEnv mirrors write_env: 0600, same keys, same order.
@@ -13,45 +16,52 @@ func (c *Config) writeEnv() error {
 		return err
 	}
 	var b strings.Builder
-	fmt.Fprintf(&b, "NODE_NAME=%s\n", c.NodeName)
-	fmt.Fprintf(&b, "OVNODE_INSTANCE=%s\n", c.Instance)
-	fmt.Fprintf(&b, "DATA_DIR=%s\n", c.DataDir())
-	fmt.Fprintf(&b, "OVNODE_DATA_DIR=%s\n", c.DataDir())
-	fmt.Fprintf(&b, "SERVICE_PORT=%s\n", c.Port)
-	fmt.Fprintf(&b, "API_KEY=%s\n", c.APIKey)
-	fmt.Fprintf(&b, "OPENVPN_PORT=%s\n", c.VPNSport)
-	proto := c.Proto
-	if proto == "" {
-		proto = "tcp"
-	}
-	fmt.Fprintf(&b, "OVNODE_PROTO=%s\n", proto)
-	fmt.Fprintf(&b, "OVNODE_RUNTIME_USER=%s\n", c.RuntimeUser)
-	fmt.Fprintf(&b, "OVNODE_RUNTIME_GROUP=%s\n", c.RuntimeGroup)
-	fmt.Fprintf(&b, "TLS_METHOD=%s\n", c.TLSMethod)
-	fmt.Fprintf(&b, "OVNODE_MANAGEMENT_PORT=%d\n", c.MgmtPort)
-	fmt.Fprintf(&b, "OVNODE_OPENVPN_ROOT=%s\n", c.OpenVPNRoot)
-	fmt.Fprintf(&b, "OVNODE_NAT_CONF=%s\n", c.natConfigPath())
-	fmt.Fprintf(&b, "OVNODE_LOG_DIR=%s\n", c.LogDir)
-	if c.ExtraPorts != "" {
-		fmt.Fprintf(&b, "OVNODE_EXTRA_PORTS=%s\n", c.ExtraPorts)
-	}
-	if c.IPv6 {
-		b.WriteString("OVNODE_ENABLE_IPV6=1\n")
-	}
+	fmt.Fprintf(&b, "Instance=%s\n", c.Instance)
+	fmt.Fprintf(&b, "DataDir=%s\n", c.DataDir())
+	fmt.Fprintf(&b, "OpenVpnRoot=%s\n", c.OpenVPNRoot)
+	fmt.Fprintf(&b, "LogDir=%s\n", c.LogDir)
+	fmt.Fprintf(&b, "ApiPort=%s\n", c.Port)
+	fmt.Fprintf(&b, "ApiKey=%s\n", c.APIKey)
+	fmt.Fprintf(&b, "RuntimeUser=%s\n", c.RuntimeUser)
+	fmt.Fprintf(&b, "RuntimeGroup=%s\n", c.RuntimeGroup)
+	fmt.Fprintf(&b, "LogLevel=info\n")
 	if c.TLSCert != "" {
-		fmt.Fprintf(&b, "SSL_CERTFILE=%s\n", c.TLSCert)
+		fmt.Fprintf(&b, "TlsCertFile=%s\n", c.TLSCert)
 	}
 	if c.TLSKey != "" {
-		fmt.Fprintf(&b, "SSL_KEYFILE=%s\n", c.TLSKey)
+		fmt.Fprintf(&b, "TlsKeyFile=%s\n", c.TLSKey)
 	}
 	if c.PanelIP != "" {
-		fmt.Fprintf(&b, "OVNODE_PANEL_ALLOW=%s\n", c.PanelIP)
+		fmt.Fprintf(&b, "ApiAllowedCidrs=%s\n", c.PanelIP)
 	}
 	path := filepath.Join(c.AppDir, ".env")
 	if err := os.WriteFile(path, []byte(b.String()), 0o600); err != nil {
 		return err
 	}
 	return os.Chmod(path, 0o600)
+}
+
+// writeSettings seeds state/openvpn.json from the install flags. The file is
+// the runtime's single source of truth; .env only carries identity and paths.
+func (c *Config) writeSettings() error {
+	s := settings.Defaults()
+	if proto, ok := settings.NormalizeProtocol(c.Proto); ok {
+		s.Protocol = proto
+	}
+	if n, err := strconv.Atoi(c.VPNSport); err == nil {
+		s.Port = n
+	}
+	s.ExtraPorts = nil
+	for _, part := range strings.Split(c.ExtraPorts, ",") {
+		if n, err := strconv.Atoi(strings.TrimSpace(part)); err == nil && n != s.Port {
+			s.ExtraPorts = append(s.ExtraPorts, n)
+		}
+	}
+	s.IPv6Enabled = c.IPv6
+	if err := s.Validate(); err != nil {
+		return err
+	}
+	return settings.SaveTo(filepath.Join(c.DataDir(), "state", "openvpn.json"), s)
 }
 
 // writeSetupInfo mirrors write_setup_info.
@@ -70,7 +80,7 @@ func (c *Config) writeSetupInfo(runner Runner) error {
 	}
 	cert := c.TLSCert
 	if cert == "" {
-		cert = c.EnvGet("SSL_CERTFILE")
+		cert = c.EnvGet("TlsCertFile")
 	}
 	var b strings.Builder
 	b.WriteString("# OVNode connection details\n")

@@ -27,13 +27,13 @@ func providerServer(t *testing.T) *Server {
 	t.Helper()
 	s := testServer(t)
 	root := fsx.OpenVPNRoot()
-	t.Setenv("OVNODE_LOG_DIR", filepath.Join(root, "logs"))
-	t.Setenv("OVNODE_LOG_FILE", filepath.Join(root, "logs", "events.log"))
-	t.Setenv("OVNODE_USERS_DIR", filepath.Join(fsx.OVNodeDir(), "users"))
-	t.Setenv("OVNODE_SESSIONS_DIR", filepath.Join(fsx.OVNodeDir(), "sessions"))
-	t.Setenv("OVNODE_USAGE_DIR", filepath.Join(fsx.OVNodeDir(), "usage"))
-	t.Setenv("OVNODE_STATUS_FILE", filepath.Join(root, "server", "status.log"))
-	t.Setenv("OVNODE_MGMT_PASS_FILE", filepath.Join(root, "server", "mgmt-pass"))
+	t.Setenv("LogDir", filepath.Join(root, "logs"))
+	t.Setenv("LogFile", filepath.Join(root, "logs", "events.log"))
+	t.Setenv("UsersDir", filepath.Join(fsx.OVNodeDir(), "users"))
+	t.Setenv("SessionsDir", filepath.Join(fsx.OVNodeDir(), "sessions"))
+	t.Setenv("UsageDir", filepath.Join(fsx.OVNodeDir(), "usage"))
+	t.Setenv("StatusFile", filepath.Join(root, "server", "status.log"))
+	t.Setenv("MgmtPassFile", filepath.Join(root, "server", "mgmt-pass"))
 	return s
 }
 

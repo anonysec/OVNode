@@ -125,11 +125,11 @@ func dirSize(path string) string {
 }
 
 func (c *Config) closeFirewall(r Runner) {
-	svc := c.EnvGet("SERVICE_PORT")
+	svc := c.EnvGet("ApiPort")
 	if svc == "" {
 		svc = "2083"
 	}
-	vpn := c.EnvGet("OPENVPN_PORT")
+	vpn := c.EnvGet("VpnPort")
 	if vpn == "" {
 		vpn = "1194"
 	}

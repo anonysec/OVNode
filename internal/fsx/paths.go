@@ -23,24 +23,16 @@ var (
 func loadEnvFile() {
 	out := map[string]string{}
 	paths := []string{}
-	if d := os.Getenv("OVN_APP_DIR"); d != "" {
+	if d := os.Getenv("AppDir"); d != "" {
 		paths = append(paths, filepath.Join(d, ".env"))
 	}
 	instance := "ovnode"
-	if v := os.Getenv("OVNODE_INSTANCE"); v != "" {
+	if v := os.Getenv("Instance"); v != "" {
 		instance = v
 	}
-	if v := os.Getenv("OVN_INSTANCE"); v != "" {
-		instance = v
-	}
-	paths = append(paths, "/opt/"+instance+"/.env", "/etc/openvpn/"+instance+"/.env", "/var/lib/"+instance+"/openvpn/.env")
-	// Instance-aware: search for any instance's .env (PasarGuard-style).
-	if matches, err := filepath.Glob("/opt/*/.env"); err == nil {
-		paths = append(paths, matches...)
-	}
-	if matches, err := filepath.Glob("/var/lib/*/openvpn/.env"); err == nil {
-		paths = append(paths, matches...)
-	}
+	// Exactly this instance's file. A glob here would let one instance adopt a
+	// neighbour's API key and paths when its own file is missing.
+	paths = append(paths, "/opt/"+instance+"/.env")
 	for _, p := range paths {
 		data, err := os.ReadFile(p)
 		if err != nil {
@@ -89,32 +81,20 @@ func envOr(name, fallback string) string {
 // EnvOr reads an environment variable by its full name.
 func EnvOr(name, fallback string) string { return envOr(name, fallback) }
 
-// Env reads an OVNODE_* environment variable (name is uppercased and prefixed).
-func Env(name, defaultVal string) string {
-	return envOr("OVNODE_"+toUpper(name), defaultVal)
-}
-
-func toUpper(s string) string {
-	out := make([]byte, len(s))
-	for i := 0; i < len(s); i++ {
-		c := s[i]
-		if c >= 'a' && c <= 'z' {
-			c -= 32
-		}
-		out[i] = c
-	}
-	return string(out)
-}
+// Get reads a configuration key. Names are explicit PascalCase; there is no
+// implicit prefix, because a prefix applied on one side and not the other is
+// exactly how a prefixed and an unprefixed key drifted apart.
+func Get(name, defaultVal string) string { return envOr(name, defaultVal) }
 
 const DefaultOpenVPNRoot = "/var/lib/ovnode/openvpn"
 
 // InstanceName returns the ovnode instance name, defaulting to "ovnode".
 func InstanceName() string {
-	return envOr("OVNODE_INSTANCE", "ovnode")
+	return envOr("Instance", "ovnode")
 }
 
 func OpenVPNRoot() string {
-	if v := envOr("OVNODE_OPENVPN_ROOT", ""); v != "" {
+	if v := envOr("OpenVpnRoot", ""); v != "" {
 		return v
 	}
 	return "/var/lib/" + InstanceName() + "/openvpn"
@@ -145,34 +125,34 @@ func ServerKey() string { return filepath.Join(PKIDir(), "private", "server.key"
 func CRLFile() string   { return filepath.Join(PKIDir(), "crl.pem") }
 func PIDFile() string   { return joinRoot("server", "ovnode.pid") }
 func MgmtPassFile() string {
-	return envOr("OVNODE_MGMT_PASS_FILE", joinRoot("server", "mgmt-pass"))
+	return envOr("MgmtPassFile", joinRoot("server", "mgmt-pass"))
 }
 
-func StatusFile() string { return envOr("OVNODE_STATUS_FILE", joinRoot("server", "status.log")) }
-func LogDir() string     { return envOr("OVNODE_LOG_DIR", "/var/log/"+InstanceName()) }
-func LogFile() string    { return envOr("OVNODE_LOG_FILE", filepath.Join(LogDir(), "hook-events.log")) }
+func StatusFile() string { return envOr("StatusFile", joinRoot("server", "status.log")) }
+func LogDir() string     { return envOr("LogDir", "/var/log/"+InstanceName()) }
+func LogFile() string    { return envOr("LogFile", filepath.Join(LogDir(), "hook-events.log")) }
 
 func OVNodeDir() string {
 	// Data lives in /var/lib/ovnode by default (consistent with OVManager),
-	// overridable via OVNODE_DATA_DIR / DATA_DIR. The OpenVPN root
+	// overridable via DataDir / DataDir. The OpenVPN root
 	// (/etc/openvpn) only holds server.conf + PKI.
-	if v := envOr("OVNODE_DATA_DIR", ""); v != "" {
+	if v := envOr("DataDir", ""); v != "" {
 		return v
 	}
-	if v := envOr("DATA_DIR", ""); v != "" {
+	if v := envOr("DataDir", ""); v != "" {
 		return v
 	}
 	return "/var/lib/" + InstanceName()
 }
 
 func UsersDir() string {
-	return envOr("OVNODE_USERS_DIR", filepath.Join(OVNodeDir(), "users"))
+	return envOr("UsersDir", filepath.Join(OVNodeDir(), "users"))
 }
 func SessionsDir() string {
-	return envOr("OVNODE_SESSIONS_DIR", filepath.Join(OVNodeDir(), "sessions"))
+	return envOr("SessionsDir", filepath.Join(OVNodeDir(), "sessions"))
 }
 func UsageDir() string {
-	return envOr("OVNODE_USAGE_DIR", filepath.Join(OVNodeDir(), "usage"))
+	return envOr("UsageDir", filepath.Join(OVNodeDir(), "usage"))
 }
 
 // AgentBin is the single on-disk location of the node agent binary. It sits
@@ -183,7 +163,7 @@ func AgentBin() string {
 	// data dir. Prefer the running executable so multi-instance and renamed
 	// installs point at the binary that generated the config; fall back to the
 	// env/default app path.
-	if appDir := envOr("OVN_APP_DIR", ""); appDir != "" {
+	if appDir := envOr("AppDir", ""); appDir != "" {
 		return filepath.Join(appDir, "ovnode-server")
 	}
 	if exe, err := os.Executable(); err == nil && exe != "" {

@@ -33,7 +33,7 @@ func buildTree(t *testing.T) (appDir, nodeData, ovpnRoot, backupRoot string) {
 	nodeData = filepath.Join(base, "data")
 	ovpnRoot = filepath.Join(base, "openvpn")
 	backupRoot = filepath.Join(base, "backup")
-	writeTree(t, appDir, map[string]string{".env": "NODE_NAME=n1\nAPI_KEY=abc\n"})
+	writeTree(t, appDir, map[string]string{".env": "Instance=n1\nApiKey=abc\n"})
 	writeTree(t, nodeData, map[string]string{"state/x.json": `{"ok":true}`, "users/u1/limit": "2"})
 	writeTree(t, ovpnRoot, map[string]string{"server/server.conf": "port 1194\n", "ovnode/u1/config": "client\n"})
 	return appDir, nodeData, ovpnRoot, backupRoot
@@ -92,7 +92,7 @@ func TestBundleRestoreRoundTrip(t *testing.T) {
 	if err := Restore(bundle, newApp, newData, newOvpn); err != nil {
 		t.Fatal(err)
 	}
-	if got := readFile(t, filepath.Join(newApp, ".env")); got != "NODE_NAME=n1\nAPI_KEY=abc\n" {
+	if got := readFile(t, filepath.Join(newApp, ".env")); got != "Instance=n1\nApiKey=abc\n" {
 		t.Fatalf(".env = %q", got)
 	}
 	if got := readFile(t, filepath.Join(newData, "state/x.json")); got != `{"ok":true}` {

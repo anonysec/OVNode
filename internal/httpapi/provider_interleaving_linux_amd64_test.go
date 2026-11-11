@@ -34,7 +34,7 @@ type providerResult struct {
 }
 
 func TestProviderHandlerProcess(t *testing.T) {
-	mode := os.Getenv("OVNODE_TEST_PROVIDER_HANDLER")
+	mode := os.Getenv("TestPROVIDER_HANDLER")
 	if mode == "" {
 		return
 	}
@@ -67,7 +67,7 @@ func TestProviderHandlerProcess(t *testing.T) {
 	default:
 		t.Fatalf("unknown owned handler fixture %q", mode)
 	}
-	response := do(t, s, method, path, os.Getenv("OVNODE_TEST_PROVIDER_BODY"))
+	response := do(t, s, method, path, os.Getenv("TestPROVIDER_BODY"))
 	if err := json.NewEncoder(ready).Encode(providerResult{response.Code, response.Body.String()}); err != nil {
 		t.Fatal(err)
 	}
@@ -98,7 +98,7 @@ func startProviderTrace(t *testing.T, mode, body string) *providerTrace {
 	t.Cleanup(cancel)
 	p := &providerTrace{reader: bufio.NewReader(ready)}
 	p.cmd = exec.CommandContext(ctx, exe, "-test.run=^TestProviderHandlerProcess$")
-	p.cmd.Env = append(os.Environ(), "OVNODE_TEST_PROVIDER_HANDLER="+mode, "OVNODE_TEST_PROVIDER_BODY="+body, "GOMAXPROCS=1")
+	p.cmd.Env = append(os.Environ(), "TestPROVIDER_HANDLER="+mode, "TestPROVIDER_BODY="+body, "GOMAXPROCS=1")
 	p.cmd.ExtraFiles = []*os.File{readyWrite, proceed}
 	p.cmd.Stdout, p.cmd.Stderr = &p.output, &p.output
 	if err := p.cmd.Start(); err != nil {

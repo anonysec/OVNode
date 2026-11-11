@@ -72,17 +72,17 @@ func TriggerUpdate(appDir, version string) error {
 	_ = os.WriteFile(marker, []byte("running\n"), 0o600)
 
 	cmd := exec.Command("systemd-run", "--unit=ovnode-update-"+sanitizeUnit(appDir), "--collect", "--quiet",
-		"--setenv=OVN_APP_DIR="+appDir, "--setenv=OVN_VERSION="+version,
+		"--setenv=AppDir="+appDir, "--setenv=Version="+version,
 		"/bin/bash", installer, "update")
 	cmd.Dir = appDir
 	cmd.Env = []string{
 		"PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin",
 		"HOME=/root",
-		"APP_DIR=" + appDir,
-		"OVN_APP_DIR=" + appDir,
+		"AppDir=" + appDir,
+		"AppDir=" + appDir,
 	}
 	if version != "" {
-		cmd.Env = append(cmd.Env, "OVN_VERSION="+version)
+		cmd.Env = append(cmd.Env, "Version="+version)
 	}
 	if err := cmd.Run(); err != nil {
 		_ = syscall.Flock(int(lockFile.Fd()), syscall.LOCK_UN)

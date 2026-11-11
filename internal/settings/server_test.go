@@ -10,15 +10,15 @@ import (
 func isolate(t *testing.T) {
 	t.Helper()
 	dir := t.TempDir()
-	t.Setenv("OVNODE_DATA_DIR", dir)
-	t.Setenv("OVNODE_INSTANCE", "unit-test")
-	t.Setenv("OVNODE_PROTO", "")
-	t.Setenv("OPENVPN_PORT", "")
-	t.Setenv("OVNODE_EXTRA_PORTS", "")
-	t.Setenv("OVNODE_ENABLE_IPV6", "")
-	t.Setenv("OVNODE_VPN_DNS1", "")
-	t.Setenv("OVNODE_VPN_DNS2", "")
-	t.Setenv("OVNODE_IPV6_PREFIX", "")
+	t.Setenv("DataDir", dir)
+	t.Setenv("Instance", "unit-test")
+	t.Setenv("Proto", "")
+	t.Setenv("VpnPort", "")
+	t.Setenv("ExtraPorts", "")
+	t.Setenv("EnableIpv6", "")
+	t.Setenv("VpnDns1", "")
+	t.Setenv("VpnDns2", "")
+	t.Setenv("Ipv6Prefix", "")
 }
 
 func TestDefaultsAreValid(t *testing.T) {
@@ -29,22 +29,6 @@ func TestDefaultsAreValid(t *testing.T) {
 	}
 	if s.Protocol != ProtoUDP || s.Port != 1194 || s.CipherFirst != CipherAES128 || s.TLSMin != "1.3" {
 		t.Fatalf("unexpected defaults: %+v", s)
-	}
-}
-
-func TestDefaultsReadBootstrapEnvironment(t *testing.T) {
-	isolate(t)
-	t.Setenv("OVNODE_PROTO", "both")
-	t.Setenv("OPENVPN_PORT", "443")
-	t.Setenv("OVNODE_EXTRA_PORTS", "8443,1194,8443")
-	t.Setenv("OVNODE_ENABLE_IPV6", "yes")
-	t.Setenv("OVNODE_VPN_DNS1", "9.9.9.9")
-	s := Defaults()
-	if s.Protocol != ProtoBoth || s.Port != 443 || s.DNSPrimary != "9.9.9.9" || !s.IPv6Enabled {
-		t.Fatalf("environment was not applied: %+v", s)
-	}
-	if len(s.ExtraPorts) != 2 || s.ExtraPorts[0] != 8443 || s.ExtraPorts[1] != 1194 {
-		t.Fatalf("extra ports = %v, want [8443 1194]", s.ExtraPorts)
 	}
 }
 

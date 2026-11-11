@@ -77,16 +77,16 @@ func TestHookConnectDroppedUID(t *testing.T) {
 			t.Fatal(err)
 		}
 	}
-	t.Setenv("OVN_APP_DIR", appDir)
-	t.Setenv("OVNODE_OPENVPN_ROOT", openvpnRoot)
-	t.Setenv("OVNODE_DATA_DIR", dataDir)
-	t.Setenv("OVNODE_USERS_DIR", filepath.Join(dataDir, "users"))
-	t.Setenv("OVNODE_SESSIONS_DIR", filepath.Join(dataDir, "sessions"))
-	t.Setenv("OVNODE_USAGE_DIR", filepath.Join(dataDir, "usage"))
-	t.Setenv("OVNODE_LOG_DIR", filepath.Join(dataDir, "log"))
-	t.Setenv("OVNODE_LOG_FILE", filepath.Join(dataDir, "log", "hook-events.log"))
-	t.Setenv("OVNODE_RUNTIME_USER", "65533")
-	t.Setenv("OVNODE_RUNTIME_GROUP", "65533")
+	t.Setenv("AppDir", appDir)
+	t.Setenv("OpenVpnRoot", openvpnRoot)
+	t.Setenv("DataDir", dataDir)
+	t.Setenv("UsersDir", filepath.Join(dataDir, "users"))
+	t.Setenv("SessionsDir", filepath.Join(dataDir, "sessions"))
+	t.Setenv("UsageDir", filepath.Join(dataDir, "usage"))
+	t.Setenv("LogDir", filepath.Join(dataDir, "log"))
+	t.Setenv("LogFile", filepath.Join(dataDir, "log", "hook-events.log"))
+	t.Setenv("RuntimeUser", "65533")
+	t.Setenv("RuntimeGroup", "65533")
 	cn := "droppeduser"
 	if err := store.CreateUser(fsx.UsersDir(), cn); err != nil {
 		t.Fatal(err)
@@ -107,7 +107,7 @@ func TestHookConnectDroppedUID(t *testing.T) {
 		filepath.Join(fsx.UsersDir(), cn, "key.pem"):     "client-secret",
 		filepath.Join(fsx.UsersDir(), cn, "client.ovpn"): "profile-secret",
 		filepath.Join(pki.PKIDir(), "private", "ca.key"): "ca-secret",
-		filepath.Join(appDir, ".env"):                    "API_KEY=private-fixture-key\n",
+		filepath.Join(appDir, ".env"):                    "ApiKey=private-fixture-key\n",
 		pki.CRLFile():                                    "public-crl", ovpn.StatusFile(): "HEADER\tX\n",
 	} {
 		if err := os.WriteFile(path, []byte(body), 0o600); err != nil {
@@ -132,18 +132,18 @@ func TestHookConnectDroppedUID(t *testing.T) {
 		t.Fatal(err)
 	}
 	repair := exec.CommandContext(ctx, exe, "-test.run=^TestHookRuntimeRepairProcess$")
-	repair.Env = append(os.Environ(), "OVNODE_TEST_RUNTIME_JAIL="+dir)
+	repair.Env = append(os.Environ(), "TestRUNTIME_JAIL="+dir)
 	if output, err := repair.CombinedOutput(); err != nil {
 		t.Fatalf("isolated permission repair: %v\n%s", err, output)
 	}
 	probe := exec.CommandContext(ctx, probeBin, "-test.run=^TestHookRuntimeAccessProcess$")
-	probe.Env = append(os.Environ(), "OVNODE_TEST_RUNTIME_ACCESS=1")
+	probe.Env = append(os.Environ(), "TestRUNTIME_ACCESS=1")
 	probe.SysProcAttr = &syscall.SysProcAttr{Credential: &syscall.Credential{Uid: 65533, Gid: 65533}}
 	if output, err := probe.CombinedOutput(); err != nil {
 		t.Errorf("configured dropped UID access: %v\n%s", err, output)
 	}
 	unrelated := exec.CommandContext(ctx, probeBin, "-test.run=^TestHookUnrelatedUIDProcess$")
-	unrelated.Env = append(os.Environ(), "OVNODE_TEST_RUNTIME_ACCESS=1")
+	unrelated.Env = append(os.Environ(), "TestRUNTIME_ACCESS=1")
 	unrelated.SysProcAttr = &syscall.SysProcAttr{Credential: &syscall.Credential{Uid: 65534, Gid: 65534}}
 	if output, err := unrelated.CombinedOutput(); err != nil {
 		t.Errorf("unrelated UID exclusion: %v\n%s", err, output)

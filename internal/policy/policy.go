@@ -35,10 +35,10 @@ func reservedExtraPorts(primary int) map[int]bool {
 		2083:    true,
 	}
 	// management/API ports may be overridden by env
-	if mp := envInt("MANAGEMENT_PORT", 7505); mp > 0 {
+	if mp := envInt("ManagementPort", 7505); mp > 0 {
 		m[mp] = true
 	}
-	if ap := envInt("SERVICE_PORT", 2083); ap > 0 {
+	if ap := envInt("ApiPort", 2083); ap > 0 {
 		m[ap] = true
 	}
 	if !allowWebExtraPorts() {
@@ -49,8 +49,8 @@ func reservedExtraPorts(primary int) map[int]bool {
 }
 
 func allowWebExtraPorts() bool {
-	for _, name := range []string{"OVNODE_ALLOW_EXTRA_WEB_PORTS", "OVNODE_ALLOW_PRIVILEGED_EXTRA_PORTS", "ALLOW_EXTRA_WEB_PORTS", "ALLOW_PRIVILEGED_EXTRA_PORTS"} {
-		v := strings.ToLower(strings.TrimSpace(fsx.Env(name, "")))
+	for _, name := range []string{"AllowExtraWebPorts", "AllowPrivilegedExtraPorts", "AllowExtraWebPorts", "AllowPrivilegedExtraPorts"} {
+		v := strings.ToLower(strings.TrimSpace(fsx.Get(name, "")))
 		if v == "1" || v == "true" || v == "yes" || v == "on" {
 			return true
 		}
@@ -59,7 +59,7 @@ func allowWebExtraPorts() bool {
 }
 
 func envInt(name string, def int) int {
-	v := strings.TrimSpace(fsx.Env(name, ""))
+	v := strings.TrimSpace(fsx.Get(name, ""))
 	if v == "" {
 		return def
 	}
@@ -194,11 +194,11 @@ func PortsEffective(defaultPorts []int) []int {
 }
 
 // SyncNATConfig updates the owned NAT configuration and applies it through the
-// native node binary. A node that is not enrolled for NAT (VPN_NAT_ENABLED=0,
+// native node binary. A node that is not enrolled for NAT (VpnNatEnabled=0,
 // or no owned config file) is left untouched so an opt-out survives updates.
 // Errors are returned to the caller instead of being logged as success.
 func natConfigPath() string {
-	if v := os.Getenv("OVNODE_NAT_CONF"); v != "" {
+	if v := os.Getenv("NatConf"); v != "" {
 		return v
 	}
 	return "/etc/default/" + fsx.InstanceName() + "-nat"
@@ -215,7 +215,7 @@ func SyncNATConfig(primaryPort int, extraPorts []int) error {
 	keySeen := false
 	for _, line := range strings.Split(string(data), "\n") {
 		kv := strings.SplitN(strings.TrimSpace(line), "=", 2)
-		if len(kv) == 2 && strings.TrimSpace(kv[0]) == "VPN_NAT_ENABLED" {
+		if len(kv) == 2 && strings.TrimSpace(kv[0]) == "VpnNatEnabled" {
 			keySeen = true
 			v := strings.TrimSpace(kv[1])
 			enabled = v == "1" || strings.EqualFold(v, "true") || strings.EqualFold(v, "yes")
@@ -228,7 +228,7 @@ func SyncNATConfig(primaryPort int, extraPorts []int) error {
 	if enabled {
 		enabledStr = "1"
 	}
-	content := fmt.Sprintf("# OVNode NAT configuration\nVPN_NAT_ENABLED=%s\nVPN_PRIMARY_PORT=%d\nVPN_EXTRA_PORTS=%s\n", enabledStr, primaryPort, joinInts(extraPorts))
+	content := fmt.Sprintf("# OVNode NAT configuration\nVpnNatEnabled=%s\nVpnPrimaryPort=%d\nVpnExtraPorts=%s\n", enabledStr, primaryPort, joinInts(extraPorts))
 	// preserve previous desired config on apply failure
 	if err := fsx.WriteFileAtomic(natConf, []byte(content), 0o644); err != nil {
 		return fmt.Errorf("policy: write nat config: %w", err)
@@ -481,10 +481,10 @@ func IsReservedPrimaryPort(p int) bool {
 	if p == 22 || p == 2083 || p == 7505 {
 		return true
 	}
-	if mp := envInt("MANAGEMENT_PORT", 7505); mp > 0 && p == mp {
+	if mp := envInt("ManagementPort", 7505); mp > 0 && p == mp {
 		return true
 	}
-	if sp := envInt("SERVICE_PORT", 2083); sp > 0 && p == sp {
+	if sp := envInt("ApiPort", 2083); sp > 0 && p == sp {
 		return true
 	}
 	return false

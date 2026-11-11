@@ -14,12 +14,12 @@ import (
 )
 
 func TestPolicyMergeProcess(t *testing.T) {
-	dir := os.Getenv("OVNODE_TEST_POLICY_MERGE")
+	dir := os.Getenv("TestPOLICY_MERGE")
 	if dir == "" {
 		return
 	}
 	var err error
-	if os.Getenv("OVNODE_TEST_POLICY_FIELD") == "limit" {
+	if os.Getenv("TestPOLICY_FIELD") == "limit" {
 		err = SetLimit(dir, "alice", 9)
 	} else {
 		err = SetDisabled(dir, "alice", true)
@@ -57,7 +57,7 @@ func TestPolicyMergeSerializesWriters(t *testing.T) {
 						<-start
 						if processes {
 							cmd := exec.CommandContext(ctx, exe, "-test.run=^TestPolicyMergeProcess$")
-							cmd.Env = append(os.Environ(), "OVNODE_TEST_POLICY_MERGE="+dir, "OVNODE_TEST_POLICY_FIELD="+field)
+							cmd.Env = append(os.Environ(), "TestPOLICY_MERGE="+dir, "TestPOLICY_FIELD="+field)
 							if output, err := cmd.CombinedOutput(); err != nil {
 								t.Errorf("policy writer: %v\n%s", err, output)
 							}

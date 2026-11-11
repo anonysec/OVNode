@@ -22,8 +22,8 @@ func TestGenerateCRLRejectsCorruptRevocationData(t *testing.T) {
 	for _, failure := range []string{"missing-index", "index-directory", "malformed-row", "bad-serial", "bad-expiry", "bad-revocation-time", "bad-number", "number-directory", "crl-directory", "corrupt-crl"} {
 		t.Run(failure, func(t *testing.T) {
 			root := t.TempDir()
-			t.Setenv("OVNODE_OPENVPN_ROOT", root)
-			t.Setenv("OVNODE_DATA_DIR", root+"/ovnode-data")
+			t.Setenv("OpenVpnRoot", root)
+			t.Setenv("DataDir", root+"/ovnode-data")
 			writeTestCA(t, root)
 			if err := GenerateCRL(); err != nil {
 				t.Fatal(err)
@@ -73,8 +73,8 @@ func TestGenerateCRLRejectsCorruptRevocationData(t *testing.T) {
 
 func TestGenerateCRLDoesNotLosePreviousRevocations(t *testing.T) {
 	root := t.TempDir()
-	t.Setenv("OVNODE_OPENVPN_ROOT", root)
-	t.Setenv("OVNODE_DATA_DIR", root+"/ovnode-data")
+	t.Setenv("OpenVpnRoot", root)
+	t.Setenv("DataDir", root+"/ovnode-data")
 	writeTestCA(t, root)
 	certPEM, _, err := IssueClientCertToTree("alice")
 	if err != nil {
@@ -113,7 +113,7 @@ func TestGenerateCRLDoesNotLosePreviousRevocations(t *testing.T) {
 
 func TestRevokeCertRejectsUnknownSerial(t *testing.T) {
 	root := t.TempDir()
-	t.Setenv("OVNODE_OPENVPN_ROOT", root)
+	t.Setenv("OpenVpnRoot", root)
 	writeTestCA(t, root)
 	if err := RevokeCert("BEEF"); err == nil {
 		t.Fatal("unknown serial was acknowledged as revoked")
@@ -122,7 +122,7 @@ func TestRevokeCertRejectsUnknownSerial(t *testing.T) {
 
 func TestIssueClientCertPreservesUnterminatedIndex(t *testing.T) {
 	root := t.TempDir()
-	t.Setenv("OVNODE_OPENVPN_ROOT", root)
+	t.Setenv("OpenVpnRoot", root)
 	writeTestCA(t, root)
 	if _, _, err := IssueClientCertToTree("alice"); err != nil {
 		t.Fatal(err)
@@ -146,8 +146,8 @@ func TestIssueClientCertPreservesUnterminatedIndex(t *testing.T) {
 
 func TestRevokeExpiredAndReissuedCertificates(t *testing.T) {
 	root := t.TempDir()
-	t.Setenv("OVNODE_OPENVPN_ROOT", root)
-	t.Setenv("OVNODE_DATA_DIR", root+"/ovnode-data")
+	t.Setenv("OpenVpnRoot", root)
+	t.Setenv("DataDir", root+"/ovnode-data")
 	writeTestCA(t, root)
 	certPEM, _, err := IssueClientCertToTree("alice")
 	if err != nil {
@@ -208,7 +208,7 @@ func TestRevokeExpiredAndReissuedCertificates(t *testing.T) {
 }
 
 func TestRevokeIndexWriteErrorProcess(t *testing.T) {
-	if os.Getenv("OVNODE_TEST_PROVIDER_INDEX_WRITE") == "" {
+	if os.Getenv("TestPROVIDER_INDEX_WRITE") == "" {
 		return
 	}
 	if err := RevokeCert("1000"); !os.IsPermission(err) {
@@ -228,7 +228,7 @@ func TestRevokePropagatesIndexWriteError(t *testing.T) {
 	if err := os.Chmod(root, 0o755); err != nil {
 		t.Fatal(err)
 	}
-	t.Setenv("OVNODE_OPENVPN_ROOT", root)
+	t.Setenv("OpenVpnRoot", root)
 	writeTestCA(t, root)
 	if _, _, err := IssueClientCertToTree("alice"); err != nil {
 		t.Fatal(err)
@@ -259,7 +259,7 @@ func TestRevokePropagatesIndexWriteError(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
 	defer cancel()
 	cmd := exec.CommandContext(ctx, probe, "-test.run=^TestRevokeIndexWriteErrorProcess$")
-	cmd.Env = append(os.Environ(), "OVNODE_TEST_PROVIDER_INDEX_WRITE=1", "TMPDIR="+tmp)
+	cmd.Env = append(os.Environ(), "TestPROVIDER_INDEX_WRITE=1", "TMPDIR="+tmp)
 	cmd.SysProcAttr = &syscall.SysProcAttr{Credential: &syscall.Credential{Uid: 65533, Gid: 65533}}
 	if output, err := cmd.CombinedOutput(); err != nil {
 		t.Fatalf("unprivileged index write probe: %v\n%s", err, output)

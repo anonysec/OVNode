@@ -153,13 +153,13 @@ validate_archive_members() {
 
 
 
-# backup_dir() and the code snapshots below share one root. OVN_BACKUP_ROOT
+# backup_dir() and the code snapshots below share one root. BackupRoot
 # exists for the test suite and for an off-box backup target; unset, every
 # tarball lands where it always has, /var/backups.
 backup_dir() {
     local src="$1" label="$2"
     [[ -d "$src" ]] || return 0
-    local root="${OVN_BACKUP_ROOT:-/var/backups}"
+    local root="${BackupRoot:-/var/backups}"
     mkdir -p "$root"
     local stamp; stamp="$(date +%Y%m%d-%H%M%S)"
     local base; base="$(basename "$src")"
@@ -208,6 +208,17 @@ wait_health_live() {  # wait_health_live <url> <tries>
     return 1
 }
 
+# tls_method_of prints the certificate source for an install: a declared
+# cert/key pair means "custom", otherwise the node's own self-signed PKI.
+tls_method_of() {
+    local envfile="$1"
+    if [[ -n "$(env_get "$envfile" TlsCertFile 2>/dev/null || true)" ]]; then
+        printf 'custom\n'
+    else
+        printf 'selfsigned\n'
+    fi
+}
+
 env_get() {  # env_get FILE KEY → value
     [[ -f "$1" ]] || return 0
     # A file we can see but cannot read is not "no value": returning empty made
@@ -219,7 +230,7 @@ env_get() {  # env_get FILE KEY → value
 }
 
 node_name_from_env() {
-    local name; name="$(env_get "$APP_DIR/.env" NODE_NAME)"
+    local name; name="$(env_get "$AppDir/.env" Instance)"
     printf '%s' "${name:-ovnode}"
 }
 
@@ -237,7 +248,7 @@ node_name_from_env() {
 # file having to know it happened.
 node_data_dir() {
     local declared
-    declared="$(env_get "$APP_DIR/.env" DATA_DIR)"
+    declared="$(env_get "$AppDir/.env" DataDir)"
     printf '%s' "${declared:-$DATA_BASE}"
 }
 
@@ -303,23 +314,23 @@ migrate_flat_data_dir() {
     # directory that is no longer there. This is the installer editing .env,
     # which is its job, install.sh already rewrites it during an update to
     # strip retired keys. The operator CLI never touches it.
-    if [[ -f "$APP_DIR/.env" ]]; then
-        local tmp; tmp="$(mktemp "${APP_DIR}/.env.XXXXXX")" || {
-            render_fail "flat data migration" "could not stage $APP_DIR/.env"
+    if [[ -f "$AppDir/.env" ]]; then
+        local tmp; tmp="$(mktemp "${AppDir}/.env.XXXXXX")" || {
+            render_fail "flat data migration" "could not stage $AppDir/.env"
             return 1
         }
-        if awk -v k=DATA_DIR -v v="$node_data" '
+        if awk -v k=DataDir -v v="$node_data" '
             BEGIN { k = k; v = v; done = 0 }
             index($0, k "=") == 1 { if (!done) { print k "=" v; done = 1 } ; next }
             { print }
             END { if (!done) print k "=" v }
-        ' "$APP_DIR/.env" > "$tmp" 2>/dev/null; then
-            chmod --reference="$APP_DIR/.env" "$tmp" 2>/dev/null || chmod 600 "$tmp"
-            chown --reference="$APP_DIR/.env" "$tmp" 2>/dev/null || true
-            mv -f "$tmp" "$APP_DIR/.env" || { rm -f "$tmp"; render_fail "flat data migration" "could not replace .env"; return 1; }
+        ' "$AppDir/.env" > "$tmp" 2>/dev/null; then
+            chmod --reference="$AppDir/.env" "$tmp" 2>/dev/null || chmod 600 "$tmp"
+            chown --reference="$AppDir/.env" "$tmp" 2>/dev/null || true
+            mv -f "$tmp" "$AppDir/.env" || { rm -f "$tmp"; render_fail "flat data migration" "could not replace .env"; return 1; }
         else
             rm -f "$tmp"
-            render_fail "flat data migration" "could not rewrite DATA_DIR in .env"
+            render_fail "flat data migration" "could not rewrite DataDir in .env"
             return 1
         fi
     fi
@@ -327,7 +338,7 @@ migrate_flat_data_dir() {
     render_ok "moved node data to $node_data"
     render_kv "From" "$legacy"
     render_kv "To"   "$node_data"
-    render_line "    DATA_DIR in $APP_DIR/.env now points there; the old directory is gone"
+    render_line "    DataDir in $AppDir/.env now points there; the old directory is gone"
     return 0
 }
 
@@ -374,11 +385,11 @@ _existing_tls_pair_usable() {  # <key> <cert> → 0 when an intact, unexpired pa
 # panel on this host spent a day in a restart loop.
 #
 # So the node writes to its own directory. An install that already declares
-# SSL_KEYFILE/SSL_CERTFILE keeps using them, which is what the .env is for.
+# TlsKeyFile/TlsCertFile keeps using them, which is what the .env is for.
 node_tls_paths() {
     local key cert
-    key="$(env_get "$APP_DIR/.env" SSL_KEYFILE)"
-    cert="$(env_get "$APP_DIR/.env" SSL_CERTFILE)"
+    key="$(env_get "$AppDir/.env" TlsKeyFile)"
+    cert="$(env_get "$AppDir/.env" TlsCertFile)"
     printf '%s\n%s\n' "${key:-/etc/ovnode/tls/privkey.pem}" "${cert:-/etc/ovnode/tls/fullchain.pem}"
 }
 
@@ -406,9 +417,9 @@ generate_selfsigned() {
         san_list+=("IP:$pub")
     fi
 
-    if [[ -n "${OVN_SAN:-}" ]]; then
+    if [[ -n "${San:-}" ]]; then
         local entries=()
-        IFS=',' read -ra entries <<< "$OVN_SAN"
+        IFS=',' read -ra entries <<< "$San"
         for extra in "${entries[@]}"; do
             extra="${extra// /}"
             [[ -z "$extra" ]] && continue
@@ -590,7 +601,7 @@ resolve_host() {
 snapshot_code() {  # snapshot_code <dir> <label> [keep=2] → prints the file
     local dir="$1" label="$2" keep="${3:-2}"
     [[ -d "$dir" ]] || die "Not installed ($dir missing)" "$EX_ERROR"
-    local root="${OVN_BACKUP_ROOT:-/var/backups}"
+    local root="${BackupRoot:-/var/backups}"
     mkdir -p "$root"
     local stamp base file
     stamp="$(date +%Y%m%d-%H%M%S)"
@@ -612,7 +623,7 @@ snapshot_code() {  # snapshot_code <dir> <label> [keep=2] → prints the file
 }
 
 latest_snapshot() {  # latest_snapshot <label> → prints newest code snapshot or empty
-    ls -t "${OVN_BACKUP_ROOT:-/var/backups}/$1"-code-*.tar.gz 2>/dev/null | head -1 || true
+    ls -t "${BackupRoot:-/var/backups}/$1"-code-*.tar.gz 2>/dev/null | head -1 || true
 }
 
 # ── Host / install-mode probes ─────────────────────────────────────────

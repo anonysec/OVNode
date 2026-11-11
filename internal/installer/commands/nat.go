@@ -13,8 +13,8 @@ func (c *Config) setupNAT(r Runner) error {
 	if natEnabled {
 		if data, err := os.ReadFile(natConfigPath); err == nil {
 			for _, line := range strings.Split(string(data), "\n") {
-				if strings.HasPrefix(line, "VPN_NAT_ENABLED=") {
-					v := strings.TrimSpace(strings.Trim(strings.TrimPrefix(line, "VPN_NAT_ENABLED="), `"`))
+				if strings.HasPrefix(line, "VpnNatEnabled=") {
+					v := strings.TrimSpace(strings.Trim(strings.TrimPrefix(line, "VpnNatEnabled="), `"`))
 					if v == "0" || strings.EqualFold(v, "false") || strings.EqualFold(v, "no") {
 						natEnabled = false
 					}
@@ -22,7 +22,7 @@ func (c *Config) setupNAT(r Runner) error {
 			}
 		}
 	}
-	content := fmt.Sprintf("# OVNode NAT configuration (managed by install.sh)\nVPN_NAT_ENABLED=%d\nVPN_PRIMARY_PORT=%s\nVPN_EXTRA_PORTS=%s\n", b2i(natEnabled), c.VPNSport, c.ExtraPorts)
+	content := fmt.Sprintf("# OVNode NAT configuration (managed by install.sh)\nVpnNatEnabled=%d\nVpnPrimaryPort=%s\nVpnExtraPorts=%s\n", b2i(natEnabled), c.VPNSport, c.ExtraPorts)
 	if err := os.MkdirAll("/etc/default", 0o755); err != nil {
 		return err
 	}
@@ -64,9 +64,9 @@ func (c *Config) setupLogrotate() error {
 	if err := os.WriteFile(path, []byte(content), 0o644); err != nil {
 		return err
 	}
-	hookLog := c.EnvGet("OVNODE_LOG_FILE")
+	hookLog := c.EnvGet("LogFile")
 	if hookLog == "" {
-		if v := os.Getenv("OVNODE_LOG_FILE"); v != "" {
+		if v := os.Getenv("LogFile"); v != "" {
 			hookLog = v
 		} else {
 			hookLog = "/var/log/" + c.Instance + "/hook-events.log"

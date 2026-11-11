@@ -15,10 +15,10 @@ func (c *Config) ensureRuntimeIdentity(r Runner) error {
 	userName := c.RuntimeUser
 	groupName := c.RuntimeGroup
 	// Existing .env wins (update path reads it back).
-	if v := c.EnvGet("OVNODE_RUNTIME_USER"); v != "" {
+	if v := c.EnvGet("RuntimeUser"); v != "" {
 		userName = v
 	}
-	if v := c.EnvGet("OVNODE_RUNTIME_GROUP"); v != "" {
+	if v := c.EnvGet("RuntimeGroup"); v != "" {
 		groupName = v
 	}
 	confUser, confGroup := readServerConfUserGroup(c.OpenVPNRoot)
@@ -119,7 +119,7 @@ func lookupGroupOf(name string) (string, error) {
 // fetchRelease mirrors fetch_release_binary (verify + install).
 func (c *Config) fetchRelease(dest string) error {
 	// Stage 3 keeps the download in bash; Stage 2's Go path only installs
-	// what the bootstrap already placed at $APP_DIR/ovnode, or when called
+	// what the bootstrap already placed at $AppDir/ovnode, or when called
 	// from a tree that already has it.
 	if info, err := os.Stat(dest); err == nil && !info.IsDir() && info.Mode().Perm()&0o111 != 0 {
 		return nil

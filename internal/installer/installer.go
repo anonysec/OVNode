@@ -204,9 +204,9 @@ func Bundle(appDir, nodeData, ovpnRoot, backupRoot, node, fromVersion string) (s
 			}
 		}
 	}
-	// tls/{SSL_KEYFILE, SSL_CERTFILE}
+	// tls/{TlsKeyFile, TlsCertFile}
 	env := readEnv(filepath.Join(appDir, ".env"))
-	for _, key := range []string{"SSL_KEYFILE", "SSL_CERTFILE"} {
+	for _, key := range []string{"TlsKeyFile", "TlsCertFile"} {
 		target := env[key]
 		if target != "" {
 			if info, err := os.Stat(target); err == nil && info.Mode().IsRegular() {

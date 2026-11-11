@@ -17,14 +17,14 @@ func TestRuntimePermissionsEquivalence(t *testing.T) {
 		t.Skip("root required")
 	}
 	dir := t.TempDir()
-	t.Setenv("OVNODE_OPENVPN_ROOT", filepath.Join(dir, "openvpn"))
-	t.Setenv("OVNODE_DATA_DIR", filepath.Join(dir, "data"))
-	t.Setenv("OVNODE_USERS_DIR", filepath.Join(dir, "data", "users"))
-	t.Setenv("OVNODE_SESSIONS_DIR", filepath.Join(dir, "data", "sessions"))
-	t.Setenv("OVNODE_USAGE_DIR", filepath.Join(dir, "data", "usage"))
-	t.Setenv("OVNODE_LOG_DIR", filepath.Join(dir, "logs"))
-	t.Setenv("OVNODE_LOG_FILE", filepath.Join(dir, "logs", "events.log"))
-	t.Setenv("OVNODE_RUNTIME_GROUP", "65533")
+	t.Setenv("OpenVpnRoot", filepath.Join(dir, "openvpn"))
+	t.Setenv("DataDir", filepath.Join(dir, "data"))
+	t.Setenv("UsersDir", filepath.Join(dir, "data", "users"))
+	t.Setenv("SessionsDir", filepath.Join(dir, "data", "sessions"))
+	t.Setenv("UsageDir", filepath.Join(dir, "data", "usage"))
+	t.Setenv("LogDir", filepath.Join(dir, "logs"))
+	t.Setenv("LogFile", filepath.Join(dir, "logs", "events.log"))
+	t.Setenv("RuntimeGroup", "65533")
 	for _, path := range []string{
 		"openvpn/server/pki/private", "openvpn/server", "openvpn/ccd",
 		"data/users/alice", "data/sessions", "data/usage", "logs",

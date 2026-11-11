@@ -22,8 +22,8 @@ import (
 
 func TestEnsureMgmtPasswordPreservesRuntimeRead(t *testing.T) {
 	dir := t.TempDir()
-	t.Setenv("OVNODE_OPENVPN_ROOT", dir)
-	t.Setenv("OVNODE_RUNTIME_GROUP", "65533")
+	t.Setenv("OpenVpnRoot", dir)
+	t.Setenv("RuntimeGroup", "65533")
 	path := EnsureMgmtPassword()
 	if err := os.Chmod(path, 0o640); err != nil {
 		t.Fatal(err)
@@ -45,11 +45,11 @@ func TestEnsureMgmtPasswordAtomicReplacement(t *testing.T) {
 		t.Skip("root required for configured ownership")
 	}
 	dir := t.TempDir()
-	t.Setenv("OVNODE_OPENVPN_ROOT", dir)
-	t.Setenv("OVNODE_DATA_DIR", filepath.Join(dir, "data"))
-	t.Setenv("OVNODE_LOG_DIR", filepath.Join(dir, "logs"))
-	t.Setenv("OVNODE_LOG_FILE", filepath.Join(dir, "logs", "events.log"))
-	t.Setenv("OVNODE_RUNTIME_GROUP", "65533")
+	t.Setenv("OpenVpnRoot", dir)
+	t.Setenv("DataDir", filepath.Join(dir, "data"))
+	t.Setenv("LogDir", filepath.Join(dir, "logs"))
+	t.Setenv("LogFile", filepath.Join(dir, "logs", "events.log"))
+	t.Setenv("RuntimeGroup", "65533")
 	pki.EnsureDirTree()
 	path := EnsureMgmtPassword()
 	if err := store.FixRuntimePermissions(dir); err != nil {
@@ -68,14 +68,14 @@ func TestEnsureMgmtPasswordAtomicReplacement(t *testing.T) {
 }
 
 func TestManagementReplacementIgnoresInstalledEnv(t *testing.T) {
-	if jail := os.Getenv("OVNODE_TEST_INSTALLED_ENV_JAIL"); jail != "" {
+	if jail := os.Getenv("TestINSTALLED_ENV_JAIL"); jail != "" {
 		if err := syscall.Chroot(jail); err != nil {
 			t.Fatal(err)
 		}
 		if err := os.Chdir("/"); err != nil {
 			t.Fatal(err)
 		}
-		t.Setenv("OVN_APP_DIR", "/missing-test-app")
+		t.Setenv("AppDir", "/missing-test-app")
 		t.Setenv("TMPDIR", "/scratch")
 		TestEnsureMgmtPasswordAtomicReplacement(t)
 		return
@@ -93,7 +93,7 @@ func TestManagementReplacementIgnoresInstalledEnv(t *testing.T) {
 	if err := os.WriteFile(sentinel, []byte("external-sentinel\n"), 0o600); err != nil {
 		t.Fatal(err)
 	}
-	installedEnv := "OVNODE_OPENVPN_ROOT=/installed-vpn\nOVNODE_DATA_DIR=/installed-data\nOVNODE_LOG_DIR=/installed-data/logs\nOVNODE_LOG_FILE=/installed-data/logs/events.log\nOVNODE_MGMT_PASS_FILE=/external/management-pass\nOVNODE_RUNTIME_GROUP=65533\n"
+	installedEnv := "OpenVpnRoot=/installed-vpn\nDataDir=/installed-data\nLogDir=/installed-data/logs\nLogFile=/installed-data/logs/events.log\nMgmtPassFile=/external/management-pass\nRuntimeGroup=65533\n"
 	if err := os.WriteFile(filepath.Join(jail, "opt/ovnode/.env"), []byte(installedEnv), 0o600); err != nil {
 		t.Fatal(err)
 	}
@@ -104,7 +104,7 @@ func TestManagementReplacementIgnoresInstalledEnv(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
 	defer cancel()
 	cmd := exec.CommandContext(ctx, exe, "-test.run=^TestManagementReplacementIgnoresInstalledEnv$")
-	cmd.Env = append(os.Environ(), "OVNODE_TEST_INSTALLED_ENV_JAIL="+jail)
+	cmd.Env = append(os.Environ(), "TestINSTALLED_ENV_JAIL="+jail)
 	if output, err := cmd.CombinedOutput(); err != nil {
 		t.Errorf("installed-env fixture isolation failed: %v\n%s", err, output)
 	}
@@ -120,9 +120,9 @@ func TestManagementReplacementIgnoresInstalledEnv(t *testing.T) {
 
 func TestRestartChecksPermissionsBeforeControl(t *testing.T) {
 	dir := t.TempDir()
-	t.Setenv("OVNODE_OPENVPN_ROOT", dir)
-	t.Setenv("OVNODE_DATA_DIR", filepath.Join(dir, "data"))
-	t.Setenv("OVNODE_RUNTIME_GROUP", "invalid-ovnode-fixture-group")
+	t.Setenv("OpenVpnRoot", dir)
+	t.Setenv("DataDir", filepath.Join(dir, "data"))
+	t.Setenv("RuntimeGroup", "invalid-ovnode-fixture-group")
 	pki.EnsureDirTree()
 	if err := os.WriteFile(fsx.ServerConf(), []byte("dev tun\n"), 0o644); err != nil {
 		t.Fatal(err)
@@ -134,8 +134,8 @@ func TestRestartChecksPermissionsBeforeControl(t *testing.T) {
 
 func TestSecretRepairPreservesPolicyDirectoryAccess(t *testing.T) {
 	dir := t.TempDir()
-	t.Setenv("OVNODE_OPENVPN_ROOT", dir)
-	t.Setenv("OVNODE_DATA_DIR", filepath.Join(dir, "data"))
+	t.Setenv("OpenVpnRoot", dir)
+	t.Setenv("DataDir", filepath.Join(dir, "data"))
 	if err := store.CreateUser(fsx.UsersDir(), "alice"); err != nil {
 		t.Fatal(err)
 	}
@@ -148,10 +148,10 @@ func TestSecretRepairPreservesPolicyDirectoryAccess(t *testing.T) {
 
 func TestManagementPortMatchesHookFallback(t *testing.T) {
 	dir := t.TempDir()
-	t.Setenv("OVNODE_LOG_DIR", dir)
-	t.Setenv("OVNODE_LOG_FILE", filepath.Join(dir, "events.log"))
+	t.Setenv("LogDir", dir)
+	t.Setenv("LogFile", filepath.Join(dir, "events.log"))
 	for _, port := range []string{"0", "65536", "invalid", "7506"} {
-		t.Setenv("OVNODE_MANAGEMENT_PORT", port)
+		t.Setenv("ManagementPort", port)
 		want := 7505
 		if port == "7506" {
 			want = 7506
@@ -164,7 +164,7 @@ func TestManagementPortMatchesHookFallback(t *testing.T) {
 
 func TestFreshPKIDirectoryAllowsRuntimeTraversal(t *testing.T) {
 	dir := t.TempDir()
-	t.Setenv("OVNODE_OPENVPN_ROOT", dir)
+	t.Setenv("OpenVpnRoot", dir)
 	pki.EnsureDirTree()
 	info, err := os.Stat(fsx.PKIDir())
 	if err != nil {
@@ -181,20 +181,20 @@ func TestFreshPKIDirectoryAllowsRuntimeTraversal(t *testing.T) {
 
 func TestHookEnvironmentExportsEffectiveOverrides(t *testing.T) {
 	dir := t.TempDir()
-	t.Setenv("OVNODE_OPENVPN_ROOT", dir)
-	t.Setenv("OVNODE_DATA_DIR", filepath.Join(dir, "data"))
-	t.Setenv("OVNODE_LOG_DIR", filepath.Join(dir, "logs"))
-	t.Setenv("OVNODE_LOG_FILE", filepath.Join(dir, "logs", "custom.log"))
-	t.Setenv("OVNODE_STATUS_FILE", filepath.Join(dir, "custom-status"))
-	t.Setenv("OVNODE_MGMT_PASS_FILE", filepath.Join(dir, "custom-password"))
-	t.Setenv("OVNODE_SESSION_TTL", "120")
-	t.Setenv("OVNODE_ALLOW_REMOTE_MGMT", "1")
-	t.Setenv("API_KEY", "private-fixture-api-key")
+	t.Setenv("OpenVpnRoot", dir)
+	t.Setenv("DataDir", filepath.Join(dir, "data"))
+	t.Setenv("LogDir", filepath.Join(dir, "logs"))
+	t.Setenv("LogFile", filepath.Join(dir, "logs", "custom.log"))
+	t.Setenv("StatusFile", filepath.Join(dir, "custom-status"))
+	t.Setenv("MgmtPassFile", filepath.Join(dir, "custom-password"))
+	t.Setenv("SessionTtlSeconds", "120")
+	t.Setenv("AllowRemoteMgmt", "1")
+	t.Setenv("ApiKey", "private-fixture-api-key")
 	got := strings.Join(HookEnvDirectives(), "\n")
 	for key, value := range map[string]string{
-		"OVNODE_STATUS_FILE": filepath.Join(dir, "custom-status"), "OVNODE_MGMT_PASS_FILE": filepath.Join(dir, "custom-password"),
-		"OVNODE_LOG_DIR": filepath.Join(dir, "logs"), "OVNODE_LOG_FILE": filepath.Join(dir, "logs", "custom.log"), "OVNODE_SESSION_TTL": "120",
-		"OVNODE_ALLOW_REMOTE_MGMT": "1",
+		"StatusFile": filepath.Join(dir, "custom-status"), "MgmtPassFile": filepath.Join(dir, "custom-password"),
+		"LogDir": filepath.Join(dir, "logs"), "LogFile": filepath.Join(dir, "logs", "custom.log"), "SessionTtlSeconds": "120",
+		"AllowRemoteMgmt": "1",
 	} {
 		if !strings.Contains(got, "setenv "+key+" "+value) {
 			t.Errorf("effective %s not exported: %s", key, got)
@@ -210,8 +210,8 @@ func TestHookEnvironmentExportsEffectiveOverrides(t *testing.T) {
 // bash hooks.
 func TestHookTargetsPointAtTheGoBinary(t *testing.T) {
 	dir := t.TempDir()
-	t.Setenv("OVNODE_OPENVPN_ROOT", dir)
-	t.Setenv("OVNODE_DATA_DIR", dir+"/ovnode-data")
+	t.Setenv("OpenVpnRoot", dir)
+	t.Setenv("DataDir", dir+"/ovnode-data")
 	targets := HookTargets()
 	for _, directive := range []string{"client-connect", "client-disconnect"} {
 		target := targets[directive]
@@ -231,8 +231,8 @@ func TestFreshServerConfOnlyRealOptions(t *testing.T) {
 		t.Skip("openvpn not installed")
 	}
 	dir := t.TempDir()
-	t.Setenv("OVNODE_OPENVPN_ROOT", dir)
-	t.Setenv("OVNODE_DATA_DIR", dir+"/ovnode-data")
+	t.Setenv("OpenVpnRoot", dir)
+	t.Setenv("DataDir", dir+"/ovnode-data")
 	os.MkdirAll(filepath.Join(dir, "server"), 0o755)
 	os.MkdirAll(filepath.Join(dir, "ovnode-data"), 0o755)
 	conf := FreshServerConf()
@@ -260,8 +260,8 @@ func TestFreshServerConfOnlyRealOptions(t *testing.T) {
 
 func TestFreshServerConfHasCRLVerify(t *testing.T) {
 	dir := t.TempDir()
-	t.Setenv("OVNODE_OPENVPN_ROOT", dir)
-	t.Setenv("OVNODE_DATA_DIR", dir+"/ovnode-data")
+	t.Setenv("OpenVpnRoot", dir)
+	t.Setenv("DataDir", dir+"/ovnode-data")
 	os.MkdirAll(filepath.Join(dir, "server"), 0o755)
 	os.MkdirAll(filepath.Join(dir, "ovnode-data"), 0o755)
 	conf := FreshServerConf()
@@ -294,9 +294,9 @@ func TestEnsureServerConfRepairsExactlyOwnedDirectives(t *testing.T) {
 			case "duplicate-current":
 				conf += connect + disconnect
 			case "stale-environment":
-				conf += "setenv\tOVNODE_MANAGEMENT_PORT 1\n" + HookEnvDirectives()[0] + "\n"
+				conf += "setenv\tManagementPort 1\n" + HookEnvDirectives()[0] + "\n"
 			}
-			operator := "# operator note\nsetenv OVNODE_OPERATOR_TAG keep-me\npush \"route 192.0.2.0 255.255.255.0\"\n"
+			operator := "# operator note\nsetenv OperatorTag keep-me\npush \"route 192.0.2.0 255.255.255.0\"\n"
 			conf += operator
 			if err := os.WriteFile(fsx.ServerConf(), []byte(conf), 0o644); err != nil {
 				t.Fatal(err)
@@ -362,19 +362,19 @@ func TestEnsureServerConfRepairsExactlyOwnedDirectives(t *testing.T) {
 // port the server was not listening on.
 func TestEnsureServerConfReplacesStaleManagedLines(t *testing.T) {
 	dir := t.TempDir()
-	t.Setenv("OVNODE_OPENVPN_ROOT", dir)
-	t.Setenv("OVNODE_DATA_DIR", filepath.Join(dir, "data"))
-	t.Setenv("OVNODE_LOG_DIR", filepath.Join(dir, "log"))
-	t.Setenv("OVNODE_MANAGEMENT_PORT", "7601")
-	t.Setenv("OVNODE_RUNTIME_USER", "root")
-	t.Setenv("OVNODE_RUNTIME_GROUP", "0")
+	t.Setenv("OpenVpnRoot", dir)
+	t.Setenv("DataDir", filepath.Join(dir, "data"))
+	t.Setenv("LogDir", filepath.Join(dir, "log"))
+	t.Setenv("ManagementPort", "7601")
+	t.Setenv("RuntimeUser", "root")
+	t.Setenv("RuntimeGroup", "0")
 	if err := os.MkdirAll(filepath.Join(dir, "server"), 0o755); err != nil {
 		t.Fatal(err)
 	}
 	stale := "port 1194\nproto udp\n" +
 		"management 127.0.0.1 7505 /old/pass\n" +
 		"management 127.0.0.1 7505 /old/pass\n" +
-		"setenv OVNODE_MANAGEMENT_PORT 7505\n" +
+		"setenv ManagementPort 7505\n" +
 		"user stale\ngroup stale\n"
 	if err := os.WriteFile(fsx.ServerConf(), []byte(stale), 0o644); err != nil {
 		t.Fatal(err)
@@ -397,7 +397,7 @@ func TestEnsureServerConfReplacesStaleManagedLines(t *testing.T) {
 	if !strings.Contains(conf, "management 127.0.0.1 7601 ") {
 		t.Errorf("management line does not carry the new port:\n%s", conf)
 	}
-	if !strings.Contains(conf, "setenv OVNODE_MANAGEMENT_PORT 7601") {
+	if !strings.Contains(conf, "setenv ManagementPort 7601") {
 		t.Errorf("setenv does not carry the new port:\n%s", conf)
 	}
 	if strings.Contains(conf, "7505") {

@@ -31,7 +31,7 @@ echo "OK: all shell files pass bash -n"
 
 # Version parity
 echo "=== version parity ==="
-v_install=$(OVN_VERSION="$(go run "${ROOT_DIR}/cmd/ovnode" version 2>/dev/null || echo "")" bash -c '. "'"${ROOT_DIR}"'/internal/assets/install.sh"; echo "$VERSION"' 2>/dev/null || grep -m1 '^VERSION=' "${ROOT_DIR}/internal/assets/ovnode.sh" | cut -d= -f2 | tr -d '"')
+v_install=$(Version="$(go run "${ROOT_DIR}/cmd/ovnode" version 2>/dev/null || echo "")" bash -c '. "'"${ROOT_DIR}"'/internal/assets/install.sh"; echo "$VERSION"' 2>/dev/null || grep -m1 '^VERSION=' "${ROOT_DIR}/internal/assets/ovnode.sh" | cut -d= -f2 | tr -d '"')
 v_ovnode=$(grep -m1 '^VERSION=' "${ROOT_DIR}/internal/assets/ovnode.sh" | cut -d= -f2 | tr -d '"')
 v_binary=$(go run "${ROOT_DIR}/cmd/ovnode" version 2>/dev/null || echo "unknown")
 echo "install.sh: $v_install"
@@ -43,28 +43,13 @@ if [ "$v_install" != "$v_ovnode" ] || [ "$v_install" != "$v_binary" ]; then
 fi
 echo "OK: versions match"
 
-# ── setup info persistence ─────────────────────────────────────────────
-echo "=== setup info ==="
-WORK="$(mktemp -d "${TMPDIR:-/tmp}/ovnode-setup-info-test.XXXXXX")"
-trap 'rm -rf "$WORK"' EXIT
-mkdir -p "$WORK/data" "$WORK/tls"
-printf 'cert' > "$WORK/tls/fullchain.pem"
-OVN_NAME=testnode OVN_PORT=2083 OVN_VPN_PORTS=1194 OVN_PROTO=udp OVN_TLS=selfsigned \
-OVN_TLS_CERT="$WORK/tls/fullchain.pem" OVN_KEY=secretkey OVN_APP_DIR="$WORK/app" OVN_DATA_BASE="$WORK/data" \
-  bash -c '. "'"$ROOT_DIR"'/internal/assets/lib.sh"; . "'"$ROOT_DIR"'/internal/assets/install.sh"; write_install_result "'"$WORK"'/data/install-result.env"' >/dev/null 2>&1
-for key in OVNODE_ADDRESS OVNODE_PROTOCOL OVNODE_API_KEY OVNODE_CERT_FILE; do
-    grep -q "^${key}=" "$WORK/data/install-result.env" || { echo "FAIL: missing $key"; exit 1; }
-done
-echo "ok: setup info persisted"
-rm -rf "$WORK"
-
 # ── cert SAN ───────────────────────────────────────────────────────────
 echo "=== cert SAN ==="
 WORK="$(mktemp -d "${TMPDIR:-/tmp}/ovnode-cert-san-test.XXXXXX")"
 trap 'rm -rf "$WORK"' EXIT
 mkdir -p "$WORK/tls" "$WORK/app"
-printf 'SSL_KEYFILE=%s/tls/privkey.pem\nSSL_CERTFILE=%s/tls/fullchain.pem\n' "$WORK" "$WORK" > "$WORK/app/.env"
-APP_DIR="$WORK/app" TLS_REGENERATE=1 bash -c '. "'"$ROOT_DIR"'/internal/assets/lib.sh"; generate_selfsigned' >/dev/null 2>&1
+printf 'TlsKeyFile=%s/tls/privkey.pem\nTlsCertFile=%s/tls/fullchain.pem\n' "$WORK" "$WORK" > "$WORK/app/.env"
+AppDir="$WORK/app" TLS_REGENERATE=1 bash -c '. "'"$ROOT_DIR"'/internal/assets/lib.sh"; generate_selfsigned' >/dev/null 2>&1
 openssl x509 -in "$WORK/tls/fullchain.pem" -noout -text | grep -q "IP Address:" || { echo "FAIL: no IP SAN"; exit 1; }
 echo "ok: self-signed cert includes IP SAN"
 rm -rf "$WORK"
@@ -74,9 +59,9 @@ echo "=== usage counter rollback gate ==="
 WORK="$(mktemp -d "${TMPDIR:-/tmp}/ovnode-usage-gate-test.XXXXXX")"
 trap 'rm -rf "$WORK"' EXIT
 mkdir -p "$WORK/app" "$WORK/data/usage"
-printf 'DATA_DIR=%s/data\n' "$WORK" > "$WORK/app/.env"
+printf 'DataDir=%s/data\n' "$WORK" > "$WORK/app/.env"
 gate_check() {
-    APP_DIR="$WORK/app" DATA_BASE="$WORK/data" bash -c '. "'"$ROOT_DIR"'/internal/assets/lib.sh"; has_incompatible_usage_counters'
+    AppDir="$WORK/app" DATA_BASE="$WORK/data" bash -c '. "'"$ROOT_DIR"'/internal/assets/lib.sh"; has_incompatible_usage_counters'
 }
 printf '12345\n' > "$WORK/data/usage/alice"
 gate_check && { echo "FAIL: legacy digits flagged incompatible"; exit 1; }
@@ -106,8 +91,8 @@ else
     mkdir -p "$WORK/tls"
     openssl req -x509 -newkey rsa:2048 -keyout "$WORK/tls/privkey.pem" \
         -out "$WORK/tls/fullchain.pem" -days 1 -nodes -subj "/CN=test" >/dev/null 2>&1
-    printf 'NODE_NAME=testnode\nSERVICE_PORT=2083\nTLS_METHOD=selfsigned\nSSL_CERTFILE=%s/tls/fullchain.pem\nAPI_KEY=secretkey\n' "$WORK" > "$WORK/.env"
-    OVN_APP_DIR="$WORK" "$ROOT_DIR/internal/assets/ovnode.sh" auth key >"$WORK/out.txt" 2>&1
+    printf 'Instance=testnode\nApiPort=2083\nTlsCertFile=%s/tls/fullchain.pem\nApiKey=secretkey\n' "$WORK" > "$WORK/.env"
+    AppDir="$WORK" "$ROOT_DIR/internal/assets/ovnode.sh" auth key >"$WORK/out.txt" 2>&1
     grep -qF "API key        secretkey" "$WORK/out.txt" || { echo "FAIL: API key missing"; cat "$WORK/out.txt"; exit 1; }
     grep -q "BEGIN CERTIFICATE" "$WORK/out.txt" || { echo "FAIL: cert missing"; cat "$WORK/out.txt"; exit 1; }
     echo "ok: credentials prints API key and certificate"

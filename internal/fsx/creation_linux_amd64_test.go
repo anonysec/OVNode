@@ -177,10 +177,10 @@ func TestCustomLogLeafTraversableWithRestrictiveUmask(t *testing.T) {
 	}
 	log := filepath.Join(parent, "new-parent", "custom-log-leaf", "events.log")
 	cmd := exec.CommandContext(ctx, bin, "repair-umask", filepath.Join(dir, "openvpn"))
-	cmd.Env = append(os.Environ(), "OVN_APP_DIR="+filepath.Join(dir, "app"), "OVNODE_OPENVPN_ROOT="+filepath.Join(dir, "openvpn"),
-		"OVNODE_DATA_DIR="+filepath.Join(dir, "data"), "OVNODE_USERS_DIR="+filepath.Join(dir, "data/users"),
-		"OVNODE_SESSIONS_DIR="+filepath.Join(dir, "data/sessions"), "OVNODE_USAGE_DIR="+filepath.Join(dir, "data/usage"),
-		"OVNODE_LOG_DIR="+filepath.Dir(log), "OVNODE_LOG_FILE="+log, "OVNODE_RUNTIME_GROUP=65533")
+	cmd.Env = append(os.Environ(), "AppDir="+filepath.Join(dir, "app"), "OpenVpnRoot="+filepath.Join(dir, "openvpn"),
+		"DataDir="+filepath.Join(dir, "data"), "UsersDir="+filepath.Join(dir, "data/users"),
+		"SessionsDir="+filepath.Join(dir, "data/sessions"), "UsageDir="+filepath.Join(dir, "data/usage"),
+		"LogDir="+filepath.Dir(log), "LogFile="+log, "RuntimeGroup=65533")
 	if output, err := cmd.CombinedOutput(); err != nil {
 		t.Fatalf("isolated umask-077 repair: %v\n%s", err, output)
 	}

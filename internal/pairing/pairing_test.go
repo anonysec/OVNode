@@ -11,8 +11,8 @@ import (
 
 func TestPairingLease(t *testing.T) {
 	dir := t.TempDir()
-	t.Setenv("OVNODE_OPENVPN_ROOT", dir)
-	t.Setenv("OVNODE_DATA_DIR", dir+"/ovnode-data")
+	t.Setenv("OpenVpnRoot", dir)
+	t.Setenv("DataDir", dir+"/ovnode-data")
 	os.MkdirAll(filepath.Join(dir, "ovnode-data", "state"), 0o755)
 	if err := Enforce("panel-a"); err != nil {
 		t.Fatal(err)

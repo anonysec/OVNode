@@ -56,7 +56,7 @@ func runtimeChild(t *testing.T, dir, name string, env ...string) (*exec.Cmd, *os
 }
 
 func TestRuntimeAtomicWriterProcess(t *testing.T) {
-	dir := os.Getenv("OVNODE_TEST_ATOMIC_DIR")
+	dir := os.Getenv("TestATOMIC_DIR")
 	if dir == "" {
 		return
 	}
@@ -98,7 +98,7 @@ func TestRuntimeRepairPreservesActiveAtomicWriter(t *testing.T) {
 	if err := os.Chmod(sessions, 0o770|os.ModeSetgid); err != nil {
 		t.Fatal(err)
 	}
-	writer, ready, proceed := runtimeChild(t, dir, "TestRuntimeAtomicWriterProcess", "OVNODE_TEST_ATOMIC_DIR="+sessions)
+	writer, ready, proceed := runtimeChild(t, dir, "TestRuntimeAtomicWriterProcess", "TestATOMIC_DIR="+sessions)
 	var writerOutput bytes.Buffer
 	writer.Stdout, writer.Stderr = &writerOutput, &writerOutput
 	if err := writer.Start(); err != nil {
@@ -128,7 +128,7 @@ func TestRuntimeRepairPreservesActiveAtomicWriter(t *testing.T) {
 }
 
 func TestRuntimeMarkerRemovalProcess(t *testing.T) {
-	path := os.Getenv("OVNODE_TEST_REMOVE_MARKER")
+	path := os.Getenv("TestREMOVE_MARKER")
 	if path == "" {
 		return
 	}
@@ -163,7 +163,7 @@ func TestRuntimeRepairToleratesMarkerDisappearance(t *testing.T) {
 	if err := os.WriteFile(marker, nil, 0o600); err != nil {
 		t.Fatal(err)
 	}
-	remover, ready, proceed := runtimeChild(t, dir, "TestRuntimeMarkerRemovalProcess", "OVNODE_TEST_REMOVE_MARKER="+marker)
+	remover, ready, proceed := runtimeChild(t, dir, "TestRuntimeMarkerRemovalProcess", "TestREMOVE_MARKER="+marker)
 	var removeOutput bytes.Buffer
 	remover.Stdout, remover.Stderr = &removeOutput, &removeOutput
 	if err := remover.Start(); err != nil {
@@ -219,7 +219,7 @@ func TestRuntimeRepairToleratesMarkerDisappearance(t *testing.T) {
 }
 
 func TestNestedRuntimeRepairProcess(t *testing.T) {
-	jail := os.Getenv("OVNODE_TEST_NESTED_JAIL")
+	jail := os.Getenv("TestNESTED_JAIL")
 	if jail == "" {
 		return
 	}
@@ -230,9 +230,9 @@ func TestNestedRuntimeRepairProcess(t *testing.T) {
 		t.Fatal(err)
 	}
 	for key, value := range map[string]string{
-		"OVNODE_OPENVPN_ROOT": "/openvpn", "OVNODE_DATA_DIR": "/relocated/one/node", "OVNODE_USERS_DIR": "/relocated/one/node/policies/by-cn",
-		"OVNODE_SESSIONS_DIR": "/shared/markers/current", "OVNODE_USAGE_DIR": "/ledger/usage/current",
-		"OVNODE_LOG_DIR": "/new-logs/a/b", "OVNODE_LOG_FILE": "/new-logs/a/b/events.log", "OVNODE_RUNTIME_GROUP": "65533",
+		"OpenVpnRoot": "/openvpn", "DataDir": "/relocated/one/node", "UsersDir": "/relocated/one/node/policies/by-cn",
+		"SessionsDir": "/shared/markers/current", "UsageDir": "/ledger/usage/current",
+		"LogDir": "/new-logs/a/b", "LogFile": "/new-logs/a/b/events.log", "RuntimeGroup": "65533",
 	} {
 		t.Setenv(key, value)
 	}
@@ -248,7 +248,7 @@ func TestNestedRuntimeRepairProcess(t *testing.T) {
 }
 
 func TestNestedRuntimeAccessProcess(t *testing.T) {
-	dir := os.Getenv("OVNODE_TEST_NESTED_ACCESS")
+	dir := os.Getenv("TestNESTED_ACCESS")
 	if dir == "" {
 		return
 	}
@@ -288,11 +288,11 @@ func TestRuntimePermissionsCreateTraversableNestedParents(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
 	defer cancel()
 	repair := exec.CommandContext(ctx, exe, "-test.run=^TestNestedRuntimeRepairProcess$")
-	repair.Env = append(os.Environ(), "OVNODE_TEST_NESTED_JAIL="+dir)
+	repair.Env = append(os.Environ(), "TestNESTED_JAIL="+dir)
 	if output, err := repair.CombinedOutput(); err != nil {
 		t.Fatalf("nested repair: %v\n%s", err, output)
 	}
-	probe, _, _ := runtimeChild(t, dir, "TestNestedRuntimeAccessProcess", "OVNODE_TEST_NESTED_ACCESS="+dir)
+	probe, _, _ := runtimeChild(t, dir, "TestNestedRuntimeAccessProcess", "TestNESTED_ACCESS="+dir)
 	if output, err := probe.CombinedOutput(); err != nil {
 		t.Errorf("configured UID cannot traverse newly-created parents: %v\n%s", err, output)
 	}

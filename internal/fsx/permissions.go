@@ -17,14 +17,14 @@ import (
 const linuxOPath = 0x200000
 
 func RuntimeUser() string {
-	if value := Env("RUNTIME_USER", ""); value != "" {
+	if value := Get("RuntimeUser", ""); value != "" {
 		return value
 	}
 	return runtimeDirective("user", "nobody")
 }
 
 func RuntimeGroup() string {
-	if value := Env("RUNTIME_GROUP", ""); value != "" {
+	if value := Get("RuntimeGroup", ""); value != "" {
 		return value
 	}
 	return runtimeDirective("group", "nogroup")

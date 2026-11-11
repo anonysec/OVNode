@@ -8,8 +8,8 @@ import (
 
 func TestEnsureSecretPerms(t *testing.T) {
 	root := t.TempDir()
-	t.Setenv("OVNODE_OPENVPN_ROOT", root)
-	t.Setenv("OVNODE_DATA_DIR", root+"/ovnode-data")
+	t.Setenv("OpenVpnRoot", root)
+	t.Setenv("DataDir", root+"/ovnode-data")
 	os.MkdirAll(filepath.Join(root, "server", "pki", "private"), 0o755)
 	os.WriteFile(filepath.Join(root, "server", "pki", "private", "ca.key"), []byte("k"), 0o644)
 	os.MkdirAll(filepath.Join(root, "ovnode-data", "users", "u1"), 0o755)
@@ -31,8 +31,8 @@ func TestEnsureSecretPerms(t *testing.T) {
 func TestValidatePushedKeyTrailingGarbage(t *testing.T) {
 	// minimal CA
 	root := t.TempDir()
-	t.Setenv("OVNODE_OPENVPN_ROOT", root)
-	t.Setenv("OVNODE_DATA_DIR", root+"/ovnode-data")
+	t.Setenv("OpenVpnRoot", root)
+	t.Setenv("DataDir", root+"/ovnode-data")
 	// use writeTestCA? unexported in same package
 	writeTestCA(t, root)
 	caPEM, _ := os.ReadFile(filepath.Join(root, "server", "pki", "ca.crt"))
@@ -47,8 +47,8 @@ func TestValidatePushedKeyTrailingGarbage(t *testing.T) {
 
 func TestEnsureSecretPermsDoesNotChmodSymlinkTarget(t *testing.T) {
 	root := t.TempDir()
-	t.Setenv("OVNODE_OPENVPN_ROOT", root)
-	t.Setenv("OVNODE_DATA_DIR", root+"/ovnode-data")
+	t.Setenv("OpenVpnRoot", root)
+	t.Setenv("DataDir", root+"/ovnode-data")
 	pkiDir := filepath.Join(root, "server", "pki")
 	if err := os.MkdirAll(filepath.Join(pkiDir, "private"), 0o755); err != nil {
 		t.Fatal(err)
@@ -80,8 +80,8 @@ func TestEnsureSecretPermsDoesNotChmodSymlinkTarget(t *testing.T) {
 
 func TestCRLMatchesCA(t *testing.T) {
 	root := t.TempDir()
-	t.Setenv("OVNODE_OPENVPN_ROOT", root)
-	t.Setenv("OVNODE_DATA_DIR", root+"/ovnode-data")
+	t.Setenv("OpenVpnRoot", root)
+	t.Setenv("DataDir", root+"/ovnode-data")
 	writeTestCA(t, root)
 	if err := GenerateCRL(); err != nil {
 		t.Fatal(err)

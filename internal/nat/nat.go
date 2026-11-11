@@ -23,7 +23,7 @@ type Config struct {
 }
 
 func ConfigPath() string {
-	if v := os.Getenv("OVNODE_NAT_CONF"); v != "" {
+	if v := os.Getenv("NatConf"); v != "" {
 		return v
 	}
 	return "/etc/default/" + fsx.InstanceName() + "-nat"
@@ -32,22 +32,22 @@ func ConfigPath() string {
 func LoadConfig() Config {
 	cfg := Config{Enabled: false, Subnet: ovpn.VPNSubnet(), TunDev: "tun0"}
 	// env overrides
-	if v := os.Getenv("VPN_PRIMARY_PORT"); v != "" {
+	if v := os.Getenv("VpnPrimaryPort"); v != "" {
 		if n, _ := strconv.Atoi(v); n >= 1 && n <= 65535 {
 			cfg.PrimaryPort = n
 		}
 	}
-	if v := os.Getenv("VPN_EXTRA_PORTS"); v != "" {
+	if v := os.Getenv("VpnExtraPorts"); v != "" {
 		cfg.ExtraPorts = v
 	}
-	if v := os.Getenv("VPN_SUBNET"); v != "" {
+	if v := os.Getenv("VpnSubnet"); v != "" {
 		cfg.Subnet = v
 	}
-	if v := os.Getenv("VPN_TUN_DEV"); v != "" {
+	if v := os.Getenv("VpnTunDev"); v != "" {
 		cfg.TunDev = v
 	}
 	envNATSet := false
-	if v := os.Getenv("VPN_NAT_ENABLED"); v != "" {
+	if v := os.Getenv("VpnNatEnabled"); v != "" {
 		envNATSet = true
 		cfg.Enabled = v == "1" || strings.EqualFold(v, "true") || strings.EqualFold(v, "yes")
 	}
@@ -68,22 +68,22 @@ func LoadConfig() Config {
 			key := strings.TrimSpace(kv[0])
 			val := strings.Trim(strings.TrimSpace(kv[1]), `"`)
 			switch key {
-			case "VPN_NAT_ENABLED":
+			case "VpnNatEnabled":
 				natKeySeen = true
 				cfg.Enabled = val == "1" || strings.EqualFold(val, "true") || strings.EqualFold(val, "yes")
-			case "VPN_PRIMARY_PORT":
+			case "VpnPrimaryPort":
 				if n, _ := strconv.Atoi(val); n >= 1 && n <= 65535 {
 					cfg.PrimaryPort = n
 				}
-			case "VPN_EXTRA_PORTS":
+			case "VpnExtraPorts":
 				if cfg.ExtraPorts == "" {
 					cfg.ExtraPorts = val
 				}
-			case "VPN_SUBNET":
+			case "VpnSubnet":
 				if cfg.Subnet == ovpn.VPNSubnet() {
 					cfg.Subnet = val
 				}
-			case "VPN_TUN_DEV":
+			case "VpnTunDev":
 				if cfg.TunDev == "tun0" {
 					cfg.TunDev = val
 				}

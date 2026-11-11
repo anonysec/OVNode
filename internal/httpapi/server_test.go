@@ -26,8 +26,8 @@ const testKey = "test-key-1234567890"
 func testServer(t *testing.T) *Server {
 	t.Helper()
 	dir := t.TempDir()
-	t.Setenv("OVNODE_OPENVPN_ROOT", dir)
-	t.Setenv("OVNODE_DATA_DIR", dir+"/ovnode-data")
+	t.Setenv("OpenVpnRoot", dir)
+	t.Setenv("DataDir", dir+"/ovnode-data")
 	for _, d := range []string{
 		filepath.Join(dir, "server", "pki", "private"),
 		filepath.Join(dir, "server", "pki", "issued"),
@@ -88,7 +88,7 @@ func TestRouteTableRegistersWithoutConflicts(t *testing.T) {
 // user.
 func TestRoutesAreMethodScoped(t *testing.T) {
 	s := testServer(t)
-	root := os.Getenv("OVNODE_OPENVPN_ROOT")
+	root := os.Getenv("OpenVpnRoot")
 	userDir := filepath.Join(root, "ovnode-data", "users", "limit")
 	if err := os.MkdirAll(userDir, 0o755); err != nil {
 		t.Fatal(err)
@@ -346,14 +346,14 @@ func TestDecodeBodyEnforcesMaxBytes(t *testing.T) {
 // printed exactly once and recorded by a marker file.
 func TestFirstBootSetupPrintsOnce(t *testing.T) {
 	dir := t.TempDir()
-	t.Setenv("DATA_DIR", dir)
-	t.Setenv("SERVICE_PORT", "2083")
-	t.Setenv("API_KEY", "secretkey")
+	t.Setenv("DataDir", dir)
+	t.Setenv("ApiPort", "2083")
+	t.Setenv("ApiKey", "secretkey")
 	cert := filepath.Join(dir, "cert.pem")
 	if err := os.WriteFile(cert, []byte("-----BEGIN CERTIFICATE-----\ntest\n-----END CERTIFICATE-----\n"), 0o600); err != nil {
 		t.Fatal(err)
 	}
-	t.Setenv("SSL_CERTFILE", cert)
+	t.Setenv("TlsCertFile", cert)
 
 	if !printSetupIfFirstBoot() {
 		t.Fatal("first call should print")

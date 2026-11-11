@@ -17,12 +17,12 @@ func writeConf(t *testing.T, content string) string {
 	if err := os.WriteFile(conf, []byte(content), 0o644); err != nil {
 		t.Fatalf("write conf: %v", err)
 	}
-	t.Setenv("OVNODE_NAT_CONF", conf)
+	t.Setenv("NatConf", conf)
 	return conf
 }
 
 func TestLoadConfigOptOutPreserved(t *testing.T) {
-	writeConf(t, "VPN_NAT_ENABLED=0\nVPN_PRIMARY_PORT=2053\nVPN_EXTRA_PORTS=1194\n")
+	writeConf(t, "VpnNatEnabled=0\nVpnPrimaryPort=2053\nVpnExtraPorts=1194\n")
 	cfg := LoadConfig()
 	if cfg.Enabled {
 		t.Fatalf("opt-out config reported enabled")
@@ -32,7 +32,7 @@ func TestLoadConfigOptOutPreserved(t *testing.T) {
 	}
 }
 func TestLoadConfigSanitizesExtraPorts(t *testing.T) {
-	writeConf(t, "VPN_EXTRA_PORTS=1194 --dport 53 -j DROP,1195,99999\n")
+	writeConf(t, "VpnExtraPorts=1194 --dport 53 -j DROP,1195,99999\n")
 	cfg := LoadConfig()
 	for _, tok := range strings.Fields(cfg.ExtraPorts) {
 		n, err := strconv.Atoi(tok)
@@ -43,7 +43,7 @@ func TestLoadConfigSanitizesExtraPorts(t *testing.T) {
 }
 
 func TestLoadConfigLegacyWithoutKeyEnabled(t *testing.T) {
-	writeConf(t, "VPN_PRIMARY_PORT=1194\n")
+	writeConf(t, "VpnPrimaryPort=1194\n")
 	cfg := LoadConfig()
 	if !cfg.Enabled {
 		t.Fatalf("legacy config without key reported disabled, want enrolled (enabled)")
@@ -51,7 +51,7 @@ func TestLoadConfigLegacyWithoutKeyEnabled(t *testing.T) {
 }
 
 func TestLoadConfigMissingFileEnabled(t *testing.T) {
-	t.Setenv("OVNODE_NAT_CONF", filepath.Join(t.TempDir(), "absent"))
+	t.Setenv("NatConf", filepath.Join(t.TempDir(), "absent"))
 	cfg := LoadConfig()
 	if cfg.Enabled {
 		// No env override and no file: LoadConfig's no-file path leaves
@@ -61,8 +61,8 @@ func TestLoadConfigMissingFileEnabled(t *testing.T) {
 }
 
 func TestLoadConfigEnvOverride(t *testing.T) {
-	writeConf(t, "VPN_NAT_ENABLED=1\nVPN_PRIMARY_PORT=1194\n")
-	t.Setenv("VPN_NAT_ENABLED", "0")
+	writeConf(t, "VpnNatEnabled=1\nVpnPrimaryPort=1194\n")
+	t.Setenv("VpnNatEnabled", "0")
 	cfg := LoadConfig()
 	// Existing precedence: the conf file loop runs after env, so the file
 	// value wins when both are set. Documented here so a precedence change
@@ -73,8 +73,8 @@ func TestLoadConfigEnvOverride(t *testing.T) {
 }
 
 func TestLoadConfigEnvOptOutNoFile(t *testing.T) {
-	t.Setenv("OVNODE_NAT_CONF", filepath.Join(t.TempDir(), "absent"))
-	t.Setenv("VPN_NAT_ENABLED", "0")
+	t.Setenv("NatConf", filepath.Join(t.TempDir(), "absent"))
+	t.Setenv("VpnNatEnabled", "0")
 	cfg := LoadConfig()
 	if cfg.Enabled {
 		t.Fatalf("env opt-out with no file reported enabled")
@@ -99,7 +99,7 @@ func installFakeIface(t *testing.T) string {
 }
 
 func TestApplyAndCleanupUseOwnedRulesOnly(t *testing.T) {
-	writeConf(t, "VPN_NAT_ENABLED=1\nVPN_PRIMARY_PORT=1194\nVPN_EXTRA_PORTS=2053\n")
+	writeConf(t, "VpnNatEnabled=1\nVpnPrimaryPort=1194\nVpnExtraPorts=2053\n")
 	record := installFakeIface(t)
 	if err := Apply(); err != nil {
 		t.Fatalf("Apply: %v", err)
@@ -122,7 +122,7 @@ func TestApplyAndCleanupUseOwnedRulesOnly(t *testing.T) {
 }
 
 func TestApplyOptOutIsNoop(t *testing.T) {
-	writeConf(t, "VPN_NAT_ENABLED=0\nVPN_PRIMARY_PORT=1194\nVPN_EXTRA_PORTS=2053\n")
+	writeConf(t, "VpnNatEnabled=0\nVpnPrimaryPort=1194\nVpnExtraPorts=2053\n")
 	record := installFakeIface(t)
 	if err := Apply(); err != nil {
 		t.Fatalf("Apply opt-out: %v", err)

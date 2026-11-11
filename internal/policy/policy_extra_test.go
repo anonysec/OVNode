@@ -24,9 +24,9 @@ func TestValidateExtraPortsTable(t *testing.T) {
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
 			if tc.allow {
-				t.Setenv("OVNODE_ALLOW_EXTRA_WEB_PORTS", "1")
+				t.Setenv("AllowExtraWebPorts", "1")
 			} else {
-				t.Setenv("OVNODE_ALLOW_EXTRA_WEB_PORTS", "")
+				t.Setenv("AllowExtraWebPorts", "")
 			}
 			got, err := ValidateExtraPorts(tc.raw, tc.primary)
 			if tc.err {
@@ -51,7 +51,7 @@ func TestValidateExtraPortsTable(t *testing.T) {
 }
 
 func TestParseExtraPortsReservedOmitted(t *testing.T) {
-	t.Setenv("OVNODE_ALLOW_EXTRA_WEB_PORTS", "")
+	t.Setenv("AllowExtraWebPorts", "")
 	got := ParseExtraPorts("22,80,1195", 1194)
 	if len(got) != 1 || got[0] != 1195 {
 		t.Fatalf("got %v, want [1195]", got)

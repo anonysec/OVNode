@@ -12,7 +12,7 @@ import (
 
 func Run(m *testing.M, source func() string) {
 	base := ""
-	for _, name := range []string{"OVNODE_TEST_REPAIR_JAIL", "OVNODE_TEST_RUNTIME_JAIL", "OVNODE_TEST_INSTALLED_ENV_JAIL", "OVNODE_TEST_NESTED_JAIL"} {
+	for _, name := range []string{"TestREPAIR_JAIL", "TestRUNTIME_JAIL", "TestINSTALLED_ENV_JAIL", "TestNESTED_JAIL"} {
 		if value := os.Getenv(name); value != "" {
 			base = value
 			break
@@ -27,17 +27,17 @@ func Run(m *testing.M, source func() string) {
 		os.Exit(1)
 	}
 	path := filepath.Join(dir, ".env")
-	old, present := os.LookupEnv("OVN_APP_DIR")
+	old, present := os.LookupEnv("AppDir")
 	if err = os.WriteFile(path, nil, 0o600); err == nil {
-		err = os.Setenv("OVN_APP_DIR", dir)
+		err = os.Setenv("AppDir", dir)
 	}
 	if err == nil && source() != path {
 		err = fmt.Errorf("test configuration was initialized outside its owned fixture")
 	}
 	if present {
-		os.Setenv("OVN_APP_DIR", old)
+		os.Setenv("AppDir", old)
 	} else {
-		os.Unsetenv("OVN_APP_DIR")
+		os.Unsetenv("AppDir")
 	}
 	if err != nil {
 		os.RemoveAll(dir)

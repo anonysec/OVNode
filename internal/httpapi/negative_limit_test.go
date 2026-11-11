@@ -18,7 +18,7 @@ func TestNegativeLimitRoutesPreservePolicy(t *testing.T) {
 	if err := os.WriteFile(filepath.Join(app, ".env"), nil, 0o600); err != nil {
 		t.Fatal(err)
 	}
-	t.Setenv("OVN_APP_DIR", app)
+	t.Setenv("AppDir", app)
 	for _, method := range []string{http.MethodPut, http.MethodPost} {
 		t.Run(method, func(t *testing.T) {
 			s := testServer(t)

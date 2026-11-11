@@ -14,14 +14,14 @@ import (
 
 func TestHookFromEnvUsesEffectiveFSXPaths(t *testing.T) {
 	dir := t.TempDir()
-	t.Setenv("OVNODE_OPENVPN_ROOT", filepath.Join(dir, "vpn"))
-	t.Setenv("OVNODE_DATA_DIR", filepath.Join(dir, "relocated-data"))
-	for _, name := range []string{"OVNODE_USERS_DIR", "OVNODE_SESSIONS_DIR", "OVNODE_USAGE_DIR"} {
+	t.Setenv("OpenVpnRoot", filepath.Join(dir, "vpn"))
+	t.Setenv("DataDir", filepath.Join(dir, "relocated-data"))
+	for _, name := range []string{"UsersDir", "SessionsDir", "UsageDir"} {
 		t.Setenv(name, "")
 	}
-	t.Setenv("OVNODE_LOG_DIR", filepath.Join(dir, "logs"))
-	t.Setenv("OVNODE_STATUS_FILE", filepath.Join(dir, "status"))
-	t.Setenv("OVNODE_MGMT_PASS_FILE", filepath.Join(dir, "password"))
+	t.Setenv("LogDir", filepath.Join(dir, "logs"))
+	t.Setenv("StatusFile", filepath.Join(dir, "status"))
+	t.Setenv("MgmtPassFile", filepath.Join(dir, "password"))
 	cfg := HookFromEnv()
 	for _, pair := range [][2]string{{cfg.UsersDir, fsx.UsersDir()}, {cfg.SessionsDir, fsx.SessionsDir()}, {cfg.UsageDir, fsx.UsageDir()}, {cfg.MgmtPassFile, fsx.MgmtPassFile()}} {
 		if pair[0] != pair[1] {
@@ -32,15 +32,15 @@ func TestHookFromEnvUsesEffectiveFSXPaths(t *testing.T) {
 
 func TestHookFromEnvValidatesRanges(t *testing.T) {
 	dir := t.TempDir()
-	t.Setenv("OVNODE_OPENVPN_ROOT", dir)
-	t.Setenv("OVNODE_DATA_DIR", dir+"/ovnode-data")
-	t.Setenv("OVNODE_MANAGEMENT_PORT", "0")
-	t.Setenv("OVNODE_SESSION_TTL", "-5")
+	t.Setenv("OpenVpnRoot", dir)
+	t.Setenv("DataDir", dir+"/ovnode-data")
+	t.Setenv("ManagementPort", "0")
+	t.Setenv("SessionTtlSeconds", "-5")
 	// Keep the hook event log inside the sandbox: HookFromEnv writes the
-	// fallback lines to LogDir/hook-events.log, so pointing OVNODE_LOG_DIR at
+	// fallback lines to LogDir/hook-events.log, so pointing LogDir at
 	// the temp dir makes this test self-contained (no dependency on
 	// /var/log/ovnode or root).
-	t.Setenv("OVNODE_LOG_DIR", dir)
+	t.Setenv("LogDir", dir)
 	cfg := HookFromEnv()
 	if cfg.MgmtPort != DefaultMgmtPort {
 		t.Fatalf("mgmt port = %d, want %d", cfg.MgmtPort, DefaultMgmtPort)

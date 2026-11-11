@@ -29,15 +29,15 @@ func TestProviderDisableAndDeletePreserveFinalBanking(t *testing.T) {
 	for _, cid := range []string{"42", ""} {
 		t.Run("cid-"+cid, func(t *testing.T) {
 			tr := newTree(t)
-			t.Setenv("OVNODE_OPENVPN_ROOT", filepath.Join(tr.dir, "openvpn"))
-			t.Setenv("OVNODE_DATA_DIR", tr.dir)
-			t.Setenv("OVNODE_USERS_DIR", tr.users)
-			t.Setenv("OVNODE_SESSIONS_DIR", tr.sessions)
-			t.Setenv("OVNODE_USAGE_DIR", tr.usage)
-			t.Setenv("OVNODE_STATUS_FILE", tr.status)
-			t.Setenv("OVNODE_LOG_DIR", filepath.Dir(tr.logFile))
-			t.Setenv("OVNODE_LOG_FILE", tr.logFile)
-			t.Setenv("OVNODE_MGMT_PASS_FILE", filepath.Join(tr.dir, "mgmt-pass"))
+			t.Setenv("OpenVpnRoot", filepath.Join(tr.dir, "openvpn"))
+			t.Setenv("DataDir", tr.dir)
+			t.Setenv("UsersDir", tr.users)
+			t.Setenv("SessionsDir", tr.sessions)
+			t.Setenv("UsageDir", tr.usage)
+			t.Setenv("StatusFile", tr.status)
+			t.Setenv("LogDir", filepath.Dir(tr.logFile))
+			t.Setenv("LogFile", tr.logFile)
+			t.Setenv("MgmtPassFile", filepath.Join(tr.dir, "mgmt-pass"))
 			if err := ovpn.InitPKI(); err != nil {
 				t.Fatal(err)
 			}
@@ -76,8 +76,8 @@ func TestProviderDisableAndDeletePreserveFinalBanking(t *testing.T) {
 				t.Fatal(err)
 			}
 			defer listener.Close()
-			t.Setenv("OVNODE_MANAGEMENT_HOST", "127.0.0.1")
-			t.Setenv("OVNODE_MANAGEMENT_PORT", strconv.Itoa(listener.Addr().(*net.TCPAddr).Port))
+			t.Setenv("ManagementHost", "127.0.0.1")
+			t.Setenv("ManagementPort", strconv.Itoa(listener.Addr().(*net.TCPAddr).Port))
 			password, err := os.ReadFile(pki.MgmtPassFile())
 			if err != nil {
 				t.Fatal(err)

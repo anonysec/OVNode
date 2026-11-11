@@ -9,8 +9,8 @@ if [[ "${EUID}" -ne 0 ]]; then
 fi
 
 PORT="${PORT:-2083}"
-APP_DIR="${OVN_APP_DIR:-/opt/ovnode}"
-KEY="$(grep '^API_KEY=' "${APP_DIR}/.env" 2>/dev/null | head -n 1 | cut -d= -f2-)"
+AppDir="${AppDir:-/opt/ovnode}"
+KEY="$(grep '^ApiKey=' "${AppDir}/.env" 2>/dev/null | head -n 1 | cut -d= -f2-)"
 BASE="https://127.0.0.1:${PORT}"
 
 if [[ -t 1 ]]; then

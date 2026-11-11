@@ -147,10 +147,10 @@ func runHook() {
 func runCA() {
 	// Ensure the instance's .env is discoverable when running outside
 	// systemd (e.g., during install), so per-instance paths are used.
-	if os.Getenv("OVN_APP_DIR") == "" {
+	if os.Getenv("AppDir") == "" {
 		if exe, err := os.Executable(); err == nil {
 			if dir := filepath.Dir(exe); dir != "" && dir != "." {
-				os.Setenv("OVN_APP_DIR", dir)
+				os.Setenv("AppDir", dir)
 			}
 		}
 	}
@@ -301,8 +301,8 @@ func runAssets() {
 // runs against the local agent without any panel involvement.
 func runProbeCheck() {
 	// Read the .env for the port and key.
-	appDir := os.Getenv("OVN_APP_DIR")
-	instance := os.Getenv("OVNODE_INSTANCE")
+	appDir := os.Getenv("AppDir")
+	instance := os.Getenv("Instance")
 	if instance == "" {
 		instance = "ovnode"
 	}
@@ -311,7 +311,7 @@ func runProbeCheck() {
 	}
 	envGet := func(key string) string {
 		paths := []string{appDir + "/.env"}
-		if v := os.Getenv("OVNODE_OPENVPN_ROOT"); v != "" {
+		if v := os.Getenv("OpenVpnRoot"); v != "" {
 			paths = append(paths, filepath.Dir(v)+"/.env")
 		}
 		paths = append(paths, "/etc/openvpn/"+instance+"/.env", "/var/lib/"+instance+"/openvpn/.env")
@@ -334,11 +334,11 @@ func runProbeCheck() {
 		}
 		return ""
 	}
-	port := envGet("SERVICE_PORT")
+	port := envGet("ApiPort")
 	if port == "" {
 		port = "2083"
 	}
-	key := envGet("API_KEY")
+	key := envGet("ApiKey")
 	if key == "" {
 		fmt.Fprintln(os.Stderr, "ovnode probe: no API key found in .env")
 		os.Exit(1)

@@ -161,38 +161,32 @@ func (u *updateCtx) statePath(c *Config) string {
 
 func (c *Config) recoverEnvFromDotEnv() {
 	if c.NodeName == "" {
-		c.NodeName = c.EnvGet("NODE_NAME")
+		c.NodeName = c.EnvGet("Instance")
 	}
 	if c.NodeName == "" {
 		c.NodeName = "ovnode"
 	}
 	if c.Port == "" {
-		c.Port = c.EnvGet("SERVICE_PORT")
+		c.Port = c.EnvGet("ApiPort")
 	}
 	if c.Port == "" {
 		c.Port = "2083"
 	}
 	// Identity is never regenerated on update.
-	c.APIKey = c.EnvGet("API_KEY")
-	if c.VPNPorts == "" {
-		c.VPNSport = c.EnvGet("OPENVPN_PORT")
-		if c.VPNSport == "" {
-			c.VPNSport = "1194"
-		}
-	}
-	// Keep the install's TLS mode unless the caller passed one.
-	if os.Getenv("OVN_TLS") == "" {
-		if v := c.EnvGet("TLS_METHOD"); v != "" {
-			c.TLSMethod = v
-		}
-	}
+	c.APIKey = c.EnvGet("ApiKey")
+	// Keep the install's TLS material unless the caller passed one.
 	if c.TLSKey == "" {
-		c.TLSKey = c.EnvGet("SSL_KEYFILE")
+		c.TLSKey = c.EnvGet("TlsKeyFile")
 	}
 	if c.TLSCert == "" {
-		c.TLSCert = c.EnvGet("SSL_CERTFILE")
+		c.TLSCert = c.EnvGet("TlsCertFile")
 	}
-	if !c.IPv6 && c.EnvGet("OVNODE_ENABLE_IPV6") == "1" {
+	if os.Getenv("TlsMethod") == "" {
+		if c.TLSCert != "" && c.TLSKey != "" {
+			c.TLSMethod = "custom"
+		}
+	}
+	if !c.IPv6 && c.EnvGet("EnableIpv6") == "1" {
 		c.IPv6 = true
 	}
 	_ = strings.TrimSpace

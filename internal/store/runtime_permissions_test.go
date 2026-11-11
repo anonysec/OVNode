@@ -15,7 +15,7 @@ import (
 )
 
 func TestRuntimePermissionRepairProcess(t *testing.T) {
-	jail := os.Getenv("OVNODE_TEST_REPAIR_JAIL")
+	jail := os.Getenv("TestREPAIR_JAIL")
 	if jail == "" {
 		return
 	}
@@ -68,9 +68,9 @@ func repairCommand(t *testing.T, dir string) *exec.Cmd {
 	t.Cleanup(cancel)
 	cmd := exec.CommandContext(ctx, exe, "-test.run=^TestRuntimePermissionRepairProcess$")
 	cmd.Env = append(os.Environ(),
-		"OVNODE_TEST_REPAIR_JAIL="+dir, "OVN_APP_DIR=/app", "OVNODE_OPENVPN_ROOT=/openvpn",
-		"OVNODE_DATA_DIR=/data", "OVNODE_USERS_DIR=/data/users", "OVNODE_SESSIONS_DIR=/data/sessions", "OVNODE_USAGE_DIR=/data/usage",
-		"OVNODE_LOG_DIR=/logs", "OVNODE_LOG_FILE=/logs/events.log", "OVNODE_RUNTIME_USER=65533", "OVNODE_RUNTIME_GROUP=65533",
+		"TestREPAIR_JAIL="+dir, "AppDir=/app", "OpenVpnRoot=/openvpn",
+		"DataDir=/data", "UsersDir=/data/users", "SessionsDir=/data/sessions", "UsageDir=/data/usage",
+		"LogDir=/logs", "LogFile=/logs/events.log", "RuntimeUser=65533", "RuntimeGroup=65533",
 	)
 	return cmd
 }
@@ -194,9 +194,9 @@ func TestRuntimeRepairRejectsNonRegularEntries(t *testing.T) {
 
 func TestRuntimePermissionsNoManagedVPNTree(t *testing.T) {
 	dir := t.TempDir()
-	t.Setenv("OVNODE_OPENVPN_ROOT", filepath.Join(dir, "openvpn"))
-	t.Setenv("OVNODE_DATA_DIR", filepath.Join(dir, "data"))
-	t.Setenv("OVNODE_LOG_DIR", filepath.Join(dir, "logs"))
+	t.Setenv("OpenVpnRoot", filepath.Join(dir, "openvpn"))
+	t.Setenv("DataDir", filepath.Join(dir, "data"))
+	t.Setenv("LogDir", filepath.Join(dir, "logs"))
 	if err := FixRuntimePermissions(filepath.Join(dir, "openvpn")); err != nil {
 		t.Errorf("API-only TLS mode must not require a managed VPN tree: %v", err)
 	}
@@ -207,12 +207,12 @@ func TestRuntimePermissionsNoManagedVPNTree(t *testing.T) {
 }
 
 func TestCheckedPolicyReadProcess(t *testing.T) {
-	dir := os.Getenv("OVNODE_TEST_CHECKED_POLICY")
+	dir := os.Getenv("TestCHECKED_POLICY")
 	if dir == "" {
 		return
 	}
 	_, err := ReadUserState(dir, "alice")
-	if wantError := os.Getenv("OVNODE_TEST_POLICY_ERROR") == "1"; (err != nil) != wantError {
+	if wantError := os.Getenv("TestPOLICY_ERROR") == "1"; (err != nil) != wantError {
 		t.Fatalf("checked policy error=%v, want error=%v", err, wantError)
 	}
 }
@@ -263,7 +263,7 @@ func TestReadUserStateRejectsUnreadableMaterial(t *testing.T) {
 			if kind == "valid-default" {
 				wantError = "0"
 			}
-			cmd.Env = append(os.Environ(), "OVNODE_TEST_CHECKED_POLICY="+dir, "OVNODE_TEST_POLICY_ERROR="+wantError)
+			cmd.Env = append(os.Environ(), "TestCHECKED_POLICY="+dir, "TestPOLICY_ERROR="+wantError)
 			cmd.SysProcAttr = &syscall.SysProcAttr{Credential: &syscall.Credential{Uid: 65533, Gid: 65533}}
 			if output, err := cmd.CombinedOutput(); err != nil {
 				t.Fatalf("dropped-UID checked read failed: %v\n%s", err, strings.TrimSpace(string(output)))

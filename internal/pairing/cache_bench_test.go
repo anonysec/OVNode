@@ -9,8 +9,8 @@ import (
 
 func TestEnforceNoFileReadOnRepeatedSamePanel(t *testing.T) {
 	dir := t.TempDir()
-	t.Setenv("OVNODE_OPENVPN_ROOT", dir)
-	t.Setenv("OVNODE_DATA_DIR", dir+"/ovnode-data")
+	t.Setenv("OpenVpnRoot", dir)
+	t.Setenv("DataDir", dir+"/ovnode-data")
 	os.MkdirAll(filepath.Join(dir, "ovnode-data", "state"), 0o755)
 	if err := Enforce("panel-a"); err != nil {
 		t.Fatal(err)
@@ -54,8 +54,8 @@ func TestEnforceNoFileReadOnRepeatedSamePanel(t *testing.T) {
 
 func BenchmarkEnforceSamePanel(b *testing.B) {
 	dir := b.TempDir()
-	b.Setenv("OVNODE_OPENVPN_ROOT", dir)
-	b.Setenv("OVNODE_DATA_DIR", dir+"/ovnode-data")
+	b.Setenv("OpenVpnRoot", dir)
+	b.Setenv("DataDir", dir+"/ovnode-data")
 	os.MkdirAll(filepath.Join(dir, "ovnode-data", "state"), 0o755)
 	if err := Enforce("panel-bench"); err != nil {
 		b.Fatal(err)

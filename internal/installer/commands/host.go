@@ -22,7 +22,7 @@ func systemctlBounded(r Runner, verb, unit string) error {
 	if _, err := exec.LookPath("systemctl"); err != nil {
 		return fmt.Errorf("systemctl not found")
 	}
-	// Bounded through the same timeout window as bash (OVN_STOP_TIMEOUT
+	// Bounded through the same timeout window as bash (StopTimeout
 	// defaults to 20s); implemented by exec.Cmd context in the caller.
 	return r.Run("systemctl", verb, unit)
 }
@@ -71,7 +71,7 @@ func primaryIP(r Runner) string {
 
 // publicIP mirrors lib.sh public_ip (best effort).
 func publicIP(r Runner) string {
-	if v := strings.TrimSpace(envOr("OVNODE_PUBLIC_IP", "")); v != "" {
+	if v := strings.TrimSpace(envOr("PublicIp", "")); v != "" {
 		return v
 	}
 	// hostname -I is the only source lib.sh uses before any curl-based

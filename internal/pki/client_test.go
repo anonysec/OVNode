@@ -75,8 +75,8 @@ func writeTestCA(t *testing.T, root string) {
 // crl-verify directive is not optional.
 func TestIssueClientCertToTree(t *testing.T) {
 	root := t.TempDir()
-	t.Setenv("OVNODE_OPENVPN_ROOT", root)
-	t.Setenv("OVNODE_DATA_DIR", root+"/ovnode-data")
+	t.Setenv("OpenVpnRoot", root)
+	t.Setenv("DataDir", root+"/ovnode-data")
 	writeTestCA(t, root)
 
 	certPEM, keyPEM, err := IssueClientCertToTree("alice")
@@ -131,8 +131,8 @@ func TestIssueClientCertToTree(t *testing.T) {
 // not fail.
 func TestRevokeCertByCNIsIdempotent(t *testing.T) {
 	root := t.TempDir()
-	t.Setenv("OVNODE_OPENVPN_ROOT", root)
-	t.Setenv("OVNODE_DATA_DIR", root+"/ovnode-data")
+	t.Setenv("OpenVpnRoot", root)
+	t.Setenv("DataDir", root+"/ovnode-data")
 	writeTestCA(t, root)
 	if _, _, err := IssueClientCertToTree("bob"); err != nil {
 		t.Fatal(err)
@@ -151,8 +151,8 @@ func TestRevokeCertByCNIsIdempotent(t *testing.T) {
 // so revoking by CN must not stop at the first matching row.
 func TestRevokeCertByCNRevokesReissuedCert(t *testing.T) {
 	root := t.TempDir()
-	t.Setenv("OVNODE_OPENVPN_ROOT", root)
-	t.Setenv("OVNODE_DATA_DIR", root+"/ovnode-data")
+	t.Setenv("OpenVpnRoot", root)
+	t.Setenv("DataDir", root+"/ovnode-data")
 	writeTestCA(t, root)
 	if _, _, err := IssueClientCertToTree("bob"); err != nil {
 		t.Fatal(err)
@@ -181,8 +181,8 @@ func TestRevokeCertByCNRevokesReissuedCert(t *testing.T) {
 // must never escape the PKI directory.
 func TestIssueClientCertRejectsABadCN(t *testing.T) {
 	root := t.TempDir()
-	t.Setenv("OVNODE_OPENVPN_ROOT", root)
-	t.Setenv("OVNODE_DATA_DIR", root+"/ovnode-data")
+	t.Setenv("OpenVpnRoot", root)
+	t.Setenv("DataDir", root+"/ovnode-data")
 	writeTestCA(t, root)
 	for _, cn := range []string{"../escape", "a/b", "", "."} {
 		if _, _, err := IssueClientCertToTree(cn); err == nil {
@@ -198,8 +198,8 @@ func TestIssueClientCertRejectsABadCN(t *testing.T) {
 // field without the fork.
 func TestCertExpiryReadsTheNotAfterDate(t *testing.T) {
 	root := t.TempDir()
-	t.Setenv("OVNODE_OPENVPN_ROOT", root)
-	t.Setenv("OVNODE_DATA_DIR", root+"/ovnode-data")
+	t.Setenv("OpenVpnRoot", root)
+	t.Setenv("DataDir", root+"/ovnode-data")
 	writeTestCA(t, root)
 	expiry := CertExpiry(CACert())
 	if expiry == "" {

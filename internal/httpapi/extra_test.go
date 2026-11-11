@@ -107,7 +107,7 @@ func TestHandleUpdateLock(t *testing.T) {
 	// appDir is computed once in NewServer; the test builds the server
 	// directly, so seed the cached path the same way.
 	s.appDirPath = dir
-	t.Setenv("APP_DIR", dir)
+	t.Setenv("AppDir", dir)
 
 	if err := os.WriteFile("/tmp/ovnode-update-lock-hold", []byte("hold\n"), 0o644); err != nil {
 		t.Fatal(err)
@@ -144,7 +144,7 @@ func TestHandlePushPKIRejectsInvalid(t *testing.T) {
 
 func TestHandlePushPKIRollsBackPartialWrite(t *testing.T) {
 	s := testServer(t)
-	root := os.Getenv("OVNODE_OPENVPN_ROOT")
+	root := os.Getenv("OpenVpnRoot")
 	tmp := t.TempDir()
 	run := func(args ...string) {
 		t.Helper()

@@ -16,8 +16,6 @@ import (
 	"net"
 	"os"
 	"path/filepath"
-	"slices"
-	"strconv"
 	"strings"
 
 	"ovnode/internal/fsx"
@@ -77,13 +75,15 @@ func Path() string {
 	return filepath.Join(fsx.OVNodeDir(), "state", "openvpn.json")
 }
 
-// Defaults returns the shipped configuration. Environment variables seed the
-// values a fresh install cares about; everything else is a constant.
+// Defaults returns the shipped configuration. It reads nothing: the
+// installer seeds the file from the install flags, and after that the file is
+// the only source. A missing file therefore means "factory defaults", not
+// "whatever the environment happens to say".
 func Defaults() Server {
 	return Server{
-		Protocol:         protoFromEnv(),
-		Port:             portFromEnv(),
-		ExtraPorts:       extraPortsFromEnv(),
+		Protocol:         ProtoUDP,
+		Port:             1194,
+		ExtraPorts:       nil,
 		MaxClients:       250,
 		KeepalivePing:    10,
 		KeepaliveTimeout: 60,
@@ -91,12 +91,12 @@ func Defaults() Server {
 		RedirectGateway:  true,
 		BlockOutsideDNS:  true,
 		ClientToClient:   false,
-		DNSPrimary:       fsx.EnvOr("OVNODE_VPN_DNS1", "1.1.1.1"),
-		DNSSecondary:     fsx.EnvOr("OVNODE_VPN_DNS2", "8.8.8.8"),
+		DNSPrimary:       "1.1.1.1",
+		DNSSecondary:     "8.8.8.8",
 		DNSDomain:        "",
 		PushRoutes:       nil,
-		IPv6Enabled:      enabledFromEnv(),
-		IPv6Prefix:       fsx.EnvOr("OVNODE_IPV6_PREFIX", "fd42:42:42:42::/64"),
+		IPv6Enabled:      false,
+		IPv6Prefix:       "fd42:42:42:42::/64",
 		TunMTU:           0,
 		Mssfix:           0,
 		CipherFirst:      CipherAES128,
@@ -105,46 +105,6 @@ func Defaults() Server {
 		InactiveTimeout:  0,
 		Verb:             3,
 	}
-}
-
-func protoFromEnv() string {
-	if p, ok := NormalizeProtocol(fsx.EnvOr("OVNODE_PROTO", "")); ok {
-		return p
-	}
-	return ProtoUDP
-}
-
-func portFromEnv() int {
-	if n, err := strconv.Atoi(strings.TrimSpace(fsx.EnvOr("OPENVPN_PORT", ""))); err == nil && n >= 1 && n <= 65535 {
-		return n
-	}
-	return 1194
-}
-
-func extraPortsFromEnv() []int {
-	raw := strings.TrimSpace(fsx.EnvOr("OVNODE_EXTRA_PORTS", ""))
-	if raw == "" {
-		return nil
-	}
-	out := []int{}
-	for _, part := range strings.Split(raw, ",") {
-		n, err := strconv.Atoi(strings.TrimSpace(part))
-		if err != nil || n < 1 || n > 65535 {
-			continue
-		}
-		if !slices.Contains(out, n) {
-			out = append(out, n)
-		}
-	}
-	return out
-}
-
-func enabledFromEnv() bool {
-	switch strings.ToLower(strings.TrimSpace(fsx.EnvOr("OVNODE_ENABLE_IPV6", "0"))) {
-	case "1", "true", "yes", "on":
-		return true
-	}
-	return false
 }
 
 // NormalizeProtocol accepts the spellings the panel and installers use.
@@ -172,10 +132,13 @@ func (s Server) Protos() []string {
 	}
 }
 
-// Load reads the settings file. A missing file returns Defaults; a corrupt
-// file is an error, never a silent reset.
-func Load() (Server, error) {
-	data, err := os.ReadFile(Path())
+// Load reads the instance's settings file.
+func Load() (Server, error) { return LoadFrom(Path()) }
+
+// LoadFrom reads settings from path. A missing file returns Defaults; a
+// corrupt file is an error, never a silent reset.
+func LoadFrom(path string) (Server, error) {
+	data, err := os.ReadFile(path)
 	if os.IsNotExist(err) {
 		return Defaults(), nil
 	}
@@ -186,19 +149,22 @@ func Load() (Server, error) {
 	dec := json.NewDecoder(bytes.NewReader(data))
 	dec.DisallowUnknownFields()
 	if err := dec.Decode(&s); err != nil {
-		return Server{}, fmt.Errorf("read %s: %w", Path(), err)
+		return Server{}, fmt.Errorf("read %s: %w", path, err)
 	}
 	if dec.More() {
-		return Server{}, fmt.Errorf("read %s: trailing data", Path())
+		return Server{}, fmt.Errorf("read %s: trailing data", path)
 	}
 	if err := s.Validate(); err != nil {
-		return Server{}, fmt.Errorf("%s: %w", Path(), err)
+		return Server{}, fmt.Errorf("%s: %w", path, err)
 	}
 	return s, nil
 }
 
-// Save validates and writes the file atomically with 0600.
-func Save(s Server) error {
+// Save writes the instance's settings file.
+func Save(s Server) error { return SaveTo(Path(), s) }
+
+// SaveTo validates and writes settings to path atomically with 0600.
+func SaveTo(path string, s Server) error {
 	if err := s.Validate(); err != nil {
 		return err
 	}
@@ -207,13 +173,13 @@ func Save(s Server) error {
 		return err
 	}
 	body = append(body, '\n')
-	if err := os.MkdirAll(filepath.Dir(Path()), 0o750); err != nil {
+	if err := os.MkdirAll(filepath.Dir(path), 0o750); err != nil {
 		return err
 	}
-	if err := fsx.WriteFileAtomic(Path(), body, 0o600); err != nil {
+	if err := fsx.WriteFileAtomic(path, body, 0o600); err != nil {
 		return err
 	}
-	return os.Chmod(Path(), 0o600)
+	return os.Chmod(path, 0o600)
 }
 
 // Validate checks every field against the bounds the UI enforces.

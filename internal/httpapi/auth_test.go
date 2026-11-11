@@ -90,8 +90,8 @@ func TestPanelAllowEmptyAllowsAnyIP(t *testing.T) {
 func TestShortAPIKeyWarnsAtStart(t *testing.T) {
 	before := len(logging.Recent("WARNING", logging.RingSize))
 	dir := t.TempDir()
-	t.Setenv("OVNODE_OPENVPN_ROOT", dir)
-	t.Setenv("API_KEY", "sixteen-char-key") // 16 chars: accepted, below 32
+	t.Setenv("OpenVpnRoot", dir)
+	t.Setenv("ApiKey", "sixteen-char-key") // 16 chars: accepted, below 32
 	if err := Run(); err == nil {
 		t.Fatal("Run with missing TLS must fail before serving")
 	}

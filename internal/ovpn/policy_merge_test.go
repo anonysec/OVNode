@@ -16,8 +16,8 @@ import (
 
 func TestApplyUserPolicyMergesAtomically(t *testing.T) {
 	root := t.TempDir()
-	t.Setenv("OVNODE_OPENVPN_ROOT", root)
-	t.Setenv("OVNODE_DATA_DIR", root+"/ovnode-data")
+	t.Setenv("OpenVpnRoot", root)
+	t.Setenv("DataDir", root+"/ovnode-data")
 	for _, d := range []string{
 		filepath.Join(root, "server", "pki", "private"),
 		filepath.Join(root, "server", "pki", "issued"),
@@ -79,9 +79,9 @@ func TestSetUserLimitNegativePreservesPolicy(t *testing.T) {
 	if err := os.WriteFile(filepath.Join(app, ".env"), nil, 0o600); err != nil {
 		t.Fatal(err)
 	}
-	t.Setenv("OVN_APP_DIR", app)
-	t.Setenv("OVNODE_OPENVPN_ROOT", filepath.Join(root, "vpn"))
-	t.Setenv("OVNODE_DATA_DIR", filepath.Join(root, "data"))
+	t.Setenv("AppDir", app)
+	t.Setenv("OpenVpnRoot", filepath.Join(root, "vpn"))
+	t.Setenv("DataDir", filepath.Join(root, "data"))
 	limit, disabled := 7, true
 	if err := store.WriteUserState(pki.UsersDir(), "alice", &limit, &disabled); err != nil {
 		t.Fatal(err)

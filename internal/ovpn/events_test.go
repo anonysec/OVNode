@@ -103,7 +103,7 @@ func TestClassifyReject(t *testing.T) {
 // node's own record of what the hook decided.
 func TestHookEventLogIsRead(t *testing.T) {
 	dir := t.TempDir()
-	t.Setenv("OVNODE_LOG_FILE", dir+"/hook-events.log")
+	t.Setenv("LogFile", dir+"/hook-events.log")
 	// A line inside the window, one outside it and one that is not a
 	// timestamp at all.
 	now := time.Now().Unix()

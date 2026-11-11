@@ -54,10 +54,10 @@ func validateMgmtHost(host string) error {
 	if ip := net.ParseIP(host); ip != nil && ip.IsLoopback() {
 		return nil
 	}
-	if strings.EqualFold(strings.TrimSpace(fsx.Env("ALLOW_REMOTE_MGMT", "")), "1") {
+	if strings.EqualFold(strings.TrimSpace(fsx.Get("AllowRemoteMgmt", "")), "1") {
 		return nil
 	}
-	return fmt.Errorf("management host %q is not loopback; set OVNODE_ALLOW_REMOTE_MGMT=1", host)
+	return fmt.Errorf("management host %q is not loopback; set AllowRemoteMgmt=1", host)
 }
 
 // LiveSessionsForCN returns the live sessions of one CN, preferring the
@@ -246,10 +246,10 @@ func Takeover(host string, port int, passFile, cn string, cids []string) (Takeov
 
 // mgmtHost returns the management socket host.
 func mgmtHost() string {
-	if v := fsx.EnvOr("OVNODE_MANAGEMENT_HOST", ""); v != "" {
+	if v := fsx.EnvOr("ManagementHost", ""); v != "" {
 		return v
 	}
-	if v := fsx.EnvOr("OVNODE_MGMT_HOST", ""); v != "" {
+	if v := fsx.EnvOr("ManagementHost", ""); v != "" {
 		return v
 	}
 	return "127.0.0.1"

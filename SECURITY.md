@@ -40,7 +40,7 @@ Out of scope: DDoS, OpenVPN/EasyRSA upstream CVEs, social engineering.
 
 ## Hardening checklist (production)
 
-- `API_KEY` ≥ 32 hex chars, unique per node; `use_tls=true` in the panel.
+- `ApiKey` ≥ 32 hex chars, unique per node; `use_tls=true` in the panel.
 - Keep the installer-managed file permissions (`mgmt-pass` 0600,
   OpenVPN runtime user `nobody`); do not run the agent as root services
   beyond what the installer sets up.

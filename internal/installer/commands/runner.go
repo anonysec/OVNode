@@ -41,7 +41,7 @@ var fakeRunner *recordingRunner
 var fakeOnce sync.Once
 
 func DefaultRunner() Runner {
-	if v := os.Getenv("OVNODE_FAKE_RUNNER"); v == "1" {
+	if v := os.Getenv("TestFakeRunner"); v == "1" {
 		fakeOnce.Do(func() { fakeRunner = &recordingRunner{} })
 		return fakeRunner
 	}
@@ -76,9 +76,9 @@ func (r *recordingRunner) Calls() []string {
 }
 
 // isFake reports whether the current process was asked to record calls.
-func isFake() bool { return os.Getenv("OVNODE_FAKE_RUNNER") == "1" }
+func isFake() bool { return os.Getenv("TestFakeRunner") == "1" }
 
-// hold writes the fake-runner calls to a file named by OVNODE_FAKE_LOG.
+// hold writes the fake-runner calls to a file named by TestFakeLog.
 // The fake binary is a separate process, so the recorder cannot be read
 // back in the caller.
 func hold(r Runner) {
@@ -86,7 +86,7 @@ func hold(r Runner) {
 	if !ok {
 		return
 	}
-	path := os.Getenv("OVNODE_FAKE_LOG")
+	path := os.Getenv("TestFakeLog")
 	if path == "" {
 		return
 	}

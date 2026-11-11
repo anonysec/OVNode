@@ -92,11 +92,7 @@ func HardeningDirectives() []string {
 }
 
 func FreshProto() string {
-	choice := strings.ToLower(strings.TrimSpace(Env("PROTO", "tcp")))
-	if strings.HasPrefix(choice, "udp") {
-		return "udp"
-	}
-	return "tcp"
+	return currentSettings().Protos()[0]
 }
 
 func ipv6Effective() (bool, string) {
@@ -343,7 +339,7 @@ func EnsureClientTemplate() error {
 	}
 	proto := FreshProto()
 	port := OpenVPNPort()
-	tunnelAddr := Env("TUNNEL_ADDRESS", "")
+	tunnelAddr := Get("TunnelAddress", "")
 	if tunnelAddr == "" {
 		// Fallback: try to read from config
 		data, err := os.ReadFile(fsx.ServerConf())
@@ -378,12 +374,12 @@ func itoaStr(n int) string {
 func HookEnvDirectives() []string {
 	cfg := config.HookFromEnv()
 	settings := [][2]string{
-		{"OVNODE_OPENVPN_ROOT", cfg.OpenVPNRoot}, {"OVNODE_DATA_DIR", fsx.OVNodeDir()},
-		{"OVNODE_USERS_DIR", cfg.UsersDir}, {"OVNODE_SESSIONS_DIR", cfg.SessionsDir}, {"OVNODE_USAGE_DIR", cfg.UsageDir},
-		{"OVNODE_STATUS_FILE", cfg.StatusFile}, {"OVNODE_LOG_DIR", cfg.LogDir}, {"OVNODE_LOG_FILE", cfg.LogFile},
-		{"OVNODE_MANAGEMENT_HOST", cfg.MgmtHost}, {"OVNODE_MANAGEMENT_PORT", itoaStr(cfg.MgmtPort)}, {"OVNODE_MGMT_PASS_FILE", cfg.MgmtPassFile},
-		{"OVNODE_ALLOW_REMOTE_MGMT", fsx.Env("ALLOW_REMOTE_MGMT", "0")},
-		{"OVNODE_RUNTIME_USER", RuntimeUser()}, {"OVNODE_RUNTIME_GROUP", RuntimeGroup()}, {"OVNODE_SESSION_TTL", itoaStr(cfg.SessionTTL)},
+		{"OpenVpnRoot", cfg.OpenVPNRoot}, {"DataDir", fsx.OVNodeDir()},
+		{"UsersDir", cfg.UsersDir}, {"SessionsDir", cfg.SessionsDir}, {"UsageDir", cfg.UsageDir},
+		{"StatusFile", cfg.StatusFile}, {"LogDir", cfg.LogDir}, {"LogFile", cfg.LogFile},
+		{"ManagementHost", cfg.MgmtHost}, {"ManagementPort", itoaStr(cfg.MgmtPort)}, {"MgmtPassFile", cfg.MgmtPassFile},
+		{"AllowRemoteMgmt", fsx.Get("AllowRemoteMgmt", "0")},
+		{"RuntimeUser", RuntimeUser()}, {"RuntimeGroup", RuntimeGroup()}, {"SessionTtlSeconds", itoaStr(cfg.SessionTTL)},
 	}
 	out := make([]string, 0, len(settings))
 	for _, setting := range settings {

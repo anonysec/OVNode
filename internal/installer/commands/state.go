@@ -64,30 +64,30 @@ type Config struct {
 // FromEnv builds a Config from OVN_* variables.
 func FromEnv() *Config {
 	c := &Config{
-		Version:      envOr("OVN_VERSION", "latest"),
-		Repo:         envOr("OVN_REPO", "anonysec/OVNode"),
-		Port:         os.Getenv("OVN_PORT"),
-		APIKey:       os.Getenv("OVN_KEY"),
-		VPNPorts:     os.Getenv("OVN_VPN_PORTS"),
-		Proto:        os.Getenv("OVN_PROTO"),
-		NodeName:     os.Getenv("OVN_NAME"),
-		TLSMethod:    envOr("OVN_TLS", "selfsigned"),
-		TLSDomain:    os.Getenv("OVN_TLS_DOMAIN"),
-		TLSKey:       os.Getenv("OVN_TLS_KEY"),
-		TLSCert:      os.Getenv("OVN_TLS_CERT"),
-		PanelIP:      os.Getenv("OVN_PANEL_IP"),
-		IPv6:         os.Getenv("OVN_IPV6") == "1",
-		NoNAT:        os.Getenv("OVN_NO_NAT") == "1",
-		Yes:          os.Getenv("OVN_YES") == "1",
-		Purge:        os.Getenv("OVN_PURGE") == "1",
-		Quiet:        os.Getenv("OVN_QUIET") == "1",
-		Local:        os.Getenv("OVN_LOCAL") == "1",
-		SrcDir:       os.Getenv("OVN_SRC_DIR"),
-		DestDir:      os.Getenv("OVN_DEST_DIR"),
-		Pin:          os.Getenv("OVN_VERSION"),
-		Instance:     os.Getenv("OVN_INSTANCE"),
-		RuntimeUser:  os.Getenv("OVN_RUNTIME_USER"),
-		RuntimeGroup: os.Getenv("OVN_RUNTIME_GROUP"),
+		Version:      envOr("Version", "latest"),
+		Repo:         envOr("Repo", "anonysec/OVNode"),
+		Port:         os.Getenv("ApiPort"),
+		APIKey:       os.Getenv("ApiKey"),
+		VPNPorts:     os.Getenv("VpnPorts"),
+		Proto:        os.Getenv("Proto"),
+		NodeName:     os.Getenv("NodeName"),
+		TLSMethod:    envOr("TlsMethod", "selfsigned"),
+		TLSDomain:    os.Getenv("TlsDomain"),
+		TLSKey:       os.Getenv("TlsKey"),
+		TLSCert:      os.Getenv("TlsCert"),
+		PanelIP:      os.Getenv("PanelIp"),
+		IPv6:         os.Getenv("Ipv6") == "1",
+		NoNAT:        os.Getenv("NoNat") == "1",
+		Yes:          os.Getenv("Yes") == "1",
+		Purge:        os.Getenv("Purge") == "1",
+		Quiet:        os.Getenv("Quiet") == "1",
+		Local:        os.Getenv("Local") == "1",
+		SrcDir:       os.Getenv("SrcDir"),
+		DestDir:      os.Getenv("DestDir"),
+		Pin:          os.Getenv("Version"),
+		Instance:     os.Getenv("Instance"),
+		RuntimeUser:  os.Getenv("RuntimeUser"),
+		RuntimeGroup: os.Getenv("RuntimeGroup"),
 	}
 	c.finalize()
 	return c
@@ -101,21 +101,21 @@ func (c *Config) finalize() {
 		c.Instance = "ovnode"
 	}
 	if c.AppDir == "" {
-		if v := envOr("OVN_APP_DIR", ""); v != "" {
+		if v := envOr("AppDir", ""); v != "" {
 			c.AppDir = v
 		} else {
 			c.AppDir = "/opt/" + c.Instance
 		}
 	}
 	if c.DataBase == "" {
-		if v := envOr("OVN_DATA_BASE", ""); v != "" {
+		if v := envOr("DataDir", ""); v != "" {
 			c.DataBase = v
 		} else {
 			c.DataBase = "/var/lib/" + c.Instance
 		}
 	}
 	if c.OpenVPNRoot == "" {
-		if v := envOr("OVN_OPENVPN_ROOT", ""); v != "" {
+		if v := envOr("OpenVpnRoot", ""); v != "" {
 			c.OpenVPNRoot = v
 		} else {
 			c.OpenVPNRoot = "/var/lib/" + c.Instance + "/openvpn"
@@ -130,7 +130,7 @@ func (c *Config) finalize() {
 	}
 	// Management port: unique per instance to avoid conflicts on 127.0.0.1.
 	if c.MgmtPort == 0 {
-		if v := envOr("OVN_MGMT_PORT", ""); v != "" {
+		if v := envOr("ManagementPort", ""); v != "" {
 			if n, err := strconv.Atoi(v); err == nil && n >= 1 && n <= 65535 {
 				c.MgmtPort = n
 			}
@@ -152,12 +152,12 @@ func (c *Config) finalize() {
 // Host files the installer owns. Every one carries the instance name so a
 // second instance never overwrites or removes the first one's files.
 func (c *Config) logrotatePath() string {
-	return envOr("OVNODE_LOGROTATE_CONF", "/etc/logrotate.d/"+c.Instance)
+	return envOr("LogrotateConf", "/etc/logrotate.d/"+c.Instance)
 }
 func (c *Config) sysctlPath() string { return "/etc/sysctl.d/99-" + c.Instance + ".conf" }
 func (c *Config) cronPath() string   { return "/etc/cron.d/" + c.Instance + "-purge" }
 func (c *Config) completionPath() string {
-	return filepath.Join(envOr("OVN_COMPLETION_DIR", "/etc/bash_completion.d"), c.CLIName)
+	return filepath.Join(envOr("CompletionDir", "/etc/bash_completion.d"), c.CLIName)
 }
 func (c *Config) instanceBackupDir(label string) string {
 	return filepath.Join("/var/backups", c.Instance+"-"+label)
@@ -206,7 +206,7 @@ func (c *Config) NodeExists() bool {
 }
 
 func (c *Config) anyNodeUnit() bool {
-	sd := envOr("OVN_SYSTEMD_DIR", "/etc/systemd/system")
+	sd := envOr("SystemdDir", "/etc/systemd/system")
 	if _, err := os.Stat(filepath.Join(sd, "ovnode.service")); err == nil {
 		return true
 	}
@@ -232,7 +232,7 @@ func (c *Config) EnvGet(key string) string {
 
 // DataDir mirrors node_data_dir.
 func (c *Config) DataDir() string {
-	if v := c.EnvGet("DATA_DIR"); v != "" {
+	if v := c.EnvGet("DataDir"); v != "" {
 		return v
 	}
 	return c.DataBase
@@ -245,7 +245,7 @@ func (c *Config) RefusePartialNode() error {
 	var what, where, hint string
 	if state == StateUnitOnly {
 		what = "OVNode unit files"
-		where = envOr("OVN_SYSTEMD_DIR", "/etc/systemd/system")
+		where = envOr("SystemdDir", "/etc/systemd/system")
 		hint = "uninstall"
 	} else {
 		what = "node data"

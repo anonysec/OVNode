@@ -21,8 +21,8 @@ func TestHandleBackupServesPKIAndState(t *testing.T) {
 	s := testServer(t)
 	dir := t.TempDir()
 	dataDir := filepath.Join(dir, "data")
-	t.Setenv("OVNODE_DATA_DIR", dataDir)
-	t.Setenv("OVNODE_OPENVPN_ROOT", filepath.Join(dir, "openvpn"))
+	t.Setenv("DataDir", dataDir)
+	t.Setenv("OpenVpnRoot", filepath.Join(dir, "openvpn"))
 
 	pkiDir := filepath.Join(dir, "openvpn", "server", "pki")
 	if err := os.MkdirAll(pkiDir, 0o750); err != nil {

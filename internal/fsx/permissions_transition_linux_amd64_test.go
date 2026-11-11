@@ -59,10 +59,10 @@ func TestPermissionTransitionNeverGrantsWritableDescriptor(t *testing.T) {
 				argument = filepath.Join(root, "openvpn")
 			}
 			cmd := exec.CommandContext(ctx, bin, mode, argument)
-			cmd.Env = append(os.Environ(), "OVN_APP_DIR="+filepath.Join(root, "app"), "OVNODE_OPENVPN_ROOT="+filepath.Join(root, "openvpn"),
-				"OVNODE_DATA_DIR="+filepath.Join(root, "data"), "OVNODE_USERS_DIR="+filepath.Join(root, "data/users"),
-				"OVNODE_SESSIONS_DIR="+filepath.Join(root, "data/sessions"), "OVNODE_USAGE_DIR="+filepath.Join(root, "data/usage"),
-				"OVNODE_LOG_DIR="+filepath.Join(root, "logs"), "OVNODE_LOG_FILE="+filepath.Join(root, "logs/events.log"), "OVNODE_RUNTIME_GROUP=65533")
+			cmd.Env = append(os.Environ(), "AppDir="+filepath.Join(root, "app"), "OpenVpnRoot="+filepath.Join(root, "openvpn"),
+				"DataDir="+filepath.Join(root, "data"), "UsersDir="+filepath.Join(root, "data/users"),
+				"SessionsDir="+filepath.Join(root, "data/sessions"), "UsageDir="+filepath.Join(root, "data/usage"),
+				"LogDir="+filepath.Join(root, "logs"), "LogFile="+filepath.Join(root, "logs/events.log"), "RuntimeGroup=65533")
 			cmd.SysProcAttr = &syscall.SysProcAttr{Ptrace: true}
 			runtime.LockOSThread()
 			defer runtime.UnlockOSThread()

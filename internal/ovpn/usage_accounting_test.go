@@ -16,13 +16,13 @@ import (
 func accountingTree(t *testing.T) string {
 	t.Helper()
 	root := t.TempDir()
-	t.Setenv("OVN_APP_DIR", filepath.Join(root, "app"))
-	t.Setenv("OVNODE_OPENVPN_ROOT", root)
-	t.Setenv("OVNODE_DATA_DIR", filepath.Join(root, "data"))
-	t.Setenv("OVNODE_USERS_DIR", filepath.Join(root, "data", "users"))
-	t.Setenv("OVNODE_SESSIONS_DIR", filepath.Join(root, "data", "sessions"))
-	t.Setenv("OVNODE_USAGE_DIR", filepath.Join(root, "data", "usage"))
-	t.Setenv("OVNODE_LOG_FILE", filepath.Join(root, "events.log"))
+	t.Setenv("AppDir", filepath.Join(root, "app"))
+	t.Setenv("OpenVpnRoot", root)
+	t.Setenv("DataDir", filepath.Join(root, "data"))
+	t.Setenv("UsersDir", filepath.Join(root, "data", "users"))
+	t.Setenv("SessionsDir", filepath.Join(root, "data", "sessions"))
+	t.Setenv("UsageDir", filepath.Join(root, "data", "usage"))
+	t.Setenv("LogFile", filepath.Join(root, "events.log"))
 	if err := os.MkdirAll(filepath.Join(root, "server"), 0o755); err != nil {
 		t.Fatal(err)
 	}

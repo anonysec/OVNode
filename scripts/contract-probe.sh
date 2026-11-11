@@ -17,9 +17,9 @@
 set -uo pipefail
 
 URL="https://127.0.0.1:2083"
-KEY="${OVNODE_API_KEY:-}"
+KEY="${ApiKey:-}"
 PROBE_ID="contract-probe"
-PANEL_ID="${OVNODE_PANEL_ID:-}"
+PANEL_ID="${PanelId:-}"
 
 while [[ $# -gt 0 ]]; do
     case "$1" in
@@ -35,7 +35,7 @@ while [[ $# -gt 0 ]]; do
 done
 
 if [[ -z "$KEY" && -r /opt/ovnode/.env ]]; then
-    KEY="$(grep -E '^API_KEY=' /opt/ovnode/.env | head -1 | cut -d= -f2-)"
+    KEY="$(grep -E '^ApiKey=' /opt/ovnode/.env | head -1 | cut -d= -f2-)"
 fi
 
 CURL=(curl -sk --max-time 10)
