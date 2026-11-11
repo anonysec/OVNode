@@ -44,4 +44,4 @@ Out of scope: DDoS, OpenVPN/EasyRSA upstream CVEs, social engineering.
 - Keep the installer-managed file permissions (`mgmt-pass` 0600,
   OpenVPN runtime user `nobody`); do not run the agent as root services
   beyond what the installer sets up.
-- Back up `/etc/openvpn` (PKI + store) before every update and test restores.
+- Back up the OpenVPN root (`/var/lib/<instance>/openvpn`) before every update and test restores.

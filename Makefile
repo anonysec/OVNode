@@ -31,7 +31,13 @@ lint:
 format:
 	gofmt -w .
 
-verify: lint
+check-version:
+	@v=$$(grep -m1 'var Version' internal/version/version.go | cut -d'"' -f2); \
+	grep -q "VERSION=\"$$v\"" internal/assets/ovnode.sh || { echo "ovnode.sh version mismatch ($$v)"; exit 1; }; \
+	grep -q "badge/version-$$v-blue" README.md || { echo "README badge mismatch ($$v)"; exit 1; }; \
+	echo "version parity OK: $$v"
+
+verify: lint check-version
 	go run ./cmd/ovnode version
 	@echo "Version parity: binary reports above"
 

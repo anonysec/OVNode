@@ -26,6 +26,8 @@ jobs:
           sudo apt-get install -y -qq openvpn easy-rsa iptables iproute2 logrotate shellcheck
       - name: Shell syntax
         run: make check-bash
+      - name: Version parity
+        run: make check-version
       - name: Go build
         run: go build ./...
       - name: Go tests

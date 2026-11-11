@@ -1,5 +1,35 @@
 # Changelog
 
+## 2.0.0 — 2026-11-11
+
+First release of the reset line. **No upgrade path from pre-2.0.0 builds**:
+the database, state formats and config layout start here.
+
+The node:
+
+- Runs UDP, TCP, or both. `both` starts one OpenVPN process per protocol on
+  the same port, with per-protocol config, status, PID, log and management
+  socket. The instance owns a /23 (UDP: first /24, TCP: second) and NAT
+  covers it once.
+- Client profiles always use `<connection>` blocks, one per protocol and
+  port, so a single `.ovpn` survives an ISP that blocks either transport.
+- OpenVPN tuning is `state/openvpn.json`, managed from the panel: protocol,
+  port, extra ports, max clients, keepalive, redirect, DNS, routes, IPv6,
+  MTU/mssfix, cipher preference, TLS floor, renegotiation, idle timeout and
+  verbosity. Server configuration and the template are generated from it;
+  a failed apply rolls the file back.
+- `.env` is twelve PascalCase keys with no product prefixes. Paths derive
+  from `Instance`; nothing is shared between instances.
+- One internal installer (the bash fallback is gone), typed exit codes, a
+  bootstrap checksum gate, and `ovnode update` resolves `latest` itself.
+- Per-instance host files: logrotate, cron, sysctl, NAT config, backups and
+  the completion file all carry the instance name.
+- Security: backup archives are framed and capped; the rate limiter sweeps
+  on a timer instead of per request; both OpenVPN logs and the hook log are
+  rotated; `LogLevel` is enforced.
+- Removed the pre-2.0.0 state migration tree, unsigned usage counters, split
+  policy files, the legacy `agent` path and `install-result.env`.
+
 ## 2.0.3 — 2026-11-11
 
 The Go installer rewrite reaches a release: `install.sh` downloads the binary and `SHA256SUMS`, verifies the checksum, then runs `ovnode install`, with the previous bash installer kept as `install-legacy.sh`.

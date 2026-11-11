@@ -26,6 +26,8 @@ jobs:
         run: |
           sudo apt-get update -qq
           sudo apt-get install -y -qq openvpn easy-rsa iptables iproute2 logrotate
+      - name: Version parity
+        run: make check-version
       - name: Lint
         run: make lint
       - name: Go tests
@@ -76,6 +78,6 @@ jobs:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
           gh release upload "v${VER}" --clobber \
-            install.sh \
+            internal/assets/install.sh \
             ovnode-linux-amd64 ovnode-linux-arm64 \
             SHA256SUMS
