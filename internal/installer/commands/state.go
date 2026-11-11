@@ -30,11 +30,10 @@ type Config struct {
 	Version string
 	Repo    string
 
-	Instance       string
-	Service        string
-	OpenVPNService string
-	NatService     string
-	CLIName        string
+	Instance   string
+	Service    string
+	NatService string
+	CLIName    string
 
 	Port         string
 	APIKey       string
@@ -95,7 +94,6 @@ func FromEnv() *Config {
 		c.Instance = "ovnode"
 	}
 	c.Service = c.Instance + ".service"
-	c.OpenVPNService = c.Instance + "-openvpn.service"
 	c.NatService = c.Instance + "-nat.service"
 	c.CLIName = c.Instance
 	return c

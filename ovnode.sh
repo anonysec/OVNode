@@ -26,7 +26,7 @@ LOG_DIR="$(env_get "${APP_DIR:-/opt/$INSTANCE}/.env" OVNODE_LOG_DIR 2>/dev/null 
 PAIRING_FILE="${OVN_DATA_DIR:-/var/lib/$INSTANCE_NAME}/state/pairing.json"
 DEFAULT_PORT=2083
 SYSTEMD_SERVICE="${INSTANCE_NAME}.service"
-OPENVPN_SERVICE="${INSTANCE_NAME}-openvpn.service"
+OPENVPN_SERVICE="${SYSTEMD_SERVICE}"
 INSTALLER="$APP_DIR/install.sh"
 BIN_DIR="${OVN_BIN_DIR:-/usr/local/bin}"
 CLI_NAME="$INSTANCE_NAME"
@@ -948,7 +948,7 @@ parse_args() {
             --instance)   eval "$need2"; OVN_INSTANCE="$2"; INSTANCE_NAME="$2"; export OVN_INSTANCE
                           if [[ -z "${OVN_APP_DIR:-}" ]]; then APP_DIR="/opt/$INSTANCE_NAME"; fi
                           if [[ -z "${OVN_DATA_BASE:-}" ]]; then DATA_BASE="/var/lib/$INSTANCE_NAME"; fi
-                          SYSTEMD_SERVICE="${INSTANCE_NAME}.service"; OPENVPN_SERVICE="${INSTANCE_NAME}-openvpn.service"; CLI_NAME="$INSTANCE_NAME"; INSTALLER="$APP_DIR/install.sh"
+                          SYSTEMD_SERVICE="${INSTANCE_NAME}.service"; OPENVPN_SERVICE="${SYSTEMD_SERVICE}"; CLI_NAME="$INSTANCE_NAME"; INSTALLER="$APP_DIR/install.sh"
                           shift 2 ;;
             update)       ACTION="update"; shift ;;
             uninstall|--uninstall) ACTION="uninstall"; shift ;;

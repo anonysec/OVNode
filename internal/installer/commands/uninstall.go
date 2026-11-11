@@ -45,10 +45,9 @@ func Uninstall(c *Config, runner Runner) error {
 	// Stop the NAT unit, then the service units.
 	_ = systemctlBounded(runner, "stop", c.NatService)
 	_ = systemctlBounded(runner, "stop", c.Service)
-	_ = systemctlBounded(runner, "stop", c.OpenVPNService)
-	_ = systemctlDirect(runner, "disable", c.NatService, c.Service, c.OpenVPNService)
+	_ = systemctlDirect(runner, "disable", c.NatService, c.Service)
 	sd := c.systemdDir()
-	for _, u := range []string{c.NatService, c.Service, c.OpenVPNService} {
+	for _, u := range []string{c.NatService, c.Service} {
 		_ = os.Remove(filepath.Join(sd, u))
 	}
 	_ = os.Remove("/etc/cron.d/ovnode-purge")
