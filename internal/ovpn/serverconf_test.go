@@ -511,3 +511,47 @@ func TestVPNNetworkIsAlwaysValid(t *testing.T) {
 		}
 	}
 }
+
+// Global options and inline material must precede every <connection> block:
+// OpenVPN ignores a top-level option that follows one, which silently dropped
+// nobind, tls-crypt and ignore-unknown-option from generated profiles.
+func TestClientTemplateOrdersGlobalOptionsFirst(t *testing.T) {
+	dir := t.TempDir()
+	t.Setenv("OpenVpnRoot", dir)
+	t.Setenv("DataDir", filepath.Join(dir, "data"))
+	cfg := settings.Defaults()
+	cfg.Protocol = settings.ProtoBoth
+	cfg.Port = 443
+	if err := settings.Save(cfg); err != nil {
+		t.Fatal(err)
+	}
+	if err := EnsureClientTemplate(); err != nil {
+		t.Fatal(err)
+	}
+	tmpl, err := os.ReadFile(fsx.ClientTemplate())
+	if err != nil {
+		t.Fatal(err)
+	}
+	firstBlock := strings.Index(string(tmpl), "<connection>")
+	if firstBlock < 0 {
+		t.Fatalf("no connection blocks:\n%s", tmpl)
+	}
+	for _, option := range []string{"nobind", "tls-version-min", "ignore-unknown-option", "persist-tun"} {
+		if i := strings.Index(string(tmpl), option); i < 0 || i > firstBlock {
+			t.Errorf("%s must precede the first <connection> block:\n%s", option, tmpl)
+		}
+	}
+
+	profile, err := BuildTemplate(fsx.ClientTemplate(), Parts{
+		CACert: "CA", ClientCert: "CERT", ClientKey: "KEY", TLSCrypt: "TLSKEY",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	firstBlock = strings.Index(profile, "<connection>")
+	for _, inline := range []string{"<ca>", "<cert>", "<key>", "<tls-crypt>"} {
+		if i := strings.Index(profile, inline); i < 0 || i > firstBlock {
+			t.Errorf("%s must precede the first <connection> block:\n%s", inline, profile)
+		}
+	}
+}

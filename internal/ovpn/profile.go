@@ -58,17 +58,24 @@ func BuildTemplate(path string, p Parts) (string, error) {
 			clientKey = c
 		}
 	}
+	// Inline material is global too, so it goes before the connection blocks;
+	// a top-level option after a <connection> block is ignored by OpenVPN.
+	inline := ""
 	if caCert != "" {
-		b.WriteString("\n<ca>\n" + caCert + "\n</ca>\n")
+		inline += "\n<ca>\n" + caCert + "\n</ca>\n"
 	}
 	if clientCert != "" {
-		b.WriteString("\n<cert>\n" + clientCert + "\n</cert>\n")
+		inline += "\n<cert>\n" + clientCert + "\n</cert>\n"
 	}
 	if clientKey != "" {
-		b.WriteString("\n<key>\n" + clientKey + "\n</key>\n")
+		inline += "\n<key>\n" + clientKey + "\n</key>\n"
 	}
 	if p.TLSCrypt != "" {
-		b.WriteString("\n<tls-crypt>\n" + p.TLSCrypt + "\n</tls-crypt>\n")
+		inline += "\n<tls-crypt>\n" + p.TLSCrypt + "\n</tls-crypt>\n"
 	}
-	return b.String(), nil
+	body := b.String()
+	if i := strings.Index(body, "<connection>"); i >= 0 {
+		return body[:i] + inline + body[i:], nil
+	}
+	return body + inline, nil
 }

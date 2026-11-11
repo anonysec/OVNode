@@ -159,7 +159,6 @@ func FreshServerConf(proto string) string {
 	// Export non-secret effective hook settings to the dropped-UID hooks via
 	// OpenVPN setenv directives, so they do not need to read the private .env.
 	lines = append(lines, HookEnvDirectives(proto)...)
-	lines = append(lines, "persist-key")
 	lines = append(lines, "persist-tun")
 	// Quote the hook path because it contains a space ("ovnode hook connect")
 	lines = append(lines, "client-connect \""+ht["client-connect"]+"\"")
@@ -300,12 +299,16 @@ func EnsureClientTemplate() error {
 			blocks.WriteString("</connection>\n")
 		}
 	}
-	tmpl := "client\ndev tun\n" + blocks.String() +
-		"resolv-retry infinite\nnobind\npersist-key\npersist-tun\n" +
+	// Global options must precede every <connection> block: OpenVPN ignores
+	// a top-level option that follows one (nobind/tls-crypt/ignore-unknown-
+	// option were silently dropped before this order was fixed).
+	tmpl := "client\ndev tun\n" +
+		"resolv-retry infinite\nnobind\npersist-tun\n" +
 		"remote-cert-tls server\ntls-version-min " + cfg.TLSMin + "\n" +
 		"auth SHA256\ndata-ciphers " + upperCiphers(cfg.DataCiphers()) + "\n" +
 		"cipher " + upperCiphers(cfg.CipherFirst) + "\n" +
-		"ignore-unknown-option block-outside-dns\nblock-outside-dns\nverb 3\n"
+		"ignore-unknown-option block-outside-dns\nblock-outside-dns\nverb 3\n" +
+		blocks.String()
 
 	if current, err := os.ReadFile(template); err == nil && string(current) == tmpl {
 		return nil
