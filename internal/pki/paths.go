@@ -15,21 +15,20 @@ import (
 
 const DefaultOpenVPNRoot = fsx.DefaultOpenVPNRoot
 
-func OpenVPNRoot() string            { return fsx.OpenVPNRoot() }
-func IsInstalledTree() bool          { return fsx.IsInstalledTree() }
-func EasyRSADir() string             { return fsx.EasyRSADir() }
-func PKIDir() string                 { return fsx.PKIDir() }
-func ServerConf(proto string) string { return fsx.ServerConf(proto) }
-func ClientTemplate() string         { return fsx.ClientTemplate() }
-func TLSKey() string                 { return fsx.TLSKey() }
-func CACert() string                 { return fsx.CACert() }
-func ServerCert() string             { return fsx.ServerCert() }
-func ServerKey() string              { return fsx.ServerKey() }
-func CRLFile() string                { return fsx.CRLFile() }
-func PIDFile(proto string) string    { return fsx.PIDFile(proto) }
-func MgmtPassFile() string           { return fsx.MgmtPassFile() }
-func OVNodeDir() string              { return fsx.OVNodeDir() }
-func UsersDir() string               { return fsx.UsersDir() }
-func SessionsDir() string            { return fsx.SessionsDir() }
-func UsageDir() string               { return fsx.UsageDir() }
-func RequiredDirs() []string         { return fsx.RequiredDirs() }
+func OpenVPNRoot() string         { return fsx.OpenVPNRoot() }
+func IsInstalledTree() bool       { return fsx.IsInstalledTree() }
+func EasyRSADir() string          { return fsx.EasyRSADir() }
+func PKIDir() string              { return fsx.PKIDir() }
+func ClientTemplate() string      { return fsx.ClientTemplate() }
+func TLSKey() string              { return fsx.TLSKey() }
+func CACert() string              { return fsx.CACert() }
+func ServerCert() string          { return fsx.ServerCert() }
+func ServerKey() string           { return fsx.ServerKey() }
+func CRLFile() string             { return fsx.CRLFile() }
+func PIDFile(proto string) string { return fsx.PIDFile(proto) }
+func MgmtPassFile() string        { return fsx.MgmtPassFile() }
+func OVNodeDir() string           { return fsx.OVNodeDir() }
+func UsersDir() string            { return fsx.UsersDir() }
+func SessionsDir() string         { return fsx.SessionsDir() }
+func UsageDir() string            { return fsx.UsageDir() }
+func RequiredDirs() []string      { return fsx.RequiredDirs() }

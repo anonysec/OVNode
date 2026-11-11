@@ -429,49 +429,6 @@ func IPv6Effective(defEnabled bool, defPrefix string) (bool, string) {
 
 // ── Rewrite helpers (text) ───────────────────────────────────────────
 
-// RewritePushDNS rewrites push dhcp-option DNS lines in conf.
-func RewritePushDNS(conf string, servers []string) string {
-	lines := strings.Split(conf, "\n")
-	// remove existing push dhcp-option DNS
-	var out []string
-	for _, ln := range lines {
-		if strings.Contains(ln, `push "dhcp-option DNS`) {
-			continue
-		}
-		out = append(out, ln)
-	}
-	// insert after redirect-gateway or server
-	idx := -1
-	for i, ln := range out {
-		if strings.Contains(ln, `push "redirect-gateway`) {
-			idx = i
-			break
-		}
-	}
-	if idx < 0 {
-		for i, ln := range out {
-			if strings.HasPrefix(strings.TrimSpace(ln), "server ") {
-				idx = i
-				break
-			}
-		}
-	}
-	insert := []string{}
-	for _, s := range servers {
-		insert = append(insert, fmt.Sprintf(`push "dhcp-option DNS %s"`, s))
-	}
-	if idx >= 0 {
-		newOut := []string{}
-		newOut = append(newOut, out[:idx+1]...)
-		newOut = append(newOut, insert...)
-		newOut = append(newOut, out[idx+1:]...)
-		out = newOut
-	} else {
-		out = append(out, insert...)
-	}
-	return strings.Join(out, "\n")
-}
-
 var _ = sort.Strings
 var _ = regexp.MustCompile
 

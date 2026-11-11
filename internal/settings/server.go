@@ -39,6 +39,9 @@ const (
 type Server struct {
 	Protocol string `json:"Protocol"`
 	Port     int    `json:"Port"`
+	// TunnelAddress is the address clients dial; "auto" is replaced by the
+	// panel at download time.
+	TunnelAddress string `json:"TunnelAddress"`
 	// ExtraPorts are additional listeners advertised in client profiles.
 	ExtraPorts []int `json:"ExtraPorts"`
 
@@ -83,6 +86,7 @@ func Defaults() Server {
 	return Server{
 		Protocol:         ProtoUDP,
 		Port:             1194,
+		TunnelAddress:    "auto",
 		ExtraPorts:       nil,
 		MaxClients:       250,
 		KeepalivePing:    10,
@@ -189,6 +193,11 @@ func (s Server) Validate() error {
 	}
 	if s.Port < 1 || s.Port > 65535 {
 		return fmt.Errorf("Port %d is outside 1-65535", s.Port)
+	}
+	if s.TunnelAddress != "" && s.TunnelAddress != "auto" {
+		if net.ParseIP(s.TunnelAddress) == nil && !validDomain(s.TunnelAddress) {
+			return fmt.Errorf("TunnelAddress %q is not an IP or hostname", s.TunnelAddress)
+		}
 	}
 	seen := map[int]bool{s.Port: true}
 	for _, p := range s.ExtraPorts {

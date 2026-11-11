@@ -186,7 +186,7 @@ All traffic is panel → node, authenticated with the node's API key in a `key` 
 | `GET /sync/usage` | `get_usage` | `users` keyed by username (traffic collector), `sessions` carries CN + username keys (panel-side mlogin registry + per-session deltas) |
 | `GET /sync/sessions` | `get_sessions` | `live_sessions`, `sessions` (frontend), `stale_markers`, counters, `auth_errors_by_cn` |
 | `GET /sync/config` | `read_config` | Live endpoint settings, so the panel can detect drift |
-| `POST /sync/config` | `update_config` | `{tunnel_address, protocol, ovpn_port, set_new_setting}`; also accepts `dns1`, `dns2`, `enable_ipv6`, `ipv6_prefix`, `extra_ports` — omitted fields leave the node's values alone |
+| `POST /sync/config` | `update_config` | `{tunnel_address, protocol, ovpn_port}` with optional `dns1`, `dns2`, `enable_ipv6`, `ipv6_prefix`, `extra_ports`; the node writes `state/openvpn.json`, regenerates every protocol's configuration and reloads or restarts the children. `protocol` accepts `udp`, `tcp` or `both`. |
 | `POST /sync/restart` | `restart_vpn` | Restart OpenVPN on the node |
 | `POST /sync/renew-cert` | `renew_server_cert` | Renew the server certificate, then restart OpenVPN |
 | `POST /sync/user` | `create_user` | `id` optional — falls back to normalized `name` |
@@ -239,7 +239,7 @@ Run `sudo bash scripts/smoke-test.sh` on a fresh node to verify the install.
 | `ovnode config` | Every effective setting and where it comes from. Read-only. |
 | `ovnode uninstall [--purge]` | Remove OVNode. Data is kept unless `--purge`. |
 | `ovnode info` | Connection details (address, port, protocol, key, certificate). |
-| `ovnode edit` | Edit the OpenVPN server configuration. |
+| `ovnode edit` | Edit a generated `server.conf` for debugging. Settings-owned directives are replaced on the next panel change or restart; use the panel for anything permanent. |
 | `ovnode edit-env` | Edit the node `.env` file. |
 
 ### Multi-instance

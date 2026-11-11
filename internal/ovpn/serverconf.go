@@ -15,7 +15,6 @@ import (
 
 	"ovnode/internal/config"
 	"ovnode/internal/fsx"
-	"ovnode/internal/policy"
 )
 
 // HookTargets maps the client-connect/client-disconnect directives to the
@@ -91,43 +90,19 @@ func HardeningDirectives(proto string) []string {
 	}
 }
 
-func FreshProto() string {
-	return currentSettings().Protos()[0]
-}
-
-func ipv6Effective() (bool, string) {
-	defEnabled := IPv6Enabled()
-	defPrefix := IPv6Prefix()
-	state := map[string]string{}
-	data, err := os.ReadFile(filepath.Join(fsx.OVNodeDir(), "ipv6"))
-	if err == nil {
-		for _, line := range strings.Split(string(data), "\n") {
-			if !strings.Contains(line, "=") {
-				continue
-			}
-			k, v, _ := strings.Cut(line, "=")
-			state[strings.TrimSpace(k)] = strings.TrimSpace(v)
-		}
-	}
-	enabled := defEnabled
-	if v, ok := state["enabled"]; ok {
-		vl := strings.ToLower(strings.TrimSpace(v))
-		enabled = vl == "1" || vl == "true" || vl == "yes" || vl == "on"
-	}
-	prefix := defPrefix
-	if v, ok := state["prefix"]; ok && v != "" {
-		prefix = v
-	}
-	return enabled, prefix
-}
-
 func FreshServerConf(proto string) string {
 	if EnsureMgmtPassword() == "" {
 		return ""
 	}
 	cfg := currentSettings()
 	port := cfg.Port
-	dnsServers := policy.DNSEffective(cfg.DNSPrimary, cfg.DNSSecondary)
+	dnsServers := []string{}
+	if cfg.DNSPrimary != "" {
+		dnsServers = append(dnsServers, cfg.DNSPrimary)
+	}
+	if cfg.DNSSecondary != "" {
+		dnsServers = append(dnsServers, cfg.DNSSecondary)
+	}
 	user := RuntimeUser()
 	group := RuntimeGroup()
 	ht := HookTargets()
@@ -155,7 +130,7 @@ func FreshServerConf(proto string) string {
 		lines = append(lines, fmt.Sprintf(`push "route %s"`, route))
 	}
 
-	enabled, prefix := ipv6Effective()
+	enabled, prefix := cfg.IPv6Enabled, cfg.IPv6Prefix
 	if enabled {
 		lines = append(lines, "tun-ipv6")
 		lines = append(lines, "server-ipv6 "+prefix)
@@ -255,88 +230,47 @@ func ensureServerConf(proto string) (bool, error) {
 	if EnsureMgmtPassword() == "" {
 		return false, fmt.Errorf("management password unavailable at %s", fsx.MgmtPassFile())
 	}
-	confPath := fsx.ServerConf(proto)
-	if _, err := os.Lstat(confPath); os.IsNotExist(err) {
-		data := FreshServerConf(proto)
-		if data == "" {
-			return false, fmt.Errorf("server configuration could not be generated")
-		}
-		if err := os.MkdirAll(fsx.ServerDir(proto), 0o750); err != nil {
-			return false, err
-		}
-		if err := fsx.WriteFileAtomic(confPath, []byte(data), 0o644); err != nil {
-			return false, err
-		}
-		return true, nil
-	} else if err != nil {
+	want := FreshServerConf(proto)
+	if want == "" {
+		return false, fmt.Errorf("server configuration could not be generated")
+	}
+	path := fsx.ServerConf(proto)
+	old, err := os.ReadFile(path)
+	if err != nil && !os.IsNotExist(err) {
 		return false, err
 	}
-	data, err := os.ReadFile(confPath)
-	if err != nil {
-		return false, err
-	}
-
-	// The agent owns these directives outright: their values come from the
-	// instance and the protocol (paths, ports, runtime user), so a stale line
-	// is replaced, not appended to. This is what keeps a port change from
-	// leaving a second management or setenv line behind.
-	ht := HookTargets()
-	managed := append([]string{}, HardeningDirectives(proto)...)
-	managed = append(managed, "tls-version-min "+currentSettings().TLSMin)
-	managed = append(managed,
-		"duplicate-cn",
-		"crl-verify "+fsx.CRLFile(),
-		"status "+configValue(fsx.StatusFile(proto))+" 5",
-	)
-	managed = append(managed,
-		"client-connect \""+ht["client-connect"]+"\"",
-		"client-disconnect \""+ht["client-disconnect"]+"\"",
-	)
-	managed = append(managed, HookEnvDirectives(proto)...)
-	managed = append(managed, "user "+RuntimeUser(), "group "+RuntimeGroup())
-
-	if managedCurrent(string(data), managed) {
+	merged := mergeConf(want, string(old))
+	if string(old) == merged {
 		return false, nil
 	}
-	owned := make(map[string]bool, len(managed))
-	for _, line := range managed {
-		owned[directiveKey(line)] = true
+	if err := os.MkdirAll(fsx.ServerDir(proto), 0o750); err != nil {
+		return false, err
 	}
-	out := make([]string, 0, len(managed)+16)
-	for _, line := range strings.Split(string(data), "\n") {
-		if strings.TrimSpace(line) == "" || owned[directiveKey(line)] {
-			continue
-		}
-		out = append(out, line)
-	}
-	out = append(out, managed...)
-	if err := fsx.WriteFileAtomic(confPath, []byte(strings.Join(out, "\n")+"\n"), 0o644); err != nil {
+	if err := fsx.WriteFileAtomic(path, []byte(merged), 0o644); err != nil {
 		return false, err
 	}
 	return true, nil
 }
 
-// managedCurrent reports whether every managed directive appears exactly once
-// with the desired value. A duplicate counts as drift, so the rewrite collapses
-// it instead of appending another copy.
-func managedCurrent(data string, managed []string) bool {
-	counts := map[string]int{}
-	values := map[string]string{}
-	for _, line := range strings.Split(data, "\n") {
+// mergeConf renders the settings-owned configuration and keeps directives it
+// does not know about, so an operator's extra `push`/`route` line survives a
+// settings change. Owned directives always come from settings.
+func mergeConf(fresh, old string) string {
+	owned := map[string]bool{}
+	for _, line := range strings.Split(fresh, "\n") {
+		if key := directiveKey(line); key != "" {
+			owned[key] = true
+		}
+	}
+	out := strings.Split(strings.TrimRight(fresh, "\n"), "\n")
+	for _, line := range strings.Split(old, "\n") {
 		key := directiveKey(line)
-		if key == "" {
+		if key == "" || owned[key] {
 			continue
 		}
-		counts[key]++
-		values[key] = strings.TrimSpace(line)
+		out = append(out, line)
 	}
-	for _, want := range managed {
-		key := directiveKey(want)
-		if counts[key] != 1 || values[key] != want {
-			return false
-		}
-	}
-	return true
+	return strings.Join(out, "\n") + "\n"
 }
 
 // directiveKey names the slot a directive occupies: the whole `setenv KEY`
@@ -352,17 +286,19 @@ func EnsureClientTemplate() error {
 		return fmt.Errorf("non-regular client template at %s", template)
 	}
 	cfg := currentSettings()
-	port := cfg.Port
-	tunnelAddr := Get("TunnelAddress", "")
+	tunnelAddr := cfg.TunnelAddress
 	if tunnelAddr == "" {
 		tunnelAddr = "auto"
 	}
+	ports := append([]int{cfg.Port}, cfg.ExtraPorts...)
 
 	var blocks strings.Builder
 	for _, proto := range cfg.Protos() {
-		blocks.WriteString("<connection>\n")
-		blocks.WriteString("remote " + tunnelAddr + " " + itoaStr(port) + " " + proto + "\n")
-		blocks.WriteString("</connection>\n")
+		for _, port := range ports {
+			blocks.WriteString("<connection>\n")
+			blocks.WriteString("remote " + tunnelAddr + " " + itoaStr(port) + " " + proto + "\n")
+			blocks.WriteString("</connection>\n")
+		}
 	}
 	tmpl := "client\ndev tun\n" + blocks.String() +
 		"resolv-retry infinite\nnobind\npersist-key\npersist-tun\n" +

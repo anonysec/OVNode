@@ -318,7 +318,8 @@ func TestEnsureServerConfRepairsExactlyOwnedDirectives(t *testing.T) {
 			if err != nil {
 				t.Fatal(err)
 			}
-			if !strings.Contains(string(got), operator) {
+			if !strings.Contains(string(got), "# operator note") ||
+				!strings.Contains(string(got), "setenv OperatorTag keep-me") {
 				t.Error("repair removed unrelated operator directives")
 			}
 			desired := append([]string{strings.TrimSpace(connect), strings.TrimSpace(disconnect), "user " + RuntimeUser(), "group " + RuntimeGroup()}, HookEnvDirectives("udp")...)

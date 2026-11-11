@@ -10,6 +10,7 @@ import (
 	"testing"
 
 	"ovnode/internal/pki"
+	"ovnode/internal/settings"
 )
 
 // TestChangeConfigRequestBindsThePanelFields covers the json tags of the
@@ -57,33 +58,27 @@ func TestChangeConfigRequestBindsThePanelFields(t *testing.T) {
 
 // TestReadConfigReadsTheTree covers the drift detection the panel does.
 //
-// The paths follow the OpenVPN root, so a relocated tree is read from the
-// relocated place.
-func TestReadConfigReadsTheTree(t *testing.T) {
+// ReadConfig reports the effective settings, not the rendered file.
+func TestReadConfigReadsSettings(t *testing.T) {
 	root := t.TempDir()
 	t.Setenv("OpenVpnRoot", root)
-	t.Setenv("DataDir", root+"/ovnode-data")
-	serverDir := filepath.Join(root, "server", "udp")
-	if err := os.MkdirAll(serverDir, 0o755); err != nil {
+	t.Setenv("DataDir", filepath.Join(root, "ovnode-data"))
+	cfg := settings.Defaults()
+	cfg.Port = 1195
+	cfg.Protocol = settings.ProtoUDP
+	cfg.TunnelAddress = "vpn.example.com"
+	if err := settings.Save(cfg); err != nil {
 		t.Fatal(err)
 	}
-	conf := "port 1195\nproto udp\ndev tun\ncrl-verify /etc/openvpn/server/pki/crl.pem\n"
-	if err := os.WriteFile(filepath.Join(serverDir, "server.conf"), []byte(conf), 0o644); err != nil {
-		t.Fatal(err)
+	got := ReadConfig()
+	if got["port"] != 1195 {
+		t.Errorf("port = %v, want 1195", got["port"])
 	}
-	template := "client\ndev tun\nproto udp\nremote vpn.example.com 1195\n"
-	if err := os.WriteFile(filepath.Join(root, "server", "client-common.txt"), []byte(template), 0o644); err != nil {
-		t.Fatal(err)
+	if got["proto"] != "udp" {
+		t.Errorf("proto = %v, want udp", got["proto"])
 	}
-	cfg := ReadConfig()
-	if cfg["port"] != 1195 {
-		t.Errorf("port = %v, want 1195", cfg["port"])
-	}
-	if cfg["proto"] != "udp" {
-		t.Errorf("proto = %v, want udp", cfg["proto"])
-	}
-	if cfg["tunnel_address"] != "vpn.example.com" {
-		t.Errorf("tunnel_address = %v, want the remote of the template", cfg["tunnel_address"])
+	if got["tunnel_address"] != "vpn.example.com" {
+		t.Errorf("tunnel_address = %v", got["tunnel_address"])
 	}
 }
 
