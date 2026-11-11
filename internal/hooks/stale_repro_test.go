@@ -17,6 +17,7 @@ func skipUnderRace(t *testing.T) {
 		t.Skip("skipping under -race detector: timing-sensitive")
 	}
 }
+
 // writeOneSessionStatus writes one unchanged status fixture: the file
 // OpenVPN rewrites only every 5 seconds, so two connects inside the window
 // see the same stale list.
