@@ -147,11 +147,3 @@ func (l *Limiter) RecordFailedAuth(client string) {
 	defer l.mu.Unlock()
 	l.failed.record(client)
 }
-func (l *Limiter) prune(now time.Time) {
-	l.t.trim(now)
-	l.t.cap(now)
-	l.global.trim(now)
-	l.heavy.trim(now)
-	l.heavy.cap(now)
-	l.failed.trim(now)
-}

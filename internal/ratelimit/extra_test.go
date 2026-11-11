@@ -38,31 +38,6 @@ func TestFailedAuthBackoff(t *testing.T) {
 	}
 }
 
-func TestLRUEviction(t *testing.T) {
-	l := New()
-	now := time.Now()
-	for i := 0; i < maxBuckets+5; i++ {
-		l.t.hits["c"+itoa(i)] = timeEntry{ts: []time.Time{now}, last: now.Add(time.Duration(i) * time.Millisecond)}
-	}
-	l.prune(now)
-	if len(l.t.hits) > maxBuckets {
-		t.Fatalf("t.hits len = %d, want <= %d", len(l.t.hits), maxBuckets)
-	}
-}
-
-func itoa(i int) string {
-	// small helper to avoid import
-	b := []byte{}
-	if i == 0 {
-		return "0"
-	}
-	for i > 0 {
-		b = append([]byte{byte('0' + i%10)}, b...)
-		i /= 10
-	}
-	return string(b)
-}
-
 func TestPruneEvictsTenPercentAtOnce(t *testing.T) {
 	l := New()
 	start := time.Now()

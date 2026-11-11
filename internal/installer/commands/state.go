@@ -183,11 +183,6 @@ func (c *Config) NodeExists() bool {
 	return false
 }
 
-// NodeIsInstalled mirrors node_is_installed.
-func (c *Config) NodeIsInstalled() bool {
-	return c.InstallStateOf(c.AppDir) == StateInstalled
-}
-
 func (c *Config) anyNodeUnit() bool {
 	sd := envOr("OVN_SYSTEMD_DIR", "/etc/systemd/system")
 	if _, err := os.Stat(filepath.Join(sd, "ovnode.service")); err == nil {
