@@ -46,7 +46,7 @@ The VPN server half of an [OVManager](https://github.com/anonysec/OVManager) dep
 - **The panel holds the secrets, the node holds the traffic.** A node does not store the panel's address and never initiates a connection, so replacing the panel is a panel-side operation. Re-attach the nodes with the same name, address and key.
 - **Limits enforced where the connections are.** The login limit runs in OpenVPN's connect hook, not in the panel, so it holds even while the panel is unreachable.
 - **Traffic that survives reconnects.** The disconnect hook banks each session's final byte counters into a lifetime total per user, so a dropped connection or a restart cannot lose the count.
-- **Nothing to migrate.** There is no database. Node state is plain files under `/etc/openvpn` and `/var/lib/ovnode`, which is what makes `ovnode backup` a tarball and a restore a file copy.
+- **Nothing to migrate.** There is no database. Node state is plain files under `/var/lib/ovnode`, which is what makes `ovnode backup` a tarball and a restore a file copy.
 - **Upgrades that keep your edits.** Hardening directives are appended to an existing `server.conf` rather than replacing it, and an older on-disk layout is migrated when the agent starts, so restoring an old backup just works.
 - **A verified identity at all times.** Every panel request carries the node's API key, and the panel is the side that dials — so a node is reachable only by something that already knows the key.
 
@@ -62,7 +62,7 @@ The VPN server half of an [OVManager](https://github.com/anonysec/OVManager) dep
 
 ### 👤 Users and profiles
 - The panel's numeric user id *is* the OpenVPN common name: user `42` gets certificate CN `42`. The display name is kept beside it, so usage can be reported by name.
-- One folder per user under `/etc/openvpn/ovnode/users/<cn>/`, holding the name, the state (login limit and disabled flag) and a cached profile.
+- One folder per user under `/var/lib/ovnode/openvpn/users/<cn>/`, holding the name, the state (login limit and disabled flag) and a cached profile.
 - Generated `.ovpn` files embed the private key and the `tls-crypt` key inline, are written owner-only and are created atomically.
 - Disabling a user sets a marker and disconnects any live session; the certificate and folder stay, so re-enabling is instant. Deleting revokes the certificate through the CRL and removes the folder.
 - Profiles are created lazily on first download, so a user who never connects costs nothing.
@@ -80,7 +80,7 @@ The VPN server half of an [OVManager](https://github.com/anonysec/OVManager) dep
 - `OVN_NO_NAT=1` skips forwarding, NAT and port redirects when you would rather handle them yourself.
 
 ### 🔧 Operations
-- `ovnode update` takes a verified snapshot of the identity file, the node data directory, `/etc/openvpn` and the API TLS files, then swaps in the release and restores the snapshot if the new one does not come up healthy.
+- `ovnode update` takes a verified snapshot of the identity file, the node data directory, the OpenVPN root and the API TLS files, then swaps in the release and restores the snapshot if the new one does not come up healthy.
 - `ovnode rollback` returns to the previous code tree; it refuses to run while any v2 usage counter is present (the previous binary cannot read them) and points at a state restore instead; `ovnode update` cleans up an update interrupted by a reboot or power loss before it starts a new one.
 - **Usage counter format (v2) and downgrade.** The per-CN usage file is a version-2 JSON counter (`version`, `epoch`, `total`, `sessions`) that commits total, session offsets and completed receipts atomically. A legacy unsigned-integer file is accepted once as the starting total. Empty, corrupt, or unknown-version files are reported as unavailable, never zeroed. Binaries that predate the v2 counter cannot decode these files and must not be run against them: a code-only downgrade against live v2 state would treat the JSON as an unreadable digit file and overwrite history. To downgrade, quiesce traffic (stop the agent and OpenVPN so no hook or poll can write), then restore the verified matching pre-update state snapshot taken by `ovnode update`; do not carry v2 usage files back to the older binary. Restoring an older snapshot discards any accounting recorded after that snapshot (a post-snapshot gap: those bytes are not recovered, and the panel's held baselines/epochs treat the rollback as an unexplained decrease until a reset reseeds).
 - `ovnode backup` archives the node data and PKI into root-only tarballs, on demand or through a daily system timer, with retention you set.
@@ -163,12 +163,12 @@ If the card shows a private address (`10.x`, `192.168.x`), the server is behind 
 | --- | --- |
 | `/opt/ovnode` | The installed tree, with its own virtualenv and the `ovnode` manager |
 | `/opt/ovnode/.env` | Runtime settings — port, VPN pool, DNS, extra ports, IPv6, runtime user |
-| `/etc/openvpn/server` | `server.conf`, the PKI and the OpenVPN logs |
-| `/etc/openvpn/ovnode` | Per-user folders, session markers, usage counters and the hooks |
+| `/var/lib/ovnode/openvpn/server` | `server.conf`, the PKI and the OpenVPN logs |
+| `/var/lib/ovnode/openvpn/server/users` | Per-user folders, session markers, usage counters and the hooks |
 | `/var/lib/ovnode` | The agent's own data. `DATA_DIR` in `.env` names it |
 | `/var/backups` | Backup archives written by `ovnode backup` |
 
-The agent's runtime settings use `OVNODE_*` names and live in `/opt/ovnode/.env`; they are separate from the installer's `OVN_*` variables above. Every one is documented in [.env.example](.env.example).
+The agent's runtime settings use `OVNODE_*` names and live in `/opt/ovnode/.env`; they are separate from the installer's `OVN_*` variables above. Every one is documented in [.env.example](.env.example). The OpenVPN root is isolated per instance — multiple ovnode instances (or other projects' OpenVPN) never share `/etc/openvpn`.
 
 Fresh managed installs create the `ovnode-vpn` system user/group unless a runtime identity was chosen. `OVN_RUNTIME_USER` and `OVN_RUNTIME_GROUP` select an existing identity at install time; a user-only override uses that user's primary group. Identity-creation failures stop installation.
 
@@ -283,7 +283,7 @@ same file, and it is a no-op on an install that is already flat.
 The API key lives in `.env`, not in the panel. It is printed by the installer and by `ovnode auth key`; neither can be recovered elsewhere, so losing `.env` means re-enrolling the node. The node keeps its own certificate in `/etc/ovnode/tls` (or wherever `SSL_KEYFILE` says) rather than in `/etc/ssl/self-signed`, which is shared with an OVManager panel on the same host.
 
 `ovnode restore` takes a safety copy before it replaces anything, and refuses to continue if it cannot. `ovnode update` and `ovnode uninstall` run the Go installer, so each exists in exactly one place.
-`ovnode backup` archives `/var/lib/ovnode` and the OpenVPN PKI (`/etc/openvpn/server/pki`) into root-only tarballs in `/var/backups`, keeping the newest 14 (`--keep N` changes that). `ovnode update` is stricter still: it snapshots the identity file, the node data directory, `/etc/openvpn` and the API TLS files before it touches anything, and rolls back if the new release does not come up.
+`ovnode backup` archives `/var/lib/ovnode` and the OpenVPN PKI (`/var/lib/ovnode/openvpn/server/pki`) into root-only tarballs in `/var/backups`, keeping the newest 14 (`--keep N` changes that). `ovnode update` is stricter still: it snapshots the identity file, the node data directory, the OpenVPN root and the API TLS files before it touches anything, and rolls back if the new release does not come up.
 
 ## 📚 Docs
 
