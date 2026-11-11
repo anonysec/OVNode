@@ -90,3 +90,18 @@ func TestRingIsBounded(t *testing.T) {
 		t.Fatalf("records = %d, want at most %d", len(records), RingSize)
 	}
 }
+
+func TestLogLevelFiltersInfo(t *testing.T) {
+	t.Setenv("LogLevel", "error")
+	before := len(Recent("INFO", RingSize))
+	Info("filtered at error level")
+	if got := len(Recent("INFO", RingSize)); got != before {
+		t.Fatalf("INFO was recorded at LogLevel=error (%d -> %d)", before, got)
+	}
+	t.Setenv("LogLevel", "warn")
+	Warn("kept at warn level")
+	if len(Recent("WARNING", 1)) != 1 {
+		t.Fatal("WARN was filtered at LogLevel=warn")
+	}
+	t.Setenv("LogLevel", "")
+}

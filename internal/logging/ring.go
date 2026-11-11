@@ -8,8 +8,11 @@ import (
 	"os"
 	"path/filepath"
 	"runtime"
+	"strings"
 	"sync"
 	"time"
+
+	"ovnode/internal/fsx"
 )
 
 // RingSize is the number of records the buffer keeps.
@@ -66,11 +69,36 @@ func (r *ring) add(rec Record) {
 	}
 }
 
-// Info records an informational line.
-func Info(format string, args ...any) { emit("INFO", 2, format, args...) }
+// minLevel is the configured floor: debug, info (default), warn or error.
+// Hook event lines (Event) are not filtered — the panel reads them.
+func minLevel() int {
+	switch strings.ToLower(strings.TrimSpace(fsx.Get("LogLevel", "info"))) {
+	case "debug":
+		return 10
+	case "warn", "warning":
+		return 30
+	case "error":
+		return 40
+	default:
+		return 20
+	}
+}
 
-// Warn records a warning line.
-func Warn(format string, args ...any) { emit("WARNING", 2, format, args...) }
+// Info records an informational line unless the level is warn or error.
+func Info(format string, args ...any) {
+	if minLevel() > 20 {
+		return
+	}
+	emit("INFO", 2, format, args...)
+}
+
+// Warn records a warning line unless the level is error.
+func Warn(format string, args ...any) {
+	if minLevel() > 30 {
+		return
+	}
+	emit("WARNING", 2, format, args...)
+}
 
 // Error records an error line.
 func Error(format string, args ...any) { emit("ERROR", 2, format, args...) }
