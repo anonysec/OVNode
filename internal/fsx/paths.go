@@ -26,7 +26,7 @@ func loadEnvFile() {
 	if d := os.Getenv("OVN_APP_DIR"); d != "" {
 		paths = append(paths, filepath.Join(d, ".env"))
 	}
-	paths = append(paths, "/opt/ovnode/.env", "/etc/openvpn/ovnode/.env")
+	paths = append(paths, "/opt/ovnode/.env", "/etc/openvpn/ovnode/.env", "/var/lib/ovnode/openvpn/.env")
 	for _, p := range paths {
 		data, err := os.ReadFile(p)
 		if err != nil {

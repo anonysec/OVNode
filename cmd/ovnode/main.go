@@ -15,6 +15,7 @@ import (
 	"fmt"
 	"net/http"
 	"os"
+	"path/filepath"
 	"strings"
 
 	assets "ovnode"
@@ -309,7 +310,12 @@ func runProbeCheck() {
 		appDir = "/opt/ovnode"
 	}
 	envGet := func(key string) string {
-		for _, path := range []string{appDir + "/.env", "/etc/openvpn/ovnode/.env"} {
+		paths := []string{appDir + "/.env"}
+		if v := os.Getenv("OVNODE_OPENVPN_ROOT"); v != "" {
+			paths = append(paths, filepath.Dir(v)+"/.env")
+		}
+		paths = append(paths, "/etc/openvpn/ovnode/.env", "/var/lib/ovnode/openvpn/.env")
+		for _, path := range paths {
 			data, err := os.ReadFile(path) // #nosec G304 G703 -- path from installed .env, not user input
 			if err != nil {
 				continue

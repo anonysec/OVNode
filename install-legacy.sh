@@ -39,7 +39,7 @@ VERSION="${OVN_VERSION:-${OVM_VERSION:-$VERSION}}"
 APP_DIR="${OVN_APP_DIR:-/opt/ovnode}"
 DATA_BASE="${OVN_DATA_BASE:-/var/lib/ovnode}"
 INSTANCE_NAME="${OVN_INSTANCE:-}"
-OPENVPN_ROOT="/etc/openvpn"
+OPENVPN_ROOT="${OVN_OPENVPN_ROOT:-/var/lib/${INSTANCE_NAME:-ovnode}/openvpn}"
 # The agent and the OpenVPN hook are the same Go binary. It lives where the
 # server.conf writer points the hooks, so there is exactly one copy of it.
 AGENT_BIN="${APP_DIR}/ovnode-server"
@@ -751,7 +751,7 @@ RuntimeDirectory=ovnode-openvpn
 RuntimeDirectoryMode=0755
 PrivateTmp=yes
 ProtectSystem=strict
-ReadWritePaths=${APP_DIR} /etc/ovnode /etc/openvpn /var/lib/ovnode /var/log/ovnode /run/ovnode-openvpn /tmp
+ReadWritePaths=${APP_DIR} ${OPENVPN_ROOT} /var/lib/${INSTANCE_NAME:-ovnode} /var/log/ovnode /run/ovnode-openvpn /tmp
 RestrictAddressFamilies=AF_UNIX AF_INET AF_INET6 AF_NETLINK
 ProtectKernelTunables=yes
 ProtectHome=yes
