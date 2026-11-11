@@ -83,7 +83,6 @@ func MgmtLine() string {
 func HardeningDirectives() []string {
 	EnsureMgmtPassword()
 	return []string{
-		"tls-version-min 1.3",
 		"remote-cert-tls client",
 		MgmtLine(),
 		"writepid " + fsx.PIDFile(),
@@ -130,10 +129,10 @@ func FreshServerConf() string {
 	if EnsureMgmtPassword() == "" {
 		return ""
 	}
-	port := OpenVPNPort()
-	proto := FreshProto()
-	dns1, dns2 := VPNDNS()
-	dnsServers := policy.DNSEffective(dns1, dns2)
+	cfg := currentSettings()
+	port := cfg.Port
+	proto := cfg.Protos()[0]
+	dnsServers := policy.DNSEffective(cfg.DNSPrimary, cfg.DNSSecondary)
 	user := RuntimeUser()
 	group := RuntimeGroup()
 	ht := HookTargets()
@@ -145,11 +144,21 @@ func FreshServerConf() string {
 	lines = append(lines, "topology subnet")
 	lines = append(lines, "server "+VPNNetwork()+" "+VPNNetmask())
 	lines = append(lines, fmt.Sprintf("ifconfig-pool-persist %s 600", filepath.Join(fsx.OpenVPNRoot(), "server", "ipp.txt")))
-	lines = append(lines, `push "redirect-gateway def1 bypass-dhcp"`)
-	for _, s := range dnsServers {
-		lines = append(lines, fmt.Sprintf(`push "dhcp-option DNS %s"`, s))
+	if cfg.RedirectGateway {
+		lines = append(lines, `push "redirect-gateway def1 bypass-dhcp"`)
 	}
-	lines = append(lines, `push "block-outside-dns"`)
+	for _, dns := range dnsServers {
+		lines = append(lines, fmt.Sprintf(`push "dhcp-option DNS %s"`, dns))
+	}
+	if cfg.DNSDomain != "" {
+		lines = append(lines, fmt.Sprintf(`push "dhcp-option DOMAIN %s"`, cfg.DNSDomain))
+	}
+	if cfg.BlockOutsideDNS {
+		lines = append(lines, `push "block-outside-dns"`)
+	}
+	for _, route := range cfg.PushRoutes {
+		lines = append(lines, fmt.Sprintf(`push "route %s"`, route))
+	}
 
 	enabled, prefix := ipv6Effective()
 	if enabled {
@@ -157,16 +166,22 @@ func FreshServerConf() string {
 		lines = append(lines, "server-ipv6 "+prefix)
 		lines = append(lines, `push "route-ipv6 2000::/3"`)
 	}
-	lines = append(lines, "keepalive 10 60")
+	if cfg.TunMTU != 0 {
+		lines = append(lines, "tun-mtu "+itoaStr(cfg.TunMTU))
+	}
+	if cfg.Mssfix != 0 {
+		lines = append(lines, "mssfix "+itoaStr(cfg.Mssfix))
+	}
+	lines = append(lines, "keepalive "+itoaStr(cfg.KeepalivePing)+" "+itoaStr(cfg.KeepaliveTimeout))
 	lines = append(lines, "ca "+fsx.CACert())
 	lines = append(lines, "cert "+fsx.ServerCert())
 	lines = append(lines, "key "+filepath.Join(fsx.PKIDir(), "private", "server.key"))
 	lines = append(lines, "dh none")
 	lines = append(lines, "tls-crypt "+fsx.TLSKey())
-	lines = append(lines, "tls-version-min 1.3")
+	lines = append(lines, "tls-version-min "+cfg.TLSMin)
 	lines = append(lines, "remote-cert-tls client")
-	lines = append(lines, "data-ciphers AES-128-GCM:AES-256-GCM:CHACHA20-POLY1305")
-	lines = append(lines, "data-ciphers-fallback AES-128-GCM")
+	lines = append(lines, "data-ciphers "+upperCiphers(cfg.DataCiphers()))
+	lines = append(lines, "data-ciphers-fallback "+upperCiphers(cfg.CipherFirst))
 	lines = append(lines, "auth SHA256")
 	lines = append(lines, "allow-compression no")
 	lines = append(lines, "user "+user)
@@ -187,11 +202,38 @@ func FreshServerConf() string {
 
 	lines = append(lines, HardeningDirectives()...)
 
-	lines = append(lines, "max-clients "+itoaStr(MaxClients()))
+	if cfg.ClientToClient {
+		lines = append(lines, "client-to-client")
+	}
+	if cfg.RenegSec > 0 {
+		lines = append(lines, "reneg-sec "+itoaStr(cfg.RenegSec))
+	}
+	if cfg.InactiveTimeout > 0 {
+		lines = append(lines, "inactive "+itoaStr(cfg.InactiveTimeout))
+	}
+	lines = append(lines, "verb "+itoaStr(cfg.Verb))
+	lines = append(lines, "max-clients "+itoaStr(cfg.MaxClients))
 	lines = append(lines, "explicit-exit-notify "+map[bool]string{true: "1", false: "0"}[proto == "udp"])
 	lines = append(lines, "duplicate-cn")
 
 	return strings.Join(lines, "\n") + "\n"
+}
+
+// upperCiphers maps our lower-case cipher names to OpenVPN's upper-case
+// spellings for server.conf.
+func upperCiphers(list string) string {
+	parts := strings.Split(list, ":")
+	for i, p := range parts {
+		switch p {
+		case "aes-128-gcm":
+			parts[i] = "AES-128-GCM"
+		case "aes-256-gcm":
+			parts[i] = "AES-256-GCM"
+		case "chacha20-poly1305":
+			parts[i] = "CHACHA20-POLY1305"
+		}
+	}
+	return strings.Join(parts, ":")
 }
 
 func EnsureServerConf() bool {
@@ -226,6 +268,7 @@ func ensureServerConf() (bool, error) {
 	// management or setenv line behind.
 	ht := HookTargets()
 	managed := append([]string{}, HardeningDirectives()...)
+	managed = append(managed, "tls-version-min "+currentSettings().TLSMin)
 	managed = append(managed,
 		"duplicate-cn",
 		"crl-verify "+fsx.CRLFile(),

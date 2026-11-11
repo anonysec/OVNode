@@ -4,12 +4,11 @@
 package ovpn
 
 import (
-	"os"
-
-	"ovnode/internal/fsx"
-	"ovnode/internal/policy"
 	"strconv"
 	"strings"
+
+	"ovnode/internal/fsx"
+	"ovnode/internal/settings"
 )
 
 // env reads an OVNODE_* env var with default, falling back to os env.
@@ -23,6 +22,17 @@ func envInt(name string, defaultVal int) int {
 		return defaultVal
 	}
 	return n
+}
+
+// currentSettings reads the instance's settings file. A corrupt file falls
+// back to the shipped defaults so the agent still starts; the panel surfaces
+// the error through /sync/config.
+func currentSettings() settings.Server {
+	s, err := settings.Load()
+	if err != nil {
+		return settings.Defaults()
+	}
+	return s
 }
 
 func RuntimeUser() string  { return fsx.RuntimeUser() }
@@ -69,38 +79,27 @@ func VPNSubnet() string {
 	return net + "/24"
 }
 func VPNDNS() (string, string) {
-	return fsx.Env("VPN_DNS1", "1.1.1.1"), fsx.Env("VPN_DNS2", "8.8.8.8")
+	s := currentSettings()
+	return s.DNSPrimary, s.DNSSecondary
 }
-func MaxClients() int {
-	n := envInt("MAX_CLIENTS", 250)
-	if n < 1 {
-		n = 250
-	}
-	return n
-}
-func IPv6Enabled() bool {
-	v := strings.ToLower(fsx.Env("ENABLE_IPV6", "0"))
-	return v == "1" || v == "true" || v == "yes" || v == "on"
-}
-func IPv6Prefix() string { return fsx.Env("IPV6_PREFIX", "fd42:42:42:42::/64") }
+func MaxClients() int    { return currentSettings().MaxClients }
+func IPv6Enabled() bool  { return currentSettings().IPv6Enabled }
+func IPv6Prefix() string { return currentSettings().IPv6Prefix }
 
-// OpenVPNPort reads OPENVPN_PORT (not OVNODE_*) per Python.
-func OpenVPNPort() int {
-	if v := fsx.EnvOr("OPENVPN_PORT", ""); v != "" {
-		if n, err := strconv.Atoi(v); err == nil {
-			return n
+// OpenVPNPort is the primary listener port from the settings file.
+func OpenVPNPort() int { return currentSettings().Port }
+
+// ExtraVPNPorts are the additional listener ports, de-duplicated against the
+// primary by the settings validation.
+func ExtraVPNPorts() []int {
+	s := currentSettings()
+	out := make([]int, 0, len(s.ExtraPorts))
+	for _, p := range s.ExtraPorts {
+		if p != s.Port {
+			out = append(out, p)
 		}
 	}
-	return 1194
-}
-
-func ExtraVPNPorts() []int {
-	raw := fsx.Env("EXTRA_PORTS", "")
-	// Python reads OVNODE_EXTRA_PORTS and OPENVPN_PORT separately.
-	if v, ok := os.LookupEnv("OVNODE_EXTRA_PORTS"); ok {
-		raw = v
-	}
-	return policy.ParseExtraPorts(raw, OpenVPNPort())
+	return out
 }
 
 // Env is the generic accessor matching Python _env.
