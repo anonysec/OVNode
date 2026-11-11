@@ -3,6 +3,7 @@ package commands
 import (
 	"fmt"
 	"os"
+	"path/filepath"
 	"strings"
 )
 
@@ -71,6 +72,10 @@ func Parse(args []string) (*Config, string, error) {
 				return nil, "", fmt.Errorf("--instance needs a value")
 			}
 			c.Instance = args[i]
+			// Clear anything derived from the previous instance so finalize
+			// rebuilds the paths for this one.
+			c.AppDir, c.DataBase, c.OpenVPNRoot, c.LogDir = "", "", "", ""
+			c.MgmtPort = 0
 			if c.NodeName == "" {
 				c.NodeName = args[i]
 			}
@@ -169,6 +174,11 @@ func Parse(args []string) (*Config, string, error) {
 		}
 		c.Version = strings.TrimPrefix(c.Pin, "v")
 	}
+	if c.Local && c.DestDir != "" {
+		c.AppDir = c.DestDir
+		c.DataBase = filepath.Join(c.AppDir, "data")
+	}
+	c.finalize()
 	// State is read before any download.
 	c.PreState = c.InstallStateOf(c.AppDir)
 	// Entry gates (parse_args): no bootstrap before the checks.

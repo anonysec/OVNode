@@ -176,16 +176,12 @@ func FreshServerConf() string {
 	lines = append(lines, HookEnvDirectives()...)
 	lines = append(lines, "persist-key")
 	lines = append(lines, "persist-tun")
-	lines = append(lines, "script-security 2")
 	// Quote the hook path because it contains a space ("ovnode hook connect")
 	lines = append(lines, "client-connect \""+ht["client-connect"]+"\"")
 	lines = append(lines, "client-disconnect \""+ht["client-disconnect"]+"\"")
 	lines = append(lines, "client-config-dir "+filepath.Join(fsx.OpenVPNRoot(), "ccd"))
 	lines = append(lines, "crl-verify "+fsx.CRLFile())
 	lines = append(lines, "status "+configValue(fsx.StatusFile())+" 5")
-	lines = append(lines, "status-version 3")
-	lines = append(lines, MgmtLine())
-	lines = append(lines, "writepid "+fsx.PIDFile())
 	lines = append(lines, "log-append "+filepath.Join(fsx.OpenVPNRoot(), "server", "openvpn.log"))
 	lines = append(lines, "cd "+filepath.Join(fsx.OpenVPNRoot(), "server"))
 
@@ -223,58 +219,72 @@ func ensureServerConf() (bool, error) {
 	if err != nil {
 		return false, err
 	}
-	existing := make(map[string]bool)
-	for _, line := range strings.Split(string(data), "\n") {
-		existing[strings.TrimSpace(line)] = true
-	}
-	var toAdd []string
+
+	// The agent owns these directives outright: their values come from the
+	// instance (paths, ports, runtime user), so a stale line is replaced, not
+	// appended to. This is what keeps a port change from leaving a second
+	// management or setenv line behind.
 	ht := HookTargets()
-	for _, d := range HardeningDirectives() {
-		if !existing[d] {
-			toAdd = append(toAdd, d)
-		}
-	}
-	for _, d := range []string{"duplicate-cn"} {
-		if !existing[d] {
-			toAdd = append(toAdd, d)
-		}
-	}
-	crl := "crl-verify " + fsx.CRLFile()
-	if !existing[crl] {
-		toAdd = append(toAdd, crl)
-	}
-	hookLines := []string{
-		"client-connect \"" + ht["client-connect"] + "\"",
-		"client-disconnect \"" + ht["client-disconnect"] + "\"",
-	}
-	runtimeLines := []string{"user " + RuntimeUser(), "group " + RuntimeGroup()}
-	desiredHookLines := append([]string{}, hookLines...)
-	desiredHookLines = append(desiredHookLines, HookEnvDirectives()...)
-	desiredHookLines = append(desiredHookLines, runtimeLines...)
-	if len(toAdd) == 0 && hooksAlreadyCurrent(string(data), desiredHookLines) {
+	managed := append([]string{}, HardeningDirectives()...)
+	managed = append(managed,
+		"duplicate-cn",
+		"crl-verify "+fsx.CRLFile(),
+		"status "+configValue(fsx.StatusFile())+" 5",
+	)
+	managed = append(managed,
+		"client-connect \""+ht["client-connect"]+"\"",
+		"client-disconnect \""+ht["client-disconnect"]+"\"",
+	)
+	managed = append(managed, HookEnvDirectives()...)
+	managed = append(managed, "user "+RuntimeUser(), "group "+RuntimeGroup())
+
+	if managedCurrent(string(data), managed) {
 		return false, nil
 	}
-	owned := map[string]bool{}
-	for _, line := range desiredHookLines {
+	owned := make(map[string]bool, len(managed))
+	for _, line := range managed {
 		owned[directiveKey(line)] = true
 	}
-	outLines := []string{}
-	for _, l := range strings.Split(string(data), "\n") {
-		if owned[directiveKey(l)] {
+	out := make([]string, 0, len(managed)+16)
+	for _, line := range strings.Split(string(data), "\n") {
+		if strings.TrimSpace(line) == "" || owned[directiveKey(line)] {
 			continue
 		}
-		outLines = append(outLines, l)
+		out = append(out, line)
 	}
-	outLines = append(outLines, hookLines...)
-	outLines = append(outLines, HookEnvDirectives()...)
-	outLines = append(outLines, runtimeLines...)
-	outLines = append(outLines, toAdd...)
-	if err := fsx.WriteFileAtomic(fsx.ServerConf(), []byte(strings.Join(outLines, "\n")+"\n"), 0o644); err != nil {
+	out = append(out, managed...)
+	if err := fsx.WriteFileAtomic(fsx.ServerConf(), []byte(strings.Join(out, "\n")+"\n"), 0o644); err != nil {
 		return false, err
 	}
 	return true, nil
 }
 
+// managedCurrent reports whether every managed directive appears exactly once
+// with the desired value. A duplicate counts as drift, so the rewrite collapses
+// it instead of appending another copy.
+func managedCurrent(data string, managed []string) bool {
+	counts := map[string]int{}
+	values := map[string]string{}
+	for _, line := range strings.Split(data, "\n") {
+		key := directiveKey(line)
+		if key == "" {
+			continue
+		}
+		counts[key]++
+		values[key] = strings.TrimSpace(line)
+	}
+	for _, want := range managed {
+		key := directiveKey(want)
+		if counts[key] != 1 || values[key] != want {
+			return false
+		}
+	}
+	return true
+}
+
+// directiveKey names the slot a directive occupies: the whole `setenv KEY`
+// pair for setenv lines (the value is the payload, not the slot), the first
+// word otherwise. Values are compared separately.
 func EnsureClientTemplate() error {
 	template := filepath.Join(fsx.OpenVPNRoot(), "server", "client-common.txt")
 	if info, err := os.Lstat(template); err == nil {
@@ -344,23 +354,6 @@ func configValue(value string) string {
 		return strconv.Quote(value)
 	}
 	return value
-}
-
-func hooksAlreadyCurrent(data string, desired []string) bool {
-	counts := map[string]int{}
-	values := map[string]string{}
-	for _, line := range strings.Split(data, "\n") {
-		key := directiveKey(line)
-		counts[key]++
-		values[key] = strings.TrimSpace(line)
-	}
-	for _, d := range desired {
-		key := directiveKey(d)
-		if counts[key] != 1 || values[key] != d {
-			return false
-		}
-	}
-	return true
 }
 
 func directiveKey(line string) string {

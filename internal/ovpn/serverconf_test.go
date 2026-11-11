@@ -356,3 +356,54 @@ func TestEnsureServerConfRepairsExactlyOwnedDirectives(t *testing.T) {
 		})
 	}
 }
+
+// A changed port must replace the old management/setenv lines, not append a
+// second pair. The previous "add if missing" merge left both, so hooks read a
+// port the server was not listening on.
+func TestEnsureServerConfReplacesStaleManagedLines(t *testing.T) {
+	dir := t.TempDir()
+	t.Setenv("OVNODE_OPENVPN_ROOT", dir)
+	t.Setenv("OVNODE_DATA_DIR", filepath.Join(dir, "data"))
+	t.Setenv("OVNODE_LOG_DIR", filepath.Join(dir, "log"))
+	t.Setenv("OVNODE_MANAGEMENT_PORT", "7601")
+	t.Setenv("OVNODE_RUNTIME_USER", "root")
+	t.Setenv("OVNODE_RUNTIME_GROUP", "0")
+	if err := os.MkdirAll(filepath.Join(dir, "server"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	stale := "port 1194\nproto udp\n" +
+		"management 127.0.0.1 7505 /old/pass\n" +
+		"management 127.0.0.1 7505 /old/pass\n" +
+		"setenv OVNODE_MANAGEMENT_PORT 7505\n" +
+		"user stale\ngroup stale\n"
+	if err := os.WriteFile(fsx.ServerConf(), []byte(stale), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	changed, err := ensureServerConf()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !changed {
+		t.Fatal("configuration with stale managed lines was reported unchanged")
+	}
+	data, err := os.ReadFile(fsx.ServerConf())
+	if err != nil {
+		t.Fatal(err)
+	}
+	conf := string(data)
+	if got := strings.Count(conf, "\nmanagement "); got != 1 {
+		t.Errorf("management lines = %d, want 1\n%s", got, conf)
+	}
+	if !strings.Contains(conf, "management 127.0.0.1 7601 ") {
+		t.Errorf("management line does not carry the new port:\n%s", conf)
+	}
+	if !strings.Contains(conf, "setenv OVNODE_MANAGEMENT_PORT 7601") {
+		t.Errorf("setenv does not carry the new port:\n%s", conf)
+	}
+	if strings.Contains(conf, "7505") {
+		t.Errorf("stale port survived:\n%s", conf)
+	}
+	if !strings.Contains(conf, "user "+RuntimeUser()) || !strings.Contains(conf, "group "+RuntimeGroup()) {
+		t.Errorf("runtime user/group were not refreshed:\n%s", conf)
+	}
+}

@@ -39,11 +39,6 @@ func isPort(s string) bool {
 
 // validate mirrors validate_input.
 func (c *Config) validate() error {
-	if c.Local && c.DestDir != "" {
-		c.AppDir = c.DestDir
-		c.DataBase = filepath2(c.AppDir, "data")
-		c.resolveDirs()
-	}
 	if c.Port != "" && !isPort(c.Port) {
 		return &UsageError{fmt.Sprintf("Invalid service port: '%s'", c.Port)}
 	}

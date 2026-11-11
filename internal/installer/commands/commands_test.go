@@ -92,7 +92,7 @@ func TestWriteEnvShape(t *testing.T) {
 		"OVNODE_RUNTIME_USER=ovnode-vpn\n" +
 		"OVNODE_RUNTIME_GROUP=ovnode-vpn\n" +
 		"TLS_METHOD=selfsigned\n" +
-		"MANAGEMENT_PORT=7526\n" +
+		"OVNODE_MANAGEMENT_PORT=7526\n" +
 		"OVNODE_OPENVPN_ROOT=/var/lib/ovnode/openvpn\n" +
 		"OVNODE_NAT_CONF=/etc/default/ovnode-nat\n" +
 		"OVNODE_LOG_DIR=/var/log/ovnode\n" +
@@ -154,5 +154,54 @@ func TestInstallStateMatchesBash(t *testing.T) {
 	}
 	if got := c.InstallStateOf(af); got != StateNotADirectory {
 		t.Fatalf("not-a-directory = %q", got)
+	}
+}
+
+// --instance must move every derived path, not just the label: the previous
+// build kept /opt/ovnode and installed over the default instance.
+func TestInstanceFlagDerivesPaths(t *testing.T) {
+	t.Setenv("OVN_APP_DIR", "")
+	t.Setenv("OVN_DATA_BASE", "")
+	t.Setenv("OVN_OPENVPN_ROOT", "")
+	t.Setenv("OVN_LOG_DIR", "")
+	t.Setenv("OVN_INSTANCE", "")
+	c, action, err := Parse([]string{"install", "--instance", "udp443"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if action != "install" {
+		t.Fatalf("action = %q", action)
+	}
+	for _, tc := range []struct{ name, got, want string }{
+		{"instance", c.Instance, "udp443"},
+		{"app dir", c.AppDir, "/opt/udp443"},
+		{"data", c.DataBase, "/var/lib/udp443"},
+		{"openvpn", c.OpenVPNRoot, "/var/lib/udp443/openvpn"},
+		{"log", c.LogDir, "/var/log/udp443"},
+		{"service", c.Service, "udp443.service"},
+		{"nat", c.NatService, "udp443-nat.service"},
+	} {
+		if tc.got != tc.want {
+			t.Errorf("%s = %q, want %q", tc.name, tc.got, tc.want)
+		}
+	}
+	if c.MgmtPort < 7505 || c.MgmtPort > 7604 {
+		t.Errorf("mgmt port %d outside 7505-7604", c.MgmtPort)
+	}
+}
+
+// --dest must beat the derived app dir; the previous validate() re-derived it
+// and silently installed into /opt/<instance>.
+func TestDestFlagWins(t *testing.T) {
+	t.Setenv("OVN_APP_DIR", "")
+	c, _, err := Parse([]string{"install", "--local", "--dest", "/tmp/ovnode-dest-probe"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if c.AppDir != "/tmp/ovnode-dest-probe" {
+		t.Errorf("AppDir = %q, want /tmp/ovnode-dest-probe", c.AppDir)
+	}
+	if c.DataBase != "/tmp/ovnode-dest-probe/data" {
+		t.Errorf("DataBase = %q, want /tmp/ovnode-dest-probe/data", c.DataBase)
 	}
 }

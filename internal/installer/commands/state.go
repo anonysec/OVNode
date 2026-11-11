@@ -89,44 +89,51 @@ func FromEnv() *Config {
 		RuntimeUser:  os.Getenv("OVN_RUNTIME_USER"),
 		RuntimeGroup: os.Getenv("OVN_RUNTIME_GROUP"),
 	}
-	c.resolveDirs()
-	if c.Instance == "" {
-		c.Instance = "ovnode"
-	}
-	c.Service = c.Instance + ".service"
-	c.NatService = c.Instance + "-nat.service"
-	c.CLIName = c.Instance
+	c.finalize()
 	return c
 }
 
-func (c *Config) resolveDirs() {
+// finalize derives every path and name from the instance. It is idempotent
+// and never overwrites an explicit value (flag or environment), so it can run
+// once in FromEnv and again after the flags are parsed.
+func (c *Config) finalize() {
 	if c.Instance == "" {
 		c.Instance = "ovnode"
 	}
-	if v := os.Getenv("OVN_APP_DIR"); v != "" {
-		c.AppDir = v
-	} else {
-		c.AppDir = "/opt/" + c.Instance
+	if c.AppDir == "" {
+		if v := envOr("OVN_APP_DIR", ""); v != "" {
+			c.AppDir = v
+		} else {
+			c.AppDir = "/opt/" + c.Instance
+		}
 	}
-	if v := os.Getenv("OVN_DATA_BASE"); v != "" {
-		c.DataBase = v
-	} else {
-		c.DataBase = "/var/lib/" + c.Instance
+	if c.DataBase == "" {
+		if v := envOr("OVN_DATA_BASE", ""); v != "" {
+			c.DataBase = v
+		} else {
+			c.DataBase = "/var/lib/" + c.Instance
+		}
 	}
-	if v := os.Getenv("OVN_OPENVPN_ROOT"); v != "" {
-		c.OpenVPNRoot = v
-	} else {
-		c.OpenVPNRoot = "/var/lib/" + c.Instance + "/openvpn"
+	if c.OpenVPNRoot == "" {
+		if v := envOr("OVN_OPENVPN_ROOT", ""); v != "" {
+			c.OpenVPNRoot = v
+		} else {
+			c.OpenVPNRoot = "/var/lib/" + c.Instance + "/openvpn"
+		}
 	}
-	if v := os.Getenv("OVN_LOG_DIR"); v != "" {
-		c.LogDir = v
-	} else {
-		c.LogDir = "/var/log/" + c.Instance
+	if c.LogDir == "" {
+		if v := envOr("OVN_LOG_DIR", ""); v != "" {
+			c.LogDir = v
+		} else {
+			c.LogDir = "/var/log/" + c.Instance
+		}
 	}
 	// Management port: unique per instance to avoid conflicts on 127.0.0.1.
-	if v := os.Getenv("OVN_MGMT_PORT"); v != "" {
-		if n, err := strconv.Atoi(v); err == nil && n >= 1 && n <= 65535 {
-			c.MgmtPort = n
+	if c.MgmtPort == 0 {
+		if v := envOr("OVN_MGMT_PORT", ""); v != "" {
+			if n, err := strconv.Atoi(v); err == nil && n >= 1 && n <= 65535 {
+				c.MgmtPort = n
+			}
 		}
 	}
 	if c.MgmtPort == 0 {
@@ -137,6 +144,9 @@ func (c *Config) resolveDirs() {
 		}
 		c.MgmtPort = 7505 + (h % 100)
 	}
+	c.Service = c.Instance + ".service"
+	c.NatService = c.Instance + "-nat.service"
+	c.CLIName = c.Instance
 }
 
 // AgentBin mirrors bash AGENT_BIN.
