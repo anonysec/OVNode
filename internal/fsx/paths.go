@@ -27,6 +27,13 @@ func loadEnvFile() {
 		paths = append(paths, filepath.Join(d, ".env"))
 	}
 	paths = append(paths, "/opt/ovnode/.env", "/etc/openvpn/ovnode/.env", "/var/lib/ovnode/openvpn/.env")
+	// Instance-aware: search for any instance's .env (PasarGuard-style).
+	if matches, err := filepath.Glob("/opt/*/.env"); err == nil {
+		paths = append(paths, matches...)
+	}
+	if matches, err := filepath.Glob("/var/lib/*/openvpn/.env"); err == nil {
+		paths = append(paths, matches...)
+	}
 	for _, p := range paths {
 		data, err := os.ReadFile(p)
 		if err != nil {
@@ -92,21 +99,23 @@ func toUpper(s string) string {
 	return string(out)
 }
 
-const DefaultOpenVPNRoot = "/etc/openvpn"
+const DefaultOpenVPNRoot = "/var/lib/ovnode/openvpn"
+
+// InstanceName returns the ovnode instance name, defaulting to "ovnode".
+func InstanceName() string {
+	return envOr("OVNODE_INSTANCE", "ovnode")
+}
 
 func OpenVPNRoot() string {
-	// Backwards compat: existing installs keep /etc/openvpn.
 	if v := envOr("OVNODE_OPENVPN_ROOT", ""); v != "" {
 		return v
 	}
-	if _, err := os.Stat("/etc/openvpn/server/server.conf"); err == nil {
-		return DefaultOpenVPNRoot
-	}
-	return "/var/lib/ovnode/openvpn"
+	return "/var/lib/" + InstanceName() + "/openvpn"
 }
 
 func IsInstalledTree() bool {
-	return filepath.Clean(OpenVPNRoot()) == DefaultOpenVPNRoot
+	_, err := os.Stat(filepath.Join(OpenVPNRoot(), "server", "server.conf"))
+	return err == nil
 }
 
 func joinRoot(parts ...string) string {
@@ -133,7 +142,7 @@ func MgmtPassFile() string {
 }
 
 func StatusFile() string { return envOr("OVNODE_STATUS_FILE", joinRoot("server", "status.log")) }
-func LogDir() string     { return envOr("OVNODE_LOG_DIR", "/var/log/ovnode") }
+func LogDir() string     { return envOr("OVNODE_LOG_DIR", "/var/log/"+InstanceName()) }
 func LogFile() string    { return envOr("OVNODE_LOG_FILE", filepath.Join(LogDir(), "hook-events.log")) }
 
 func OVNodeDir() string {
@@ -146,7 +155,7 @@ func OVNodeDir() string {
 	if v := envOr("DATA_DIR", ""); v != "" {
 		return v
 	}
-	return "/var/lib/ovnode"
+	return "/var/lib/" + InstanceName()
 }
 
 func UsersDir() string {

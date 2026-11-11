@@ -307,7 +307,11 @@ func runProbeCheck() {
 	// Read the .env for the port and key.
 	appDir := os.Getenv("OVN_APP_DIR")
 	if appDir == "" {
-		appDir = "/opt/ovnode"
+		instance := os.Getenv("OVNODE_INSTANCE")
+		if instance == "" {
+			instance = "ovnode"
+		}
+		appDir = "/opt/" + instance
 	}
 	envGet := func(key string) string {
 		paths := []string{appDir + "/.env"}
@@ -315,6 +319,12 @@ func runProbeCheck() {
 			paths = append(paths, filepath.Dir(v)+"/.env")
 		}
 		paths = append(paths, "/etc/openvpn/ovnode/.env", "/var/lib/ovnode/openvpn/.env")
+		if matches, err := filepath.Glob("/opt/*/.env"); err == nil {
+			paths = append(paths, matches...)
+		}
+		if matches, err := filepath.Glob("/var/lib/*/openvpn/.env"); err == nil {
+			paths = append(paths, matches...)
+		}
 		for _, path := range paths {
 			data, err := os.ReadFile(path) // #nosec G304 G703 -- path from installed .env, not user input
 			if err != nil {
