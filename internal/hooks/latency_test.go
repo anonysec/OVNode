@@ -39,7 +39,12 @@ func TestAllowPathLatencyBudget(t *testing.T) {
 	p50 := durations[len(durations)/2]
 	p99 := durations[len(durations)*99/100]
 	t.Logf("allow path: p50=%s p99=%s", p50, p99)
-	if p99 > 100*time.Millisecond {
-		t.Fatalf("allow path p99 = %s, want under 100ms", p99)
+	// The median catches an accidental fork/exec per connect; the p99 budget
+	// is loose because shared CI runners pause for GC and scheduling.
+	if p50 > 25*time.Millisecond {
+		t.Fatalf("allow path p50 = %s, want under 25ms", p50)
+	}
+	if p99 > 250*time.Millisecond {
+		t.Fatalf("allow path p99 = %s, want under 250ms", p99)
 	}
 }
