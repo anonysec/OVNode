@@ -422,6 +422,10 @@ func Run() error {
 	s.KeyFile = key
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
+	// Clean up any stale tun devices left by previous (crashed) openvpn
+	// instances before spawning our own, so forwarding is not split across
+	// several devices sharing one subnet.
+	ovpn.CleanupStaleTunDevices()
 	// The agent now owns the OpenVPN daemon: ovnode.service forks openvpn as
 	// a child and respawns it in SuperviseOpenVPN. There is no second unit.
 	ovpn.SuperviseOpenVPN(ctx)
