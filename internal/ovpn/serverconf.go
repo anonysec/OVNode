@@ -9,6 +9,7 @@ import (
 	"io"
 	"os"
 	"path/filepath"
+	"slices"
 	"strconv"
 	"strings"
 
@@ -74,18 +75,17 @@ func randomHex(n int) string {
 	return string(out)
 }
 
-// MgmtLine returns the management directive.
-func MgmtLine() string {
-	port := ManagementPort()
-	return fmt.Sprintf("management 127.0.0.1 %d %s", port, configValue(fsx.MgmtPassFile()))
+// MgmtLine returns one protocol's management directive.
+func MgmtLine(proto string) string {
+	return fmt.Sprintf("management 127.0.0.1 %d %s", ManagementPort(proto), configValue(fsx.MgmtPassFile()))
 }
 
-func HardeningDirectives() []string {
+func HardeningDirectives(proto string) []string {
 	EnsureMgmtPassword()
 	return []string{
 		"remote-cert-tls client",
-		MgmtLine(),
-		"writepid " + fsx.PIDFile(),
+		MgmtLine(proto),
+		"writepid " + fsx.PIDFile(proto),
 		"script-security 2",
 		"status-version 3",
 	}
@@ -121,13 +121,12 @@ func ipv6Effective() (bool, string) {
 	return enabled, prefix
 }
 
-func FreshServerConf() string {
+func FreshServerConf(proto string) string {
 	if EnsureMgmtPassword() == "" {
 		return ""
 	}
 	cfg := currentSettings()
 	port := cfg.Port
-	proto := cfg.Protos()[0]
 	dnsServers := policy.DNSEffective(cfg.DNSPrimary, cfg.DNSSecondary)
 	user := RuntimeUser()
 	group := RuntimeGroup()
@@ -138,8 +137,8 @@ func FreshServerConf() string {
 	lines = append(lines, "proto "+proto)
 	lines = append(lines, "dev tun")
 	lines = append(lines, "topology subnet")
-	lines = append(lines, "server "+VPNNetwork()+" "+VPNNetmask())
-	lines = append(lines, fmt.Sprintf("ifconfig-pool-persist %s 600", filepath.Join(fsx.OpenVPNRoot(), "server", "ipp.txt")))
+	lines = append(lines, "server "+VPNNetworkFor(proto)+" "+VPNNetmask())
+	lines = append(lines, fmt.Sprintf("ifconfig-pool-persist %s 600", filepath.Join(fsx.ServerDir(proto), "ipp.txt")))
 	if cfg.RedirectGateway {
 		lines = append(lines, `push "redirect-gateway def1 bypass-dhcp"`)
 	}
@@ -184,7 +183,7 @@ func FreshServerConf() string {
 	lines = append(lines, "group "+group)
 	// Export non-secret effective hook settings to the dropped-UID hooks via
 	// OpenVPN setenv directives, so they do not need to read the private .env.
-	lines = append(lines, HookEnvDirectives()...)
+	lines = append(lines, HookEnvDirectives(proto)...)
 	lines = append(lines, "persist-key")
 	lines = append(lines, "persist-tun")
 	// Quote the hook path because it contains a space ("ovnode hook connect")
@@ -192,11 +191,11 @@ func FreshServerConf() string {
 	lines = append(lines, "client-disconnect \""+ht["client-disconnect"]+"\"")
 	lines = append(lines, "client-config-dir "+filepath.Join(fsx.OpenVPNRoot(), "ccd"))
 	lines = append(lines, "crl-verify "+fsx.CRLFile())
-	lines = append(lines, "status "+configValue(fsx.StatusFile())+" 5")
-	lines = append(lines, "log-append "+filepath.Join(fsx.OpenVPNRoot(), "server", "openvpn.log"))
-	lines = append(lines, "cd "+filepath.Join(fsx.OpenVPNRoot(), "server"))
+	lines = append(lines, "status "+configValue(fsx.StatusFile(proto))+" 5")
+	lines = append(lines, "log-append "+fsx.OpenVPNLog(proto))
+	lines = append(lines, "cd "+fsx.ServerDir(proto))
 
-	lines = append(lines, HardeningDirectives()...)
+	lines = append(lines, HardeningDirectives(proto)...)
 
 	if cfg.ClientToClient {
 		lines = append(lines, "client-to-client")
@@ -232,49 +231,68 @@ func upperCiphers(list string) string {
 	return strings.Join(parts, ":")
 }
 
+// EnsureServerConf regenerates the configuration for every selected protocol
+// and removes a stale configuration for a protocol that is no longer in use.
 func EnsureServerConf() bool {
-	changed, _ := ensureServerConf()
+	changed := false
+	protos := currentSettings().Protos()
+	for _, proto := range protos {
+		if c, _ := ensureServerConf(proto); c {
+			changed = true
+		}
+	}
+	for _, proto := range []string{"udp", "tcp"} {
+		if !slices.Contains(protos, proto) {
+			if err := os.Remove(fsx.ServerConf(proto)); err == nil {
+				changed = true
+			}
+		}
+	}
 	return changed
 }
 
-func ensureServerConf() (bool, error) {
+func ensureServerConf(proto string) (bool, error) {
 	if EnsureMgmtPassword() == "" {
 		return false, fmt.Errorf("management password unavailable at %s", fsx.MgmtPassFile())
 	}
-	if _, err := os.Lstat(fsx.ServerConf()); os.IsNotExist(err) {
-		data := FreshServerConf()
+	confPath := fsx.ServerConf(proto)
+	if _, err := os.Lstat(confPath); os.IsNotExist(err) {
+		data := FreshServerConf(proto)
 		if data == "" {
 			return false, fmt.Errorf("server configuration could not be generated")
 		}
-		if err := fsx.WriteFileAtomic(fsx.ServerConf(), []byte(data), 0o644); err != nil {
+		if err := os.MkdirAll(fsx.ServerDir(proto), 0o750); err != nil {
+			return false, err
+		}
+		if err := fsx.WriteFileAtomic(confPath, []byte(data), 0o644); err != nil {
 			return false, err
 		}
 		return true, nil
 	} else if err != nil {
 		return false, err
 	}
-	data, err := os.ReadFile(fsx.ServerConf())
+	data, err := os.ReadFile(confPath)
 	if err != nil {
 		return false, err
 	}
 
 	// The agent owns these directives outright: their values come from the
-	// instance (paths, ports, runtime user), so a stale line is replaced, not
-	// appended to. This is what keeps a port change from leaving a second
-	// management or setenv line behind.
+	// instance and the protocol (paths, ports, runtime user), so a stale line
+	// is replaced, not appended to. This is what keeps a port change from
+	// leaving a second management or setenv line behind.
 	ht := HookTargets()
-	managed := append([]string{}, HardeningDirectives()...)
+	managed := append([]string{}, HardeningDirectives(proto)...)
 	managed = append(managed, "tls-version-min "+currentSettings().TLSMin)
 	managed = append(managed,
 		"duplicate-cn",
 		"crl-verify "+fsx.CRLFile(),
-		"status "+configValue(fsx.StatusFile())+" 5",
+		"status "+configValue(fsx.StatusFile(proto))+" 5",
 	)
 	managed = append(managed,
 		"client-connect \""+ht["client-connect"]+"\"",
 		"client-disconnect \""+ht["client-disconnect"]+"\"",
 	)
-	managed = append(managed, HookEnvDirectives()...)
+	managed = append(managed, HookEnvDirectives(proto)...)
 	managed = append(managed, "user "+RuntimeUser(), "group "+RuntimeGroup())
 
 	if managedCurrent(string(data), managed) {
@@ -292,7 +310,7 @@ func ensureServerConf() (bool, error) {
 		out = append(out, line)
 	}
 	out = append(out, managed...)
-	if err := fsx.WriteFileAtomic(fsx.ServerConf(), []byte(strings.Join(out, "\n")+"\n"), 0o644); err != nil {
+	if err := fsx.WriteFileAtomic(confPath, []byte(strings.Join(out, "\n")+"\n"), 0o644); err != nil {
 		return false, err
 	}
 	return true, nil
@@ -324,43 +342,41 @@ func managedCurrent(data string, managed []string) bool {
 // directiveKey names the slot a directive occupies: the whole `setenv KEY`
 // pair for setenv lines (the value is the payload, not the slot), the first
 // word otherwise. Values are compared separately.
+// EnsureClientTemplate writes the shared client template. Every profile uses
+// <connection> blocks: one for a single-protocol node, two for "both", so the
+// same profile works whether UDP or TCP is reachable. The panel substitutes
+// the real address for "auto" at download time.
 func EnsureClientTemplate() error {
-	template := filepath.Join(fsx.OpenVPNRoot(), "server", "client-common.txt")
-	if info, err := os.Lstat(template); err == nil {
-		if !info.Mode().IsRegular() {
-			return fmt.Errorf("non-regular client template at %s", template)
-		}
-		return nil
-	} else if !os.IsNotExist(err) {
-		return err
+	template := fsx.ClientTemplate()
+	if info, err := os.Lstat(template); err == nil && !info.Mode().IsRegular() {
+		return fmt.Errorf("non-regular client template at %s", template)
 	}
-	if err := os.MkdirAll(filepath.Dir(template), 0o755); err != nil {
-		return err
-	}
-	proto := FreshProto()
-	port := OpenVPNPort()
+	cfg := currentSettings()
+	port := cfg.Port
 	tunnelAddr := Get("TunnelAddress", "")
-	if tunnelAddr == "" {
-		// Fallback: try to read from config
-		data, err := os.ReadFile(fsx.ServerConf())
-		if err != nil {
-			return err
-		}
-		for _, line := range strings.Split(string(data), "\n") {
-			if strings.HasPrefix(strings.TrimSpace(line), "remote ") {
-				parts := strings.Fields(line)
-				if len(parts) >= 2 {
-					tunnelAddr = parts[1]
-					break
-				}
-			}
-		}
-	}
 	if tunnelAddr == "" {
 		tunnelAddr = "auto"
 	}
 
-	tmpl := "client\ndev tun\nproto " + proto + "\n" + RemoteLines(tunnelAddr, port) + "\nresolv-retry infinite\nnobind\npersist-key\npersist-tun\nremote-cert-tls server\ntls-version-min 1.3\nauth SHA256\ndata-ciphers AES-128-GCM:AES-256-GCM:CHACHA20-POLY1305\ncipher AES-128-GCM\nignore-unknown-option block-outside-dns\nblock-outside-dns\nverb 3\n"
+	var blocks strings.Builder
+	for _, proto := range cfg.Protos() {
+		blocks.WriteString("<connection>\n")
+		blocks.WriteString("remote " + tunnelAddr + " " + itoaStr(port) + " " + proto + "\n")
+		blocks.WriteString("</connection>\n")
+	}
+	tmpl := "client\ndev tun\n" + blocks.String() +
+		"resolv-retry infinite\nnobind\npersist-key\npersist-tun\n" +
+		"remote-cert-tls server\ntls-version-min " + cfg.TLSMin + "\n" +
+		"auth SHA256\ndata-ciphers " + upperCiphers(cfg.DataCiphers()) + "\n" +
+		"cipher " + upperCiphers(cfg.CipherFirst) + "\n" +
+		"ignore-unknown-option block-outside-dns\nblock-outside-dns\nverb 3\n"
+
+	if current, err := os.ReadFile(template); err == nil && string(current) == tmpl {
+		return nil
+	}
+	if err := os.MkdirAll(filepath.Dir(template), 0o755); err != nil {
+		return err
+	}
 	return fsx.WriteFileAtomic(template, []byte(tmpl), 0o644)
 }
 
@@ -371,13 +387,13 @@ func itoaStr(n int) string {
 // HookEnvDirectives exports non-secret effective hook settings via OpenVPN
 // setenv directives, so the dropped-UID hooks receive them as environment
 // variables without reading the private .env.
-func HookEnvDirectives() []string {
+func HookEnvDirectives(proto string) []string {
 	cfg := config.HookFromEnv()
 	settings := [][2]string{
 		{"OpenVpnRoot", cfg.OpenVPNRoot}, {"DataDir", fsx.OVNodeDir()},
 		{"UsersDir", cfg.UsersDir}, {"SessionsDir", cfg.SessionsDir}, {"UsageDir", cfg.UsageDir},
-		{"StatusFile", cfg.StatusFile}, {"LogDir", cfg.LogDir}, {"LogFile", cfg.LogFile},
-		{"ManagementHost", cfg.MgmtHost}, {"ManagementPort", itoaStr(cfg.MgmtPort)}, {"MgmtPassFile", cfg.MgmtPassFile},
+		{"StatusFile", fsx.StatusFile(proto)}, {"LogDir", cfg.LogDir}, {"LogFile", cfg.LogFile},
+		{"ManagementHost", cfg.MgmtHost}, {"ManagementPort", itoaStr(ManagementPort(proto))}, {"MgmtPassFile", cfg.MgmtPassFile},
 		{"AllowRemoteMgmt", fsx.Get("AllowRemoteMgmt", "0")},
 		{"RuntimeUser", RuntimeUser()}, {"RuntimeGroup", RuntimeGroup()}, {"SessionTtlSeconds", itoaStr(cfg.SessionTTL)},
 	}

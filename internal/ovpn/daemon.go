@@ -12,6 +12,7 @@ import (
 	"syscall"
 	"time"
 
+	"ovnode/internal/fsx"
 	"ovnode/internal/logging"
 	"ovnode/internal/pki"
 )
@@ -21,18 +22,22 @@ import (
 // Before OpenVPN ran as a separate unit; now it is a child of the agent and
 // is respawned by SuperviseOpenVPN. There is no separate unit to restart.
 func SuperviseOpenVPN(ctx context.Context) bool {
-	conf := settingFile()
 	if _, err := exec.LookPath("openvpn"); err != nil {
-		return false
-	}
-	if _, err := os.Stat(conf); err != nil {
 		return false
 	}
 	if !pki.IsInstalledTree() {
 		return false
 	}
-	go supervise(ctx, conf)
-	return true
+	started := false
+	for _, proto := range currentSettings().Protos() {
+		conf := fsx.ServerConf(proto)
+		if _, err := os.Stat(conf); err != nil {
+			continue
+		}
+		go supervise(ctx, conf)
+		started = true
+	}
+	return started
 }
 
 type logLineWriter struct{ buf strings.Builder }

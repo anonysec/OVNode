@@ -63,7 +63,7 @@ func TestReadConfigReadsTheTree(t *testing.T) {
 	root := t.TempDir()
 	t.Setenv("OpenVpnRoot", root)
 	t.Setenv("DataDir", root+"/ovnode-data")
-	serverDir := filepath.Join(root, "server")
+	serverDir := filepath.Join(root, "server", "udp")
 	if err := os.MkdirAll(serverDir, 0o755); err != nil {
 		t.Fatal(err)
 	}
@@ -72,7 +72,7 @@ func TestReadConfigReadsTheTree(t *testing.T) {
 		t.Fatal(err)
 	}
 	template := "client\ndev tun\nproto udp\nremote vpn.example.com 1195\n"
-	if err := os.WriteFile(filepath.Join(serverDir, "client-common.txt"), []byte(template), 0o644); err != nil {
+	if err := os.WriteFile(filepath.Join(root, "server", "client-common.txt"), []byte(template), 0o644); err != nil {
 		t.Fatal(err)
 	}
 	cfg := ReadConfig()
@@ -96,7 +96,7 @@ func TestTreeOpenVPNRunningIgnoresForeignInstances(t *testing.T) {
 	root := t.TempDir()
 	t.Setenv("OpenVpnRoot", root)
 	t.Setenv("DataDir", root+"/ovnode-data")
-	serverDir := filepath.Join(root, "server")
+	serverDir := filepath.Join(root, "server", "udp")
 	if err := os.MkdirAll(serverDir, 0o755); err != nil {
 		t.Fatal(err)
 	}

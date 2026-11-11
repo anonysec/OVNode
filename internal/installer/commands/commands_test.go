@@ -8,6 +8,8 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+
+	"ovnode/internal/settings"
 )
 
 // TestParseMatchesBashContract pins the flag/env surfaces that Stage 2
@@ -257,5 +259,36 @@ func TestEnvExampleMatchesWriter(t *testing.T) {
 	}
 	for key := range documented {
 		t.Errorf("env.example documents %s, which the installer no longer writes", key)
+	}
+}
+
+// Install seeds the settings file from the flags; .env no longer carries any
+// OpenVPN tuning.
+func TestWriteSettingsSeedsTheModel(t *testing.T) {
+	dir := t.TempDir()
+	t.Setenv("AppDir", dir)
+	t.Setenv("DataDir", filepath.Join(dir, "data"))
+	cfg := &Config{
+		Instance: "ovnode", AppDir: dir, DataBase: filepath.Join(dir, "data"),
+		Port: "2083", APIKey: "0123456789abcdef", NodeName: "node",
+		Proto: "both", VPNSport: "443", ExtraPorts: "8443", IPv6: true,
+		RuntimeUser: "nobody", RuntimeGroup: "nogroup",
+	}
+	cfg.finalize()
+	if err := cfg.writeSettings(); err != nil {
+		t.Fatal(err)
+	}
+	s, err := settings.LoadFrom(filepath.Join(dir, "data", "state", "openvpn.json"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if s.Protocol != "both" || s.Port != 443 {
+		t.Fatalf("settings = protocol %q port %d", s.Protocol, s.Port)
+	}
+	if len(s.ExtraPorts) != 1 || s.ExtraPorts[0] != 8443 {
+		t.Fatalf("extra ports = %v", s.ExtraPorts)
+	}
+	if !s.IPv6Enabled {
+		t.Fatal("ipv6 flag was not seeded")
 	}
 }

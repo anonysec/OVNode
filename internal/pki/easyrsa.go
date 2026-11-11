@@ -80,6 +80,11 @@ func EnsureDirTree() error {
 	if err := os.MkdirAll(PKIDir(), 0o755); err != nil {
 		return err
 	}
+	for _, dir := range fsx.RequiredDirs() {
+		if err := os.MkdirAll(dir, 0o755); err != nil {
+			return err
+		}
+	}
 	subdirs := []string{
 		"private",
 		"issued",

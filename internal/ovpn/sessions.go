@@ -23,9 +23,36 @@ import (
 // which changes on every reconnect. Real-address matching is kept only as a
 // fallback for markers that predate pool-IP keying.
 
-// StatusFile returns the path of the OpenVPN status file.
+// StatusFiles returns one status file per selected protocol.
+func StatusFiles() []string {
+	protos := currentSettings().Protos()
+	out := make([]string, 0, len(protos))
+	for _, proto := range protos {
+		out = append(out, fsx.StatusFile(proto))
+	}
+	return out
+}
+
+// StatusFile returns the primary protocol's status file.
 func StatusFile() string {
-	return fsx.StatusFile()
+	return fsx.StatusFile(currentSettings().Protos()[0])
+}
+
+// AllSessions merges the live sessions of every protocol.
+func AllSessions() []Session {
+	seen := map[string]bool{}
+	var out []Session
+	for _, file := range StatusFiles() {
+		for _, session := range ParseSessions(file) {
+			key := session.CommonName + "\x00" + session.VirtualAddress + "\x00" + session.ClientID
+			if seen[key] {
+				continue
+			}
+			seen[key] = true
+			out = append(out, session)
+		}
+	}
+	return out
 }
 
 // marker is one session marker on disk.
@@ -154,7 +181,7 @@ func (m marker) markerRow() map[string]any {
 //   - events             — the classified events (ts, cn, action, severity,
 //     reason, peer); only "failure" is a real auth or TLS problem
 func UserDiagnostics(commonName string, hours int) map[string]any {
-	sessions := ParseSessions(StatusFile())
+	sessions := AllSessions()
 	idx := newLiveIndex(sessions)
 	markers := readMarkers()
 
@@ -397,10 +424,13 @@ func probeManagement() bool {
 	if !OpenVPNIsRunning() {
 		return false
 	}
-	conn, err := dialManagement()
-	if err != nil {
-		return false
+	for _, port := range managementTargets() {
+		conn, err := dialManagement(port)
+		if err != nil {
+			continue
+		}
+		conn.Close()
+		return true
 	}
-	conn.Close()
-	return true
+	return false
 }

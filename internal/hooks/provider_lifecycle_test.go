@@ -49,7 +49,7 @@ func TestProviderDisableAndDeletePreserveFinalBanking(t *testing.T) {
 			if err := os.WriteFile(tr.status, []byte(status), 0o644); err != nil {
 				t.Fatal(err)
 			}
-			if err := os.WriteFile(pki.PIDFile(), []byte(strconv.Itoa(os.Getpid())), 0o600); err != nil {
+			if err := os.WriteFile(pki.PIDFile("udp"), []byte(strconv.Itoa(os.Getpid())), 0o600); err != nil {
 				t.Fatal(err)
 			}
 			markerPath := filepath.Join(tr.sessions, "alice.10.66.0.2")

@@ -83,7 +83,7 @@ func (c *Config) validate() error {
 		proto = "udp"
 	}
 	switch proto {
-	case "udp", "tcp":
+	case "udp", "tcp", "both":
 	default:
 		return &UsageError{fmt.Sprintf("Invalid transport '%s' (use udp or tcp)", c.Proto)}
 	}

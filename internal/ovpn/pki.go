@@ -98,8 +98,10 @@ func InitPKI() error {
 	if err := pki.GenTLSKey(); err != nil {
 		return err
 	}
-	if _, err := ensureServerConf(); err != nil {
-		return err
+	for _, proto := range currentSettings().Protos() {
+		if _, err := ensureServerConf(proto); err != nil {
+			return err
+		}
 	}
 	if err := EnsureClientTemplate(); err != nil {
 		return err

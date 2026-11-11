@@ -15,12 +15,38 @@ import (
 	"ovnode/internal/store"
 )
 
+// readAllStatus merges the status snapshots of every protocol. The newest
+// UpdatedAt wins; sessions are additive because each protocol has its own
+// pool.
+func readAllStatus() (StatusSnapshot, error) {
+	combined := StatusSnapshot{Sessions: []Session{}, Complete: true}
+	found := false
+	for _, file := range StatusFiles() {
+		snap, err := ReadStatusSnapshot(file)
+		if err != nil {
+			if os.IsNotExist(err) {
+				continue
+			}
+			return StatusSnapshot{}, err
+		}
+		found = true
+		combined.Sessions = append(combined.Sessions, snap.Sessions...)
+		if snap.UpdatedAt > combined.UpdatedAt {
+			combined.UpdatedAt = snap.UpdatedAt
+		}
+	}
+	if !found {
+		return StatusSnapshot{}, os.ErrNotExist
+	}
+	return combined, nil
+}
+
 // UsersUsage returns the per-user traffic counters in the shape the panel
 // consumes. It records each live session's observed bytes (session lock
 // before usage lock) and reports totals from the authoritative persisted
 // counter only — the live snapshot is never added a second time.
 func UsersUsage() (map[string]any, error) {
-	snap, err := ReadStatusSnapshot(StatusFile())
+	snap, err := readAllStatus()
 	if err != nil {
 		return nil, err
 	}

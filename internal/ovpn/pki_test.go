@@ -63,7 +63,7 @@ func TestInitPKIFreshTree(t *testing.T) {
 			t.Errorf("fresh PKI material %s: bytes=%d error=%v", path, len(data), err)
 		}
 	}
-	conf, err := os.ReadFile(fsx.ServerConf())
+	conf, err := os.ReadFile(fsx.ServerConf("udp"))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -153,7 +153,7 @@ func TestInitPKIReportsBlockedTargets(t *testing.T) {
 			if err := InitPKI(); err != nil {
 				t.Fatal(err)
 			}
-			path := map[string]string{"ccd": filepath.Join(pki.OpenVPNRoot(), "ccd"), "vars": filepath.Join(pki.EasyRSADir(), "vars"), "tls-key": pki.TLSKey(), "server-conf": fsx.ServerConf(), "template": pki.ClientTemplate(), "missing-index": filepath.Join(pki.PKIDir(), "index.txt")}[target]
+			path := map[string]string{"ccd": filepath.Join(pki.OpenVPNRoot(), "ccd"), "vars": filepath.Join(pki.EasyRSADir(), "vars"), "tls-key": pki.TLSKey(), "server-conf": fsx.ServerConf("udp"), "template": pki.ClientTemplate(), "missing-index": filepath.Join(pki.PKIDir(), "index.txt")}[target]
 			if err := os.Remove(path); err != nil {
 				t.Fatal(err)
 			}

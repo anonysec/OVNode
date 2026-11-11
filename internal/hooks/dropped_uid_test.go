@@ -68,6 +68,7 @@ func TestHookConnectDroppedUID(t *testing.T) {
 	for _, d := range []string{
 		filepath.Join(openvpnRoot, "server", "pki", "private"),
 		filepath.Join(openvpnRoot, "server", "pki", "issued"),
+		filepath.Join(openvpnRoot, "server", "udp"),
 		filepath.Join(dataDir, "users"),
 		filepath.Join(dataDir, "sessions"),
 		filepath.Join(dataDir, "usage"),

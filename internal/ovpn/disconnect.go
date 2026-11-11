@@ -18,7 +18,7 @@ import (
 // must not be disconnected by a stale-marker sweep, and a live session must
 // never be killed because of a marker.
 func DisconnectUser(cn string, onlyStale bool) (removed []string, killed int, mgmt map[string]any) {
-	sessions := ParseSessions(StatusFile())
+	sessions := AllSessions()
 	idx := newLiveIndex(sessions)
 
 	killOK := false

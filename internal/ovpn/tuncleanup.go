@@ -14,7 +14,10 @@ import (
 // one did not clean up), and several devices sharing one subnet break
 // forwarding. Safe to call once at agent startup, before SuperviseOpenVPN.
 func CleanupStaleTunDevices() {
-	gw := strings.TrimSuffix(VPNNetwork(), ".0") + ".1"
+	gateways := map[string]bool{}
+	for _, proto := range currentSettings().Protos() {
+		gateways[strings.TrimSuffix(VPNNetworkFor(proto), ".0")+".1"] = true
+	}
 	out, err := exec.Command("ip", "-o", "addr", "show").Output()
 	if err != nil {
 		return
@@ -30,8 +33,13 @@ func CleanupStaleTunDevices() {
 			continue
 		}
 		for i := 0; i+1 < len(fields); i++ {
-			if (fields[i] == "inet" || fields[i] == "inet6") && strings.HasPrefix(fields[i+1], gw+"/") {
-				seen[dev] = true
+			if fields[i] != "inet" && fields[i] != "inet6" {
+				continue
+			}
+			for gw := range gateways {
+				if strings.HasPrefix(fields[i+1], gw+"/") {
+					seen[dev] = true
+				}
 			}
 		}
 	}

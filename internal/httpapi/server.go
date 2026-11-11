@@ -422,6 +422,13 @@ func Run() error {
 	s.KeyFile = key
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
+	// Re-render every selected protocol's configuration from settings and the
+	// client template before starting anything: this is how a protocol change
+	// or a template edit survives a restart.
+	ovpn.EnsureServerConf()
+	if err := ovpn.EnsureClientTemplate(); err != nil {
+		return fmt.Errorf("client template: %w", err)
+	}
 	// Clean up any stale tun devices left by previous (crashed) openvpn
 	// instances before spawning our own, so forwarding is not split across
 	// several devices sharing one subnet.

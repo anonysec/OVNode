@@ -12,12 +12,12 @@ func TestChangeConfigMultiPortIdempotent(t *testing.T) {
 	t.Setenv("OpenVpnRoot", root)
 	t.Setenv("DataDir", root+"/ovnode-data")
 	t.Setenv("NatConf", filepath.Join(root, "absent-nat-conf"))
-	serverDir := filepath.Join(root, "server")
+	serverDir := filepath.Join(root, "server", "udp")
 	os.MkdirAll(serverDir, 0o755)
 	conf := "port 1194\nproto udp\ndev tun\n"
 	os.WriteFile(filepath.Join(serverDir, "server.conf"), []byte(conf), 0o644)
 	tmpl := "client\ndev tun\nproto udp\nremote 10.0.0.1 1194\nverb 3\n"
-	os.WriteFile(filepath.Join(serverDir, "client-common.txt"), []byte(tmpl), 0o644)
+	os.WriteFile(filepath.Join(root, "server", "client-common.txt"), []byte(tmpl), 0o644)
 
 	req := ChangeConfigRequest{
 		OVPNPort:      1194,
@@ -29,14 +29,14 @@ func TestChangeConfigMultiPortIdempotent(t *testing.T) {
 	if err != nil {
 		t.Fatalf("first change failed: %v", err)
 	}
-	first, _ := os.ReadFile(filepath.Join(serverDir, "client-common.txt"))
+	first, _ := os.ReadFile(filepath.Join(root, "server", "client-common.txt"))
 	if !strings.Contains(string(first), "remote vpn.example.com 1195") || !strings.Contains(string(first), "remote vpn.example.com 1196") {
 		t.Fatalf("missing extra remote lines:\n%s", string(first))
 	}
 	if _, err := ChangeConfig(req); err != nil {
 		t.Fatalf("second change failed: %v", err)
 	}
-	second, _ := os.ReadFile(filepath.Join(serverDir, "client-common.txt"))
+	second, _ := os.ReadFile(filepath.Join(root, "server", "client-common.txt"))
 	if string(first) != string(second) {
 		t.Fatalf("not idempotent:\nfirst:\n%s\nsecond:\n%s", string(first), string(second))
 	}
@@ -48,7 +48,7 @@ func setupConfigTree(t *testing.T) (string, string) {
 	t.Setenv("OpenVpnRoot", root)
 	t.Setenv("DataDir", root+"/ovnode-data")
 	t.Setenv("NatConf", filepath.Join(root, "absent-nat-conf"))
-	serverDir := filepath.Join(root, "server")
+	serverDir := filepath.Join(root, "server", "udp")
 	if err := os.MkdirAll(serverDir, 0o755); err != nil {
 		t.Fatal(err)
 	}
@@ -99,7 +99,7 @@ func TestChangeConfigIdenticalPushIsNoop(t *testing.T) {
 	t.Setenv("OpenVpnRoot", root)
 	t.Setenv("DataDir", root+"/ovnode-data")
 	t.Setenv("NatConf", filepath.Join(root, "absent-nat-conf"))
-	serverDir := filepath.Join(root, "server")
+	serverDir := filepath.Join(root, "server", "udp")
 	if err := os.MkdirAll(serverDir, 0o755); err != nil {
 		t.Fatal(err)
 	}

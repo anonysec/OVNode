@@ -15,8 +15,10 @@ import (
 	"testing"
 	"time"
 
+	"ovnode/internal/config"
 	"ovnode/internal/fsx"
 	"ovnode/internal/pki"
+	"ovnode/internal/settings"
 	"ovnode/internal/store"
 )
 
@@ -124,7 +126,7 @@ func TestRestartChecksPermissionsBeforeControl(t *testing.T) {
 	t.Setenv("DataDir", filepath.Join(dir, "data"))
 	t.Setenv("RuntimeGroup", "invalid-ovnode-fixture-group")
 	pki.EnsureDirTree()
-	if err := os.WriteFile(fsx.ServerConf(), []byte("dev tun\n"), 0o644); err != nil {
+	if err := os.WriteFile(fsx.ServerConf("udp"), []byte("dev tun\n"), 0o644); err != nil {
 		t.Fatal(err)
 	}
 	if RestartOpenVPN() {
@@ -150,15 +152,20 @@ func TestManagementPortMatchesHookFallback(t *testing.T) {
 	dir := t.TempDir()
 	t.Setenv("LogDir", dir)
 	t.Setenv("LogFile", filepath.Join(dir, "events.log"))
-	for _, port := range []string{"0", "65536", "invalid", "7506"} {
-		t.Setenv("ManagementPort", port)
-		want := 7505
-		if port == "7506" {
-			want = 7506
-		}
-		if got := ManagementPort(); got != want {
-			t.Errorf("management port %q=%d, want hook fallback %d", port, got, want)
-		}
+	t.Setenv("ManagementPort", "7506")
+	if got := ManagementPort("udp"); got != 7506 {
+		t.Errorf("management port = %d, want 7506", got)
+	}
+	if got := config.HookFromEnv().MgmtPort; got != 7506 {
+		t.Errorf("hook fallback = %d, want 7506", got)
+	}
+	t.Setenv("ManagementPort", "")
+	derived := ManagementPort("udp")
+	if derived < 7505 || derived > 7604 {
+		t.Errorf("derived port %d outside 7505-7604", derived)
+	}
+	if got := config.HookFromEnv().MgmtPort; got != 7505 {
+		t.Errorf("hook fallback without a setenv = %d, want 7505", got)
 	}
 }
 
@@ -190,7 +197,7 @@ func TestHookEnvironmentExportsEffectiveOverrides(t *testing.T) {
 	t.Setenv("SessionTtlSeconds", "120")
 	t.Setenv("AllowRemoteMgmt", "1")
 	t.Setenv("ApiKey", "private-fixture-api-key")
-	got := strings.Join(HookEnvDirectives(), "\n")
+	got := strings.Join(HookEnvDirectives("udp"), "\n")
 	for key, value := range map[string]string{
 		"StatusFile": filepath.Join(dir, "custom-status"), "MgmtPassFile": filepath.Join(dir, "custom-password"),
 		"LogDir": filepath.Join(dir, "logs"), "LogFile": filepath.Join(dir, "logs", "custom.log"), "SessionTtlSeconds": "120",
@@ -233,9 +240,9 @@ func TestFreshServerConfOnlyRealOptions(t *testing.T) {
 	dir := t.TempDir()
 	t.Setenv("OpenVpnRoot", dir)
 	t.Setenv("DataDir", dir+"/ovnode-data")
-	os.MkdirAll(filepath.Join(dir, "server"), 0o755)
+	os.MkdirAll(filepath.Join(dir, "server", "udp"), 0o755)
 	os.MkdirAll(filepath.Join(dir, "ovnode-data"), 0o755)
-	conf := FreshServerConf()
+	conf := FreshServerConf("udp")
 	out, _ := exec.Command(openvpn, "--help").Output()
 	known := map[string]bool{}
 	re := regexp.MustCompile(`(?m)^--([a-z0-9][a-z0-9-]*)`)
@@ -262,9 +269,9 @@ func TestFreshServerConfHasCRLVerify(t *testing.T) {
 	dir := t.TempDir()
 	t.Setenv("OpenVpnRoot", dir)
 	t.Setenv("DataDir", dir+"/ovnode-data")
-	os.MkdirAll(filepath.Join(dir, "server"), 0o755)
+	os.MkdirAll(filepath.Join(dir, "server", "udp"), 0o755)
 	os.MkdirAll(filepath.Join(dir, "ovnode-data"), 0o755)
-	conf := FreshServerConf()
+	conf := FreshServerConf("udp")
 	if !strings.Contains(conf, "crl-verify") {
 		t.Fatal("missing crl-verify")
 	}
@@ -277,7 +284,7 @@ func TestEnsureServerConfRepairsExactlyOwnedDirectives(t *testing.T) {
 	for _, variation := range []string{"unrelated-repair", "one-hook", "obsolete-pair", "additional-obsolete", "duplicate-current", "stale-environment"} {
 		t.Run(variation, func(t *testing.T) {
 			providerTree(t)
-			conf := FreshServerConf()
+			conf := FreshServerConf("udp")
 			hooks := HookTargets()
 			connect := "client-connect \"" + hooks["client-connect"] + "\"\n"
 			disconnect := "client-disconnect \"" + hooks["client-disconnect"] + "\"\n"
@@ -294,24 +301,27 @@ func TestEnsureServerConfRepairsExactlyOwnedDirectives(t *testing.T) {
 			case "duplicate-current":
 				conf += connect + disconnect
 			case "stale-environment":
-				conf += "setenv\tManagementPort 1\n" + HookEnvDirectives()[0] + "\n"
+				conf += "setenv\tManagementPort 1\n" + HookEnvDirectives("udp")[0] + "\n"
 			}
 			operator := "# operator note\nsetenv OperatorTag keep-me\npush \"route 192.0.2.0 255.255.255.0\"\n"
 			conf += operator
-			if err := os.WriteFile(fsx.ServerConf(), []byte(conf), 0o644); err != nil {
+			if err := os.MkdirAll(filepath.Dir(fsx.ServerConf("udp")), 0o755); err != nil {
+				t.Fatal(err)
+			}
+			if err := os.WriteFile(fsx.ServerConf("udp"), []byte(conf), 0o644); err != nil {
 				t.Fatal(err)
 			}
 			if !EnsureServerConf() {
 				t.Error("repair reported no change")
 			}
-			got, err := os.ReadFile(fsx.ServerConf())
+			got, err := os.ReadFile(fsx.ServerConf("udp"))
 			if err != nil {
 				t.Fatal(err)
 			}
 			if !strings.Contains(string(got), operator) {
 				t.Error("repair removed unrelated operator directives")
 			}
-			desired := append([]string{strings.TrimSpace(connect), strings.TrimSpace(disconnect), "user " + RuntimeUser(), "group " + RuntimeGroup()}, HookEnvDirectives()...)
+			desired := append([]string{strings.TrimSpace(connect), strings.TrimSpace(disconnect), "user " + RuntimeUser(), "group " + RuntimeGroup()}, HookEnvDirectives("udp")...)
 			for _, want := range desired {
 				key := strings.Fields(want)[0]
 				if key == "setenv" {
@@ -338,18 +348,18 @@ func TestEnsureServerConfRepairsExactlyOwnedDirectives(t *testing.T) {
 					t.Errorf("%s count=%d, want exactly one", key, count)
 				}
 			}
-			before, err := os.Stat(fsx.ServerConf())
+			before, err := os.Stat(fsx.ServerConf("udp"))
 			if err != nil {
 				t.Fatal(err)
 			}
 			if EnsureServerConf() {
 				t.Error("second repair was not a no-op")
 			}
-			after, err := os.Stat(fsx.ServerConf())
+			after, err := os.Stat(fsx.ServerConf("udp"))
 			if err != nil {
 				t.Fatal(err)
 			}
-			second, err := os.ReadFile(fsx.ServerConf())
+			second, err := os.ReadFile(fsx.ServerConf("udp"))
 			if err != nil || !bytes.Equal(got, second) || !os.SameFile(before, after) || !before.ModTime().Equal(after.ModTime()) {
 				t.Errorf("no-op repair wrote server.conf: %v", err)
 			}
@@ -368,7 +378,7 @@ func TestEnsureServerConfReplacesStaleManagedLines(t *testing.T) {
 	t.Setenv("ManagementPort", "7601")
 	t.Setenv("RuntimeUser", "root")
 	t.Setenv("RuntimeGroup", "0")
-	if err := os.MkdirAll(filepath.Join(dir, "server"), 0o755); err != nil {
+	if err := os.MkdirAll(filepath.Join(dir, "server", "udp"), 0o755); err != nil {
 		t.Fatal(err)
 	}
 	stale := "port 1194\nproto udp\n" +
@@ -376,17 +386,17 @@ func TestEnsureServerConfReplacesStaleManagedLines(t *testing.T) {
 		"management 127.0.0.1 7505 /old/pass\n" +
 		"setenv ManagementPort 7505\n" +
 		"user stale\ngroup stale\n"
-	if err := os.WriteFile(fsx.ServerConf(), []byte(stale), 0o644); err != nil {
+	if err := os.WriteFile(fsx.ServerConf("udp"), []byte(stale), 0o644); err != nil {
 		t.Fatal(err)
 	}
-	changed, err := ensureServerConf()
+	changed, err := ensureServerConf("udp")
 	if err != nil {
 		t.Fatal(err)
 	}
 	if !changed {
 		t.Fatal("configuration with stale managed lines was reported unchanged")
 	}
-	data, err := os.ReadFile(fsx.ServerConf())
+	data, err := os.ReadFile(fsx.ServerConf("udp"))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -405,5 +415,70 @@ func TestEnsureServerConfReplacesStaleManagedLines(t *testing.T) {
 	}
 	if !strings.Contains(conf, "user "+RuntimeUser()) || !strings.Contains(conf, "group "+RuntimeGroup()) {
 		t.Errorf("runtime user/group were not refreshed:\n%s", conf)
+	}
+}
+
+// "both" runs one OpenVPN process per protocol: two configuration files, two
+// subnets in one /23, two management sockets, and one client template with
+// two <connection> blocks.
+func TestBothProtocolsRenderTwoConfigs(t *testing.T) {
+	dir := t.TempDir()
+	t.Setenv("OpenVpnRoot", dir)
+	t.Setenv("DataDir", filepath.Join(dir, "data"))
+	t.Setenv("RuntimeGroup", "0")
+	t.Setenv("RuntimeUser", "root")
+	t.Setenv("ManagementPort", "")
+
+	cfg := settings.Defaults()
+	cfg.Protocol = settings.ProtoBoth
+	cfg.Port = 443
+	if err := settings.Save(cfg); err != nil {
+		t.Fatal(err)
+	}
+	if err := pki.EnsureDirTree(); err != nil {
+		t.Fatal(err)
+	}
+	if !EnsureServerConf() {
+		t.Fatal("both-protocol configurations were not written")
+	}
+	udpConf, err := os.ReadFile(fsx.ServerConf("udp"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	tcpConf, err := os.ReadFile(fsx.ServerConf("tcp"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(string(udpConf), "proto udp") || !strings.Contains(string(tcpConf), "proto tcp") {
+		t.Fatalf("wrong protocols:\n%s\n%s", udpConf, tcpConf)
+	}
+	if !strings.Contains(string(udpConf), "server "+VPNNetworkFor("udp")) ||
+		!strings.Contains(string(tcpConf), "server "+VPNNetworkFor("tcp")) {
+		t.Fatalf("protocols do not have distinct subnets:\n%s\n%s", udpConf, tcpConf)
+	}
+	if VPNNetworkFor("udp") == VPNNetworkFor("tcp") {
+		t.Fatal("both protocols share a subnet")
+	}
+	udpPort := ManagementPort("udp")
+	tcpPort := ManagementPort("tcp")
+	if udpPort == tcpPort {
+		t.Fatalf("both protocols share management port %d", udpPort)
+	}
+	if !strings.Contains(string(udpConf), "management 127.0.0.1 "+itoaStr(udpPort)+" ") ||
+		!strings.Contains(string(tcpConf), "management 127.0.0.1 "+itoaStr(tcpPort)+" ") {
+		t.Fatalf("management ports are not per protocol:\n%s\n%s", udpConf, tcpConf)
+	}
+
+	if err := EnsureClientTemplate(); err != nil {
+		t.Fatal(err)
+	}
+	tmpl, err := os.ReadFile(fsx.ClientTemplate())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.Count(string(tmpl), "<connection>") != 2 ||
+		!strings.Contains(string(tmpl), "remote auto 443 udp") ||
+		!strings.Contains(string(tmpl), "remote auto 443 tcp") {
+		t.Fatalf("template does not carry both protocols:\n%s", tmpl)
 	}
 }

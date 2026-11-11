@@ -173,7 +173,8 @@ func TestConfigRegenerationPreservesUserPolicy(t *testing.T) {
 		}
 		profile := do(t, s, http.MethodGet, "/sync/download/ovpn/"+cn, "")
 		assertWorkingProfile(t, profile.Body.String(), cn)
-		if !strings.Contains(profile.Body.String(), "remote vpn.provider.test 1194") || !strings.Contains(profile.Body.String(), "proto udp") {
+		if !strings.Contains(profile.Body.String(), "<connection>") ||
+			!strings.Contains(profile.Body.String(), "remote vpn.provider.test 1194 udp") {
 			t.Error("regenerated profile ignored the pushed client configuration")
 		}
 		newCert, certErr := os.ReadFile(pki.IssuedCertPath(cn))

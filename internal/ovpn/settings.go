@@ -37,47 +37,70 @@ func currentSettings() settings.Server {
 
 func RuntimeUser() string  { return fsx.RuntimeUser() }
 func RuntimeGroup() string { return fsx.RuntimeGroup() }
-func ManagementPort() int {
-	port := envInt("ManagementPort", 7505)
-	if port < 1 || port > 65535 {
-		return 7505
+
+// ManagementPort is the per-protocol management socket port. Each OpenVPN
+// process owns one; the pair is deterministic so hooks and the agent agree
+// without storing it.
+func ManagementPort(proto string) int {
+	if v := fsx.Get("ManagementPort", ""); v != "" {
+		if n, err := strconv.Atoi(v); err == nil && n >= 1 && n <= 65535 {
+			if proto == "tcp" && n < 65535 {
+				return n + 1
+			}
+			return n
+		}
 	}
-	return port
+	h := 0
+	for _, c := range fsx.InstanceName() + "/" + proto {
+		h = h*31 + int(c)
+	}
+	return 7505 + h%100
 }
 
-// VPNNetwork returns the VPN client subnet base (e.g. "10.8.0.0"). When
-// VpnNetwork is not set explicitly, a unique subnet is derived from
-// the data dir + OpenVPN root so multiple instances on one host do not
-// collide on the default OpenVPN subnet (10.8.0.0/24).
-func VPNNetwork() string {
-	if v := fsx.Get("VPN_NETWORK", ""); v != "" {
-		return v
+// vpnPair returns the even third octet of the instance's /23. Both protocol
+// servers live in that pair, so a second instance can never overlap either
+// of them.
+func vpnPair() int {
+	if v := fsx.Get("VpnNetwork", ""); v != "" {
+		if parts := strings.Split(v, "."); len(parts) == 4 {
+			if n, err := strconv.Atoi(parts[2]); err == nil && n >= 0 && n <= 252 {
+				return n - n%2
+			}
+		}
 	}
-	// backwards-compat default for the canonical single instance
 	dataDir := fsx.OVNodeDir()
 	root := fsx.OpenVPNRoot()
 	canonical := "/var/lib/" + fsx.InstanceName()
 	if dataDir == canonical && (root == "/etc/openvpn" || root == canonical+"/openvpn") {
-		return "10.66.0.0"
+		return 0
 	}
-	// deterministic per-instance subnet in 10.8.1.0 .. 10.8.254.0
 	h := 0
 	for _, c := range dataDir + "|" + root {
 		h = h*31 + int(c)
 	}
-	octet := (h % 253) + 1 // 1..253
-	return "10.66." + strconv.Itoa(octet) + ".0"
+	return (h % 127) * 2
 }
-func VPNNetmask() string { return fsx.Get("VPN_NETMASK", "255.255.255.0") }
 
-// VPNSubnet returns the CIDR form used by NAT (e.g. "10.8.0.0/24").
-func VPNSubnet() string {
-	net := VPNNetwork()
-	if !strings.HasSuffix(net, ".0") {
-		return net + "/24"
+func vpnNetwork(octet int) string { return "10.66." + strconv.Itoa(octet) + ".0" }
+
+// VPNNetwork is the instance's first /24.
+func VPNNetwork() string { return vpnNetwork(vpnPair()) }
+
+// VPNNetworkFor is the /24 a protocol server binds. With one protocol this is
+// the instance network; with both, tcp takes the second /24 of the pair.
+func VPNNetworkFor(proto string) string {
+	if proto == "tcp" && currentSettings().Protocol == settings.ProtoBoth {
+		return vpnNetwork(vpnPair() + 1)
 	}
-	return net + "/24"
+	return VPNNetwork()
 }
+
+func VPNNetmask() string { return "255.255.255.0" }
+
+// VPNSubnet is the /23 that covers both protocol /24s, so NAT needs one rule
+// per instance regardless of the protocol choice.
+func VPNSubnet() string { return "10.66." + strconv.Itoa(vpnPair()) + ".0/23" }
+
 func VPNDNS() (string, string) {
 	s := currentSettings()
 	return s.DNSPrimary, s.DNSSecondary

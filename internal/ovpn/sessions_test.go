@@ -25,7 +25,7 @@ func TestUserDiagnosticsCountsLiveSessionsAndStaleMarkers(t *testing.T) {
 	if err := os.MkdirAll(sessionsDir, 0o755); err != nil {
 		t.Fatal(err)
 	}
-	status := filepath.Join(root, "server", "status.log")
+	status := filepath.Join(root, "server", "udp", "status.log")
 	if err := os.MkdirAll(filepath.Dir(status), 0o755); err != nil {
 		t.Fatal(err)
 	}

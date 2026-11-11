@@ -53,7 +53,7 @@ The VPN server half of an [OVManager](https://github.com/anonysec/OVManager) dep
 ## ✨ Features
 
 ### 🔐 OpenVPN, wired end to end
-- The agent generates the PKI and `server.conf` on first boot.
+- The agent generates the PKI and one `server.conf` per selected protocol on first boot.
 - The installer adds IP forwarding, NAT masquerade, port redirects, `ufw`/`firewalld` openings, log rotation and a systemd unit (or a compose file).
 - Hardened defaults: ECDSA `prime256v1` PKI, `tls-crypt`, `remote-cert-tls client`, `tls-version-min 1.3` in the generated configuration, AES-GCM, compression off, and CRL enforcement.
 - TLS versions: the VPN data and control channel requires TLS 1.3 (`tls-version-min 1.3`); the panel API on port 2083 accepts TLS 1.2 or newer.
@@ -74,7 +74,7 @@ The VPN server half of an [OVManager](https://github.com/anonysec/OVManager) dep
 - Per-session numbers and stale session markers are reported too, so the panel can rebuild its view after a restart.
 
 ### 🌐 Networking
-- Multi-port: one OpenVPN instance reachable on several ports, with every profile listing all of them as `remote` lines so clients fail over when an ISP blocks one.
+- Multi-port and multi-protocol: the node can listen on UDP, TCP, or both on the same port; every profile carries one `<connection>` block per protocol and per extra port, so a client falls back when an ISP blocks one.
 - Optional IPv6: a ULA pool and an IPv6 route push.
 - Panel-managed DNS: the resolvers the panel pushes win over installer defaults, and survive a configuration regeneration.
 - `NoNat=1` skips forwarding, NAT and port redirects when you would rather handle them yourself.
@@ -123,7 +123,7 @@ NodeName=eu-1 VpnPorts=1194,443,8443 Ipv6=1 bash install.sh -y
 | `ApiKey` | generated | API key, minimum 16 characters |
 | `ApiPort` | `2083` | Sync API port the panel connects to |
 | `VpnPorts` | `1194` | VPN ports; the first listens, the rest are redirected to it and listed in every `.ovpn` |
-| `Proto` | `udp` | `udp` or `tcp` |
+| `Proto` | `udp` | `udp`, `tcp` or `both` — `both` runs one OpenVPN process per protocol on the same port |
 | `TlsMethod` | `selfsigned` | `selfsigned`, `letsencrypt`, `letsencrypt-ip` or `custom` |
 | `TlsDomain` | — | Domain, for the Let's Encrypt modes |
 | `TlsKey`, `TlsCert` | — | File paths, for `TlsMethod=custom` |
@@ -162,9 +162,9 @@ If the card shows a private address (`10.x`, `192.168.x`), the server is behind 
 | --- | --- |
 | `/opt/ovnode` | The installed tree, with its own virtualenv and the `ovnode` manager |
 | `/opt/ovnode/.env` | Runtime settings — port, VPN pool, DNS, extra ports, IPv6, runtime user |
-| `/var/lib/ovnode/openvpn/server` | `server.conf`, the PKI and the OpenVPN logs |
-| `/var/lib/ovnode/openvpn/server/users` | Per-user folders, session markers, usage counters and the hooks |
-| `/var/lib/ovnode` | The agent's own data. `DATA_DIR` in `.env` names it |
+| `/var/lib/ovnode/openvpn/server/udp`, `…/tcp` | One `server.conf`, status, PID and log per selected protocol |
+| `/var/lib/ovnode` | Per-user folders, session markers, usage counters, pairing and `state/openvpn.json` |
+| `/var/lib/ovnode` | The agent's own data. `DataDir` in `.env` names it |
 | `/var/backups` | Backup archives written by `ovnode backup` |
 
 The agent's runtime settings live in `/opt/ovnode/.env`; OpenVPN tuning lives in `/var/lib/ovnode/state/openvpn.json` and is managed from the panel. Every runtime key is documented in [.env.example](.env.example). The OpenVPN root is isolated per instance — multiple ovnode instances (or other projects' OpenVPN) never share `/etc/openvpn`.
@@ -273,13 +273,10 @@ That is why `ovnode auth rotate` prints the new key and the line to change rathe
 When both `.env` and the process environment define a variable, the `.env`
 value wins (cached at startup).
 
-Node data lives at `/var/lib/ovnode`, and `DATA_DIR` in `.env` names it. Older
-installs kept it one level down at `/var/lib/ovnode/<name>` — a layout for several
-nodes on one host that nothing ever implemented. `ovnode update` moves it up and
-repoints `DATA_DIR`; it refuses rather than merging if both directories hold the
-same file, and it is a no-op on an install that is already flat.
+Node data lives at `/var/lib/ovnode`, and `DataDir` in `.env` names it. OpenVPN
+tuning is not in `.env`: it is `state/openvpn.json`, managed from the panel.
 
-The API key lives in `.env`, not in the panel. It is printed by the installer and by `ovnode auth key`; neither can be recovered elsewhere, so losing `.env` means re-enrolling the node. The node keeps its own certificate in `/etc/ovnode/tls` (or wherever `SSL_KEYFILE` says) rather than in `/etc/ssl/self-signed`, which is shared with an OVManager panel on the same host.
+The API key lives in `.env`, not in the panel. It is printed by the installer and by `ovnode auth key`; neither can be recovered elsewhere, so losing `.env` means re-enrolling the node. The API certificate is the node's own PKI server certificate unless `TlsCertFile`/`TlsKeyFile` point somewhere else, so it is never shared with a panel on the same host.
 
 `ovnode restore` takes a safety copy before it replaces anything, and refuses to continue if it cannot. `ovnode update` and `ovnode uninstall` run the Go installer, so each exists in exactly one place.
 `ovnode backup` archives `/var/lib/ovnode` and the OpenVPN PKI (`/var/lib/ovnode/openvpn/server/pki`) into root-only tarballs in `/var/backups`, keeping the newest 14 (`--keep N` changes that). `ovnode update` is stricter still: it snapshots the identity file, the node data directory, the OpenVPN root and the API TLS files before it touches anything, and rolls back if the new release does not come up.

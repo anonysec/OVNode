@@ -101,8 +101,12 @@ func OpenVPNRoot() string {
 }
 
 func IsInstalledTree() bool {
-	_, err := os.Stat(filepath.Join(OpenVPNRoot(), "server", "server.conf"))
-	return err == nil
+	for _, proto := range []string{"udp", "tcp"} {
+		if _, err := os.Stat(ServerConf(proto)); err == nil {
+			return true
+		}
+	}
+	return false
 }
 
 func joinRoot(parts ...string) string {
@@ -112,7 +116,24 @@ func joinRoot(parts ...string) string {
 
 func EasyRSADir() string { return joinRoot("server", "easy-rsa") }
 func PKIDir() string     { return joinRoot("server", "pki") }
-func ServerConf() string { return joinRoot("server", "server.conf") }
+
+// ServerDir is the per-protocol configuration directory. Each OpenVPN
+// process owns its config, PID, status and log; the PKI, tls-crypt key and
+// client template stay shared under server/.
+func ServerDir(proto string) string { return joinRoot("server", proto) }
+
+func ServerConf(proto string) string { return filepath.Join(ServerDir(proto), "server.conf") }
+
+// PrimaryServerConf is the first protocol that actually has a configuration.
+// Used by helpers that only need to read the agent's own settings back.
+func PrimaryServerConf() string {
+	for _, proto := range []string{"udp", "tcp"} {
+		if _, err := os.Stat(ServerConf(proto)); err == nil {
+			return ServerConf(proto)
+		}
+	}
+	return ServerConf("udp")
+}
 func ClientTemplate() string {
 	return joinRoot("server", "client-common.txt")
 }
@@ -121,24 +142,29 @@ func CACert() string { return filepath.Join(PKIDir(), "ca.crt") }
 func ServerCert() string {
 	return filepath.Join(PKIDir(), "issued", "server.crt")
 }
-func ServerKey() string { return filepath.Join(PKIDir(), "private", "server.key") }
-func CRLFile() string   { return filepath.Join(PKIDir(), "crl.pem") }
-func PIDFile() string   { return joinRoot("server", "ovnode.pid") }
+func ServerKey() string           { return filepath.Join(PKIDir(), "private", "server.key") }
+func CRLFile() string             { return filepath.Join(PKIDir(), "crl.pem") }
+func PIDFile(proto string) string { return filepath.Join(ServerDir(proto), "ovnode.pid") }
 func MgmtPassFile() string {
 	return envOr("MgmtPassFile", joinRoot("server", "mgmt-pass"))
 }
 
-func StatusFile() string { return envOr("StatusFile", joinRoot("server", "status.log")) }
-func LogDir() string     { return envOr("LogDir", "/var/log/"+InstanceName()) }
-func LogFile() string    { return envOr("LogFile", filepath.Join(LogDir(), "hook-events.log")) }
+func StatusFile(proto string) string {
+	if v := envOr("StatusFile", ""); v != "" {
+		return v
+	}
+	return filepath.Join(ServerDir(proto), "status.log")
+}
+
+// OpenVPNLog is the per-protocol OpenVPN log file.
+func OpenVPNLog(proto string) string { return filepath.Join(ServerDir(proto), "openvpn.log") }
+func LogDir() string                 { return envOr("LogDir", "/var/log/"+InstanceName()) }
+func LogFile() string                { return envOr("LogFile", filepath.Join(LogDir(), "hook-events.log")) }
 
 func OVNodeDir() string {
 	// Data lives in /var/lib/ovnode by default (consistent with OVManager),
 	// overridable via DataDir / DataDir. The OpenVPN root
 	// (/etc/openvpn) only holds server.conf + PKI.
-	if v := envOr("DataDir", ""); v != "" {
-		return v
-	}
 	if v := envOr("DataDir", ""); v != "" {
 		return v
 	}
@@ -181,6 +207,8 @@ func AgentBin() string {
 func RequiredDirs() []string {
 	return []string{
 		joinRoot("server"),
+		joinRoot("server", "udp"),
+		joinRoot("server", "tcp"),
 		joinRoot("ccd"),
 	}
 }

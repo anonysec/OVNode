@@ -10,6 +10,7 @@ import (
 	"strings"
 	"syscall"
 
+	"ovnode/internal/fsx"
 	"ovnode/internal/pki"
 )
 
@@ -17,15 +18,33 @@ func openvpnRoot() string {
 	return pki.OpenVPNRoot()
 }
 
-func settingFile() string  { return filepath.Join(openvpnRoot(), "server", "server.conf") }
+func settingFile() string  { return fsx.ServerConf(currentSettings().Protos()[0]) }
 func templateFile() string { return filepath.Join(openvpnRoot(), "server", "client-common.txt") }
 
 // OpenVPNIsRunning reports whether the OpenVPN of this tree is running.
 // The pid file decides, verified against /proc and the server.conf
 // cmdline: a host can run several OpenVPN instances and a node must
 // never report — or restart — a foreign one.
+func pidFiles() []string {
+	protos := currentSettings().Protos()
+	out := make([]string, 0, len(protos))
+	for _, proto := range protos {
+		out = append(out, pki.PIDFile(proto))
+	}
+	return out
+}
+
 func OpenVPNIsRunning() bool {
-	data, err := os.ReadFile(pki.PIDFile())
+	for _, pidFile := range pidFiles() {
+		if pidFileAlive(pidFile) {
+			return true
+		}
+	}
+	return false
+}
+
+func pidFileAlive(pidFile string) bool {
+	data, err := os.ReadFile(pidFile)
 	if err != nil {
 		return false
 	}
@@ -54,20 +73,23 @@ func openvpnUsesTree(pid int) bool {
 		return false
 	}
 	flat := strings.ReplaceAll(string(cmdline), "\x00", " ")
-	return strings.Contains(flat, pki.ServerConf())
+	return strings.Contains(flat, openvpnRoot()+string(filepath.Separator)+"server"+string(filepath.Separator))
 }
 
 func ReloadOpenVPN() bool {
-	replies, err := SendCommands([]string{"signal SIGHUP"})
-	if err != nil {
-		return false
-	}
-	for _, r := range replies {
-		if strings.Contains(r, "SUCCESS") {
-			return true
+	reloaded := false
+	for _, port := range managementTargets() {
+		replies, err := sendCommandsTo(port, []string{"signal SIGHUP"})
+		if err != nil {
+			continue
+		}
+		for _, r := range replies {
+			if strings.Contains(r, "SUCCESS") {
+				reloaded = true
+			}
 		}
 	}
-	return false
+	return reloaded
 }
 
 // RestartOpenVPN restarts the OpenVPN of this tree.
@@ -96,7 +118,16 @@ func RestartOpenVPN() bool {
 // the serve loop's Wait() reaps it and starts a fresh one. Returns false when
 // there is no supervised child to restart.
 func RestartOpenVPNChild() bool {
-	pidFile := pki.PIDFile()
+	killed := false
+	for _, pidFile := range pidFiles() {
+		if killPidFile(pidFile) {
+			killed = true
+		}
+	}
+	return killed
+}
+
+func killPidFile(pidFile string) bool {
 	data, err := os.ReadFile(pidFile)
 	if err != nil {
 		return false

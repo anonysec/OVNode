@@ -70,16 +70,39 @@ func LiveSessionsForCN(statusFile, cn string) []Session {
 	return SessionsForCN(statusFile, cn)
 }
 
-// mgmtSessionsForCN runs "status 3" over the pinned management endpoint
-// and parses the CLIENT_LIST rows in the reply. The second result reports
-// whether the socket answered; callers fall back to the status file when
-// it did not.
+// managementTargets is one socket per running protocol.
+func managementTargets() []int {
+	protos := currentSettings().Protos()
+	out := make([]int, 0, len(protos))
+	for _, proto := range protos {
+		out = append(out, ManagementPort(proto))
+	}
+	return out
+}
+
+// mgmtSessionsForCN runs "status 3" over every protocol's management socket
+// and parses the CLIENT_LIST rows. The second result reports whether at
+// least one socket answered; callers fall back to the status file when none
+// did.
 func mgmtSessionsForCN(cn string) ([]Session, bool) {
+	var out []Session
+	answered := false
+	for _, port := range managementTargets() {
+		sessions, ok := mgmtSessionsOnPort(port, cn)
+		if ok {
+			answered = true
+			out = append(out, sessions...)
+		}
+	}
+	return out, answered
+}
+
+func mgmtSessionsOnPort(port int, cn string) ([]Session, bool) {
 	host := mgmtHost()
 	if err := validateMgmtHost(host); err != nil {
 		return nil, false
 	}
-	addr := net.JoinHostPort(host, strconv.Itoa(ManagementPort()))
+	addr := net.JoinHostPort(host, strconv.Itoa(port))
 	conn, err := net.DialTimeout("tcp", addr, mgmtDialTimeout)
 	if err != nil {
 		return nil, false
@@ -255,13 +278,13 @@ func mgmtHost() string {
 	return "127.0.0.1"
 }
 
-// dialManagement opens a connection to the management socket.
-func dialManagement() (net.Conn, error) {
+// dialManagement opens a connection to one protocol's management socket.
+func dialManagement(port int) (net.Conn, error) {
 	host := mgmtHost()
 	if err := validateMgmtHost(host); err != nil {
 		return nil, err
 	}
-	addr := net.JoinHostPort(host, strconv.Itoa(ManagementPort()))
+	addr := net.JoinHostPort(host, strconv.Itoa(port))
 	return net.DialTimeout("tcp", addr, mgmtDialTimeout)
 }
 
@@ -274,7 +297,31 @@ func SendCommands(cmds []string) ([]string, error) {
 	if len(cmds) == 0 {
 		return nil, nil
 	}
-	conn, err := dialManagement()
+	var (
+		all      []string
+		firstErr error
+		answered bool
+	)
+	for _, port := range managementTargets() {
+		replies, err := sendCommandsTo(port, cmds)
+		if err != nil {
+			if firstErr == nil {
+				firstErr = err
+			}
+			continue
+		}
+		answered = true
+		all = append(all, replies...)
+	}
+	if !answered {
+		return nil, firstErr
+	}
+	return all, nil
+}
+
+// SendCommandsTo runs one batch against a single protocol socket.
+func sendCommandsTo(port int, cmds []string) ([]string, error) {
+	conn, err := dialManagement(port)
 	if err != nil {
 		return nil, err
 	}

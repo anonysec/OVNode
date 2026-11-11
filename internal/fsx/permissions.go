@@ -31,7 +31,7 @@ func RuntimeGroup() string {
 }
 
 func runtimeDirective(name, fallback string) string {
-	f, err := OpenFileNoFollow(ServerConf(), os.O_RDONLY, 0)
+	f, err := OpenFileNoFollow(PrimaryServerConf(), os.O_RDONLY, 0)
 	if err != nil {
 		return fallback
 	}

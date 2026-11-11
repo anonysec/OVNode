@@ -218,7 +218,7 @@ restart_vpn() {
         return 0
     fi
     local pidfile pid found=0
-    for pidfile in "$OPENVPN_ROOT/server/ovnode.pid" /run/openvpn-server/*.pid; do
+    for pidfile in "$OPENVPN_ROOT"/server/*/ovnode.pid /run/openvpn-server/*.pid; do
         [[ -f "$pidfile" ]] || continue
         pid="$(cat "$pidfile" 2>/dev/null || true)"
         if [[ -n "$pid" ]] && kill -HUP "$pid" 2>/dev/null; then found=1; fi
@@ -750,8 +750,13 @@ pick_editor() {
 do_edit() {
     [[ -f "$AppDir/.env" ]] || die "OVNode is not installed." "$EX_NOTINSTALLED"
     check_root
-    local file="${OPENVPN_ROOT}/server/server.conf"
-    [[ -f "$file" ]] || die "OpenVPN server config not found: $file" "$EX_ERROR"
+    local file
+    for candidate in "$OPENVPN_ROOT"/server/*/server.conf; do
+        [[ -f "$candidate" ]] || continue
+        file="$candidate"
+        break
+    done
+    [[ -n "${file:-}" ]] || die "OpenVPN server config not found under $OPENVPN_ROOT/server/*" "$EX_ERROR"
     local editor
     editor="$(pick_editor)" || die "No editor found (set EDITOR)" "$EX_ERROR"
     "$editor" "$file"

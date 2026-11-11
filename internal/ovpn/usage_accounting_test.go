@@ -23,7 +23,7 @@ func accountingTree(t *testing.T) string {
 	t.Setenv("SessionsDir", filepath.Join(root, "data", "sessions"))
 	t.Setenv("UsageDir", filepath.Join(root, "data", "usage"))
 	t.Setenv("LogFile", filepath.Join(root, "events.log"))
-	if err := os.MkdirAll(filepath.Join(root, "server"), 0o755); err != nil {
+	if err := os.MkdirAll(filepath.Join(root, "server", "udp"), 0o755); err != nil {
 		t.Fatal(err)
 	}
 	for _, dir := range []string{pki.UsersDir(), pki.SessionsDir(), pki.UsageDir()} {
@@ -142,5 +142,5 @@ func TestIncompleteStatusSnapshotIsRejected(t *testing.T) {
 	if _, err := UsersUsage(); err == nil {
 		t.Fatal("incomplete status snapshot reported as successful sample")
 	}
-	_ = fsx.StatusFile()
+	_ = fsx.StatusFile("udp")
 }

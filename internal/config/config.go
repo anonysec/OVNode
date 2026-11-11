@@ -56,7 +56,7 @@ func HookFromEnv() Hook {
 		UsageDir:    fsx.UsageDir(),
 		// The status file follows the OpenVPN root so the hook counts the
 		// same sessions the panel sees, even in a relocated tree.
-		StatusFile:   fsx.StatusFile(),
+		StatusFile:   fsx.Get("StatusFile", fsx.StatusFile("udp")),
 		LogDir:       fsx.LogDir(),
 		LogFile:      fsx.LogFile(),
 		MgmtHost:     fsx.EnvOr("ManagementHost", DefaultMgmtHost),

@@ -59,7 +59,7 @@ func (c *Config) setupLogrotate() error {
 	if err := os.MkdirAll("/etc/logrotate.d", 0o755); err != nil {
 		return err
 	}
-	content := fmt.Sprintf("%s/server/openvpn.log {\n    size 10M\n    rotate 3\n    compress\n    missingok\n    notifempty\n    postrotate\n        systemctl kill -s HUP %s >/dev/null 2>&1 || true\n    endscript\n}\n", c.OpenVPNRoot, c.Service)
+	content := fmt.Sprintf("%s/server/*/openvpn.log {\n    size 10M\n    rotate 3\n    compress\n    missingok\n    notifempty\n    postrotate\n        systemctl kill -s HUP %s >/dev/null 2>&1 || true\n    endscript\n}\n", c.OpenVPNRoot, c.Service)
 	path := c.logrotatePath()
 	if err := os.WriteFile(path, []byte(content), 0o644); err != nil {
 		return err
