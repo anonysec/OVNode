@@ -214,8 +214,9 @@ func (c *Config) DataDir() string {
 	return c.DataBase
 }
 
-// RefusePartialNode mirrors refuse_partial_node.
-func (c *Config) RefusePartialNode() {
+// RefusePartialNode mirrors refuse_partial_node. It returns an error instead
+// of exiting so the command layer, not the library, owns the process.
+func (c *Config) RefusePartialNode() error {
 	state := c.InstallStateOf(c.AppDir)
 	var what, where, hint string
 	if state == StateUnitOnly {
@@ -230,10 +231,8 @@ func (c *Config) RefusePartialNode() {
 			where = filepath.Join(c.AppDir, "data")
 		}
 	}
-	fmt.Fprintf(os.Stderr, "\n  Error: %s holds no node, but %s remains at %s\n", c.AppDir, what, where)
-	fmt.Fprintln(os.Stderr, "  Installing here would mint a second identity beside it. This run deletes neither.")
-	fmt.Fprintf(os.Stderr, "  Finish that install instead: %s %s, or move it aside and re-run.\n\n", os.Args[0], hint)
-	os.Exit(ExitAlready)
+	return alreadyInstalled("%s holds no node, but %s remains at %s; installing here would mint a second identity beside it. Finish that install instead: %s %s, or move it aside and re-run.",
+		c.AppDir, what, where, os.Args[0], hint)
 }
 
 // ReportBootstrapDir mirrors report_bootstrap_dir.

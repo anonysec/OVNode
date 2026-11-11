@@ -23,10 +23,10 @@ func Install(c *Config, runner Runner) error {
 	}
 	if !c.Local {
 		if state == StateInstalled {
-			return fmt.Errorf("already installed (%s exists); run 'update' to refresh or 'uninstall' first", c.AppDir)
+			return alreadyInstalled("(%s exists); run 'update' to refresh or 'uninstall' first", c.AppDir)
 		}
 		if state == StateUnitOnly || state == StateNodeData {
-			c.RefusePartialNode()
+			return c.RefusePartialNode()
 		}
 		if state == StateBootstrap {
 			c.ReportBootstrapDir()
@@ -65,7 +65,7 @@ func Install(c *Config, runner Runner) error {
 	if err := os.MkdirAll(c.DataDir(), 0o755); err != nil {
 		return err
 	}
-	if err := os.MkdirAll("/var/log/ovnode", 0o755); err != nil {
+	if err := os.MkdirAll(c.LogDir, 0o755); err != nil {
 		return err
 	}
 	if err := c.ensureOpenVPNDirs(); err != nil {

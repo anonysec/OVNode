@@ -17,14 +17,10 @@ type updateCtx struct {
 // Update reproduces do_update, including the failover ordering.
 func Update(c *Config, runner Runner) error {
 	if _, err := os.Stat(c.AppDir); err != nil {
-		return fmt.Errorf("not installed (%s missing): %d", c.AppDir, ExitNotInstalled)
+		return notInstalled("(%s missing)", c.AppDir)
 	}
 	if _, err := os.Stat(c.AgentBin()); err != nil {
-		if _, err := os.Stat(filepath.Join(c.AppDir, "agent")); err == nil {
-			// legacy path — handled by reassigning AgentBin internally
-		} else {
-			return fmt.Errorf("the node agent binary is missing (%s), reinstall instead of updating: %d", c.AgentBin(), ExitError)
-		}
+		return fmt.Errorf("the node agent binary is missing (%s), reinstall instead of updating", c.AgentBin())
 	}
 	if err := checkRoot(); err != nil {
 		return fmt.Errorf("%w: %d", ErrRoot, ExitError)

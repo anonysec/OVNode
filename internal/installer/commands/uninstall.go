@@ -9,7 +9,7 @@ import (
 // Uninstall reproduces do_uninstall.
 func Uninstall(c *Config, runner Runner) error {
 	if _, err := os.Stat(c.AppDir); err != nil && !c.NodeExists() {
-		return fmt.Errorf("not installed: OVNode is not installed: %d", ExitNotInstalled)
+		return notInstalled("OVNode is not installed")
 	}
 	if err := checkRoot(); err != nil {
 		return fmt.Errorf("%w: %d", ErrRoot, ExitError)

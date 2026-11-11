@@ -80,10 +80,7 @@ func runInstallCommand(command string) {
 		fmt.Fprintln(os.Stderr, "ovnode installer: "+err.Error())
 		usage()
 		flush()
-		if strings.Contains(err.Error(), "Not installed") {
-			os.Exit(commands.ExitNotInstalled)
-		}
-		os.Exit(commands.ExitUsage)
+		os.Exit(commands.ExitCode(err))
 	}
 	if action == "help" {
 		usage()
@@ -108,18 +105,8 @@ func runInstallCommand(command string) {
 	}
 	if runErr != nil {
 		fmt.Fprintln(os.Stderr, "ovnode installer: "+runErr.Error())
-		code := commands.ExitError
-		if ue, ok := runErr.(*commands.UsageError); ok && ue != nil {
-			code = commands.ExitUsage
-		}
-		if strings.Contains(runErr.Error(), "Already installed") || strings.Contains(runErr.Error(), "holds no node") {
-			code = commands.ExitAlready
-		}
-		if strings.Contains(runErr.Error(), "Not installed") {
-			code = commands.ExitNotInstalled
-		}
 		flush()
-		os.Exit(code)
+		os.Exit(commands.ExitCode(runErr))
 	}
 	flush()
 }
@@ -158,6 +145,15 @@ func runHook() {
 
 // runCA dispatches PKI subcommands.
 func runCA() {
+	// Ensure the instance's .env is discoverable when running outside
+	// systemd (e.g., during install), so per-instance paths are used.
+	if os.Getenv("OVN_APP_DIR") == "" {
+		if exe, err := os.Executable(); err == nil {
+			if dir := filepath.Dir(exe); dir != "" && dir != "." {
+				os.Setenv("OVN_APP_DIR", dir)
+			}
+		}
+	}
 	if len(os.Args) < 3 {
 		// default: init
 		if err := ovpn.InitPKI(); err != nil {

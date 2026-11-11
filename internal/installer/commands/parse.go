@@ -188,7 +188,7 @@ func Parse(args []string) (*Config, string, error) {
 }
 
 func errNotInstalled(appDir string) error {
-	return fmt.Errorf("not installed (%s has no node); nothing was downloaded or changed", appDir)
+	return notInstalled("(%s has no node); nothing was downloaded or changed", appDir)
 }
 
 func deprecatedFlag(flag, what string) string {
