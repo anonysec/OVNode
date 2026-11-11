@@ -61,11 +61,11 @@ func vpnPair() int {
 	if dataDir == canonical && (root == "/etc/openvpn" || root == canonical+"/openvpn") {
 		return 0
 	}
-	h := 0
+	var h uint32
 	for _, c := range dataDir + "|" + root {
-		h = h*31 + int(c)
+		h = h*31 + uint32(c)
 	}
-	return (h % 127) * 2
+	return int(h%127) * 2
 }
 
 func vpnNetwork(octet int) string { return "10.66." + strconv.Itoa(octet) + ".0" }

@@ -6,6 +6,7 @@ package ovpn
 import (
 	"bytes"
 	"context"
+	"net"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -481,5 +482,32 @@ func TestBothProtocolsRenderTwoConfigs(t *testing.T) {
 		!strings.Contains(string(tmpl), "remote auto 443 udp") ||
 		!strings.Contains(string(tmpl), "remote auto 443 tcp") {
 		t.Fatalf("template does not carry both protocols:\n%s", tmpl)
+	}
+}
+
+// The derived subnet must always be a valid IPv4 /24: the hash is unsigned,
+// so a long instance/path cannot produce a negative octet.
+func TestVPNNetworkIsAlwaysValid(t *testing.T) {
+	root := t.TempDir()
+	for _, instance := range []string{"ovnode", "udp443", "a-very-long-instance-name-that-hashes-far", "zzzzzzzzzzzz"} {
+		t.Setenv("Instance", instance)
+		t.Setenv("OpenVpnRoot", filepath.Join(root, instance))
+		t.Setenv("DataDir", filepath.Join(root, instance, "data"))
+		network := VPNNetwork()
+		ip, _, err := net.ParseCIDR(network + "/24")
+		if err != nil || ip.To4() == nil {
+			t.Fatalf("%s: VPNNetwork = %q", instance, network)
+		}
+		if strings.Contains(network, "-") {
+			t.Fatalf("%s: negative octet in %q", instance, network)
+		}
+		cfg := settings.Defaults()
+		cfg.Protocol = settings.ProtoBoth
+		if err := settings.Save(cfg); err != nil {
+			t.Fatal(err)
+		}
+		if VPNNetworkFor("udp") == VPNNetworkFor("tcp") {
+			t.Fatalf("%s: protocols share a subnet", instance)
+		}
 	}
 }
