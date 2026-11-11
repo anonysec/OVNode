@@ -4,7 +4,6 @@
 package ovpn
 
 import (
-	"encoding/json"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -141,8 +140,6 @@ func parseCore(req ChangeConfigRequest) (cfgChange, error) {
 	var c cfgChange
 	var ovpnPort int
 	switch v := req.OVPNPort.(type) {
-	case intOrString:
-		ovpnPort = int(v)
 	case int:
 		ovpnPort = v
 	case float64:
@@ -579,74 +576,10 @@ func applyIPv6(conf string, enabled bool, prefix string) (string, bool) {
 	return strings.Join(lines, "\n"), changed
 }
 
-// ports decodes the panel's extra_ports field: a plain string, a list of
-// numbers, or a list of numeric strings, all joined then validated by
-// policy.ValidateExtraPorts.
-type ports struct{ raw string }
-
-func (p *ports) UnmarshalJSON(b []byte) error {
-	if string(b) == "null" {
-		return nil
-	}
-	if len(b) > 0 && b[0] == '"' {
-		var v string
-		if err := json.Unmarshal(b, &v); err != nil {
-			return err
-		}
-		p.raw = v
-		return nil
-	}
-	var arr []any
-	if err := json.Unmarshal(b, &arr); err != nil {
-		return err
-	}
-	parts := make([]string, 0, len(arr))
-	for _, e := range arr {
-		switch x := e.(type) {
-		case string:
-			parts = append(parts, strings.TrimSpace(x))
-		case float64:
-			parts = append(parts, strconv.Itoa(int(x)))
-		case int:
-			parts = append(parts, strconv.Itoa(x))
-		default:
-			return fmt.Errorf("extra_ports item is not a number or string")
-		}
-	}
-	p.raw = strings.Join(parts, ",")
-	return nil
-}
-
-// intOrString decodes a port field that may be a JSON number or a numeric
-// string.
-type intOrString int
-
-func (n *intOrString) UnmarshalJSON(b []byte) error {
-	var i int
-	if err := json.Unmarshal(b, &i); err == nil {
-		*n = intOrString(i)
-		return nil
-	}
-	var s string
-	if err := json.Unmarshal(b, &s); err != nil {
-		return err
-	}
-	v, err := strconv.Atoi(strings.TrimSpace(s))
-	if err != nil {
-		return err
-	}
-	*n = intOrString(v)
-	return nil
-}
-
 func extraPortsRaw(v any) (string, bool) {
 	switch val := v.(type) {
 	case string:
 		return val, true
-	case ports:
-		return val.raw, true
-	case *ports:
-		return val.raw, true
 	case []any:
 		parts := []string{}
 		for _, e := range val {

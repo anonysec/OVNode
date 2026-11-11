@@ -26,11 +26,6 @@ func RunEasyRSAChecked(args ...string) error {
 	return runEasyRSAWithTimeout(120, "", args...)
 }
 
-// RunEasyRSAWithTimeout runs easyrsa with a timeout and optional pki dir.
-func RunEasyRSAWithTimeout(timeout int, pkiDir string, args ...string) bool {
-	return runEasyRSAWithTimeout(timeout, pkiDir, args...) == nil
-}
-
 func runEasyRSAWithTimeout(timeout int, pkiDir string, args ...string) error {
 	if pkiDir == "" {
 		pkiDir = PKIDir()

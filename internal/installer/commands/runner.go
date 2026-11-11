@@ -1,7 +1,6 @@
 package commands
 
 import (
-	"fmt"
 	"os"
 	"os/exec"
 	"strings"
@@ -38,9 +37,6 @@ func (execRunner) Output(name string, args ...string) ([]byte, error) {
 	return exec.Command(name, args...).Output()
 }
 
-// osRunner adapts execRunner to the Runner interface.
-type osRunner struct{ execRunner }
-
 var fakeRunner *recordingRunner
 var fakeOnce sync.Once
 
@@ -51,9 +47,6 @@ func DefaultRunner() Runner {
 	}
 	return execRunner{}
 }
-
-// Fake exposes the recording runner for callers that self-invoke (assets).
-func Fake() Runner { return DefaultRunner() }
 
 type recordingRunner struct {
 	mu   sync.Mutex
@@ -103,12 +96,6 @@ func hold(r Runner) {
 		b.WriteByte('\n')
 	}
 	_ = os.WriteFile(path, []byte(b.String()), 0o644)
-}
-
-// ArgsPos collects the diagnostics of a finished command.
-func ArgsPos(err error, code int) {
-	fmt.Fprintf(os.Stderr, "ovnode: %v\n", err)
-	os.Exit(code)
 }
 
 var _ = time.Now

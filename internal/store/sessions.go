@@ -102,28 +102,6 @@ func ReadMarker(path string) (Marker, bool) {
 	return m, true
 }
 
-// RemoveMarkers removes every session marker of one CN.
-//
-// At limit=1 the node keeps a single session per user, so the new marker
-// replaces the old ones instead of accumulating.
-func RemoveMarkers(sessionsDir, safeCN string) {
-	prefix := safeCN + "."
-	entries, err := os.ReadDir(sessionsDir)
-	if err != nil {
-		return
-	}
-	for _, e := range entries {
-		name := e.Name()
-		if !strings.HasPrefix(name, prefix) {
-			continue
-		}
-		if e.IsDir() {
-			continue
-		}
-		_ = os.Remove(filepath.Join(sessionsDir, name))
-	}
-}
-
 // RemoveLegacyMarkers removes the pre pool-IP marker names of one CN:
 // "<cn>.<ip>.<port>.<pool>" and "<cn>.*.<pool>".
 func RemoveLegacyMarkers(sessionsDir, safeCN, poolIP, trustedIP, trustedPort string) {

@@ -90,7 +90,7 @@ func Parse(args []string) (*Config, string, error) {
 			case "4", "custom":
 				c.TLSMethod = "custom"
 			default:
-				return nil, "", fmt.Errorf("Invalid --tls '%s' (use 1, 2, 3 or 4)", args[i])
+				return nil, "", fmt.Errorf("invalid --tls '%s' (use 1, 2, 3 or 4)", args[i])
 			}
 			i++
 		case "--tls-domain":
@@ -155,17 +155,17 @@ func Parse(args []string) (*Config, string, error) {
 		case "install":
 			action = "install"
 		case "menu":
-			return nil, "", fmt.Errorf("The menu lives in the manager, run: ovnode")
+			return nil, "", fmt.Errorf("the menu lives in the manager, run: ovnode")
 		case "status", "start", "stop", "restart", "restart-vpn", "logs", "backup", "auto-backup", "tls":
 			return nil, "", fmt.Errorf("'%s' moved to the manager, use: ovnode %s", arg, arg)
 		default:
-			return nil, "", fmt.Errorf("Unknown option: %s (--help for usage)", arg)
+			return nil, "", fmt.Errorf("unknown option: %s (--help for usage)", arg)
 		}
 	}
 	// Pin handling (main): validate then strip the leading v.
 	if c.Pin != "" {
 		if !validReleaseVersion(c.Pin) {
-			return nil, "", fmt.Errorf("Bad --version '%s' (use 1.2.3, v1.2.3, 1.2.3-rc1)", c.Pin)
+			return nil, "", fmt.Errorf("bad --version '%s' (use 1.2.3, v1.2.3, 1.2.3-rc1)", c.Pin)
 		}
 		c.Version = strings.TrimPrefix(c.Pin, "v")
 	}
@@ -188,7 +188,7 @@ func Parse(args []string) (*Config, string, error) {
 }
 
 func errNotInstalled(appDir string) error {
-	return fmt.Errorf("Not installed (%s has no node). Nothing was downloaded or changed.", appDir)
+	return fmt.Errorf("not installed (%s has no node); nothing was downloaded or changed", appDir)
 }
 
 func deprecatedFlag(flag, what string) string {

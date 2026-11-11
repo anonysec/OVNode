@@ -266,27 +266,6 @@ func applyUserPolicyLocked(cn, name string, maxLogins int, disabled bool) error 
 	return nil
 }
 
-// BuildUserProfile builds the .ovpn profile of a user and caches it.
-//
-// The material comes from the panel-pushed files when they are there and
-// from the local PKI otherwise. The CA chain and the tls-crypt key are
-// always embedded: the handshake fails without them.
-//
-// The body is the operator's client template (client-common.txt), not a
-// hardcoded preamble: the template carries the remote lines and every other
-// client option, and it is the file the panel's config push rewrites. A
-// profile built from a hardcoded preamble would ignore a template the
-// operator edited.
-func BuildUserProfile(cn string) (string, error) {
-	var path string
-	err := withUserLifecycle(cn, func() error {
-		var err error
-		path, err = buildUserProfileLocked(cn)
-		return err
-	})
-	return path, err
-}
-
 func buildUserProfileLocked(cn string) (string, error) {
 	usersDir := pki.UsersDir()
 	dir, err := store.UserDir(usersDir, cn)

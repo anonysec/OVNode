@@ -82,7 +82,7 @@ func (c *Config) installAgentBinary() error {
 	src := filepath.Join(c.AppDir, "ovnode")
 	info, err := os.Stat(src)
 	if err != nil || info.IsDir() || info.Mode().Perm()&0o111 == 0 {
-		return fmt.Errorf("The ovnode binary could not be installed")
+		return fmt.Errorf("the ovnode binary could not be installed")
 	}
 	dst := c.AgentBin()
 	data, err := os.ReadFile(src)

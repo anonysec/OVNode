@@ -39,7 +39,7 @@ func (c *Config) ensureRuntimeIdentity(r Runner) error {
 	} else if groupName == "" {
 		g, err := lookupGroupOf(userName)
 		if err != nil {
-			return fmt.Errorf("Unknown runtime user: %s", userName)
+			return fmt.Errorf("unknown runtime user: %s", userName)
 		}
 		groupName = g
 	}
@@ -52,18 +52,18 @@ func (c *Config) ensureRuntimeIdentity(r Runner) error {
 	}
 	if _, err := lookupGroup(groupName); err != nil {
 		if groupName != "ovnode-vpn" {
-			return fmt.Errorf("Unknown runtime group: %s", groupName)
+			return fmt.Errorf("unknown runtime group: %s", groupName)
 		}
 		if err := r.Run("groupadd", "--system", groupName); err != nil {
-			return fmt.Errorf("Could not create runtime group: %w", err)
+			return fmt.Errorf("could not create runtime group: %w", err)
 		}
 	}
 	if _, err := lookupUser(userName); err != nil {
 		if userName != "ovnode-vpn" {
-			return fmt.Errorf("Unknown runtime user: %s", userName)
+			return fmt.Errorf("unknown runtime user: %s", userName)
 		}
 		if err := r.Run("useradd", "--system", "--no-create-home", "--shell", "/usr/sbin/nologin", "-g", groupName, userName); err != nil {
-			return fmt.Errorf("Could not create runtime user: %w", err)
+			return fmt.Errorf("could not create runtime user: %w", err)
 		}
 	}
 	return nil
@@ -140,13 +140,13 @@ func (c *Config) fetchRelease(dest string) error {
 	defer os.RemoveAll(work)
 	asset := "ovnode-linux-" + archName()
 	if err := download(url, filepath.Join(work, asset)); err != nil {
-		return fmt.Errorf("No release file for v%s, see https://github.com/%s/releases", c.Version, repo)
+		return fmt.Errorf("no release file for v%s, see https://github.com/%s/releases", c.Version, repo)
 	}
 	if err := download(sumsURL, filepath.Join(work, "SHA256SUMS")); err != nil {
-		return fmt.Errorf("Could not download SHA256SUMS for v%s, refusing to install an unverified release", c.Version)
+		return fmt.Errorf("could not download SHA256SUMS for v%s, refusing to install an unverified release", c.Version)
 	}
 	if err := verifySum(work, asset); err != nil {
-		return fmt.Errorf("Checksum verification failed for %s (v%s): %w", asset, c.Version, err)
+		return fmt.Errorf("checksum verification failed for %s (v%s): %w", asset, c.Version, err)
 	}
 	if err := os.MkdirAll(c.AppDir, 0o755); err != nil {
 		return err

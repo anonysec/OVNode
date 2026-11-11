@@ -20,7 +20,7 @@ func (c *Config) operationBegin(name string) error {
 	ownerBytes, _ := os.ReadFile(filepath.Join(lock, "pid"))
 	owner := string(ownerBytes)
 	if pid, err := strconv.Atoi(owner); err == nil && killProcess(pid) {
-		return fmt.Errorf("Another maintenance operation is running (process %d). Try again later.", pid)
+		return fmt.Errorf("another maintenance operation is running (process %d)", pid)
 	}
 	if owner != "" {
 		_ = os.RemoveAll(lock)
@@ -30,7 +30,7 @@ func (c *Config) operationBegin(name string) error {
 			return nil
 		}
 	}
-	return fmt.Errorf("Another maintenance operation is running. Try again later.")
+	return fmt.Errorf("another maintenance operation is running")
 }
 
 func (c *Config) operationEnd() {

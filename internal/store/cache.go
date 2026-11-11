@@ -69,7 +69,4 @@ func NameCacheGet(dir string) (map[string]string, bool) { return nameCacheInst.g
 // NameCacheSet stores name map.
 func NameCacheSet(dir string, data map[string]string) { nameCacheInst.set(dir, data) }
 
-// UsageCacheGet/Set/Invalidate
-func UsageCacheGet(dir string) (map[string]uint64, bool) { return usageCacheInst.get(dir) }
-func UsageCacheSet(dir string, data map[string]uint64)   { usageCacheInst.set(dir, data) }
-func InvalidateUsageCache()                              { usageCacheInst.invalidate() }
+func InvalidateUsageCache() { usageCacheInst.invalidate() }

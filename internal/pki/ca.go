@@ -79,11 +79,6 @@ func nextSerial() (*big.Int, error) {
 	return n, nil
 }
 
-// IssueClientCert issues a client certificate for cn. Returns cert PEM, key PEM.
-func IssueClientCert(cn string) (string, string, error) {
-	return issueClientCert(cn, nil)
-}
-
 func issueClientCert(cn string, existingKey []byte) (string, string, error) {
 	caCert, caKey, err := loadCA()
 	if err != nil {

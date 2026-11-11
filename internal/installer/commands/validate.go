@@ -8,7 +8,7 @@ import (
 )
 
 // ErrRoot mirrors check_root: a precondition, not a usage error.
-var ErrRoot = errors.New("Must run as root")
+var ErrRoot = errors.New("must run as root")
 
 var (
 	nodeNameRe = regexp.MustCompile(`^[A-Za-z0-9_-]{1,64}$`)

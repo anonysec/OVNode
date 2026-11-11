@@ -119,9 +119,6 @@ func (c *Config) resolveDirs() {
 // AgentBin mirrors bash AGENT_BIN.
 func (c *Config) AgentBin() string { return filepath.Join(c.AppDir, "ovnode-server") }
 
-// KeyFile mirrors bash release naming.
-func (c *Config) keyFile() string { return "ovnode-linux-" + archName() }
-
 // InstallStateOf mirrors install_state_of.
 func (c *Config) InstallStateOf(dir string) string {
 	info, err := os.Lstat(dir)

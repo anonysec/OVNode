@@ -41,7 +41,7 @@ jobs:
           # Pinned: bump deliberately (Dependabot does not track go install).
           go install github.com/securego/gosec/v2/cmd/gosec@v2.30.0
           go install golang.org/x/tools/cmd/deadcode@v0.52.0
-          test -z "$(deadcode ./... 2>&1)"
+          test -z "$(deadcode -test ./... 2>&1)"
       - name: Shellcheck
         run: shellcheck -S warning install.sh lib.sh ovnode.sh scripts/smoke-test.sh
       - name: Contract drift check

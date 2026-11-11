@@ -2,7 +2,6 @@ package commands
 
 import (
 	"fmt"
-	"net"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -53,7 +52,7 @@ func isTTY() bool {
 // checkRoot mirrors lib.sh check_root.
 func checkRoot() error {
 	if os.Geteuid() != 0 {
-		return fmt.Errorf("Must run as root.")
+		return fmt.Errorf("must run as root")
 	}
 	return nil
 }
@@ -81,19 +80,6 @@ func publicIP(r Runner) string {
 	return primaryIP(r)
 }
 
-// isIPLiteral mirrors lib.sh is_ip_literal.
-func isIPLiteral(s string) bool { return net.ParseIP(s) != nil }
-
-// resolveHost mirrors lib.sh resolve_host.
-func resolveHost(r Runner) string {
-	out, err := r.Output("getent", "hosts", "example")
-	if err != nil {
-		return ""
-	}
-	_ = out
-	return ""
-}
-
 // killProcess mirrors kill -0 checks used by operation_begin.
 func killProcess(pid int) bool {
 	err := syscall.Kill(pid, 0)
@@ -109,18 +95,4 @@ func envOr(name, fallback string) string {
 		return v
 	}
 	return fallback
-}
-
-// freePort finds the first port >= start that is not listening.
-func freePort(start int) int {
-	port := start
-	for port < 65536 {
-		conn, err := net.DialTimeout("tcp", fmt.Sprintf("127.0.0.1:%d", port), 100*1e6)
-		if err != nil {
-			return port
-		}
-		_ = conn.Close()
-		port++
-	}
-	return start
 }

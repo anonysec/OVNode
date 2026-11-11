@@ -66,15 +66,6 @@ func (r *ring) add(rec Record) {
 	}
 }
 
-// Log records one line in the ring buffer and on stderr.
-//
-// stderr is the operator's copy, the ring is the panel's. The rotating file
-// sink the Python agent had (data/app.log) belongs to the installer, not to
-// the agent.
-func Log(level, format string, args ...any) {
-	emit(level, 2, format, args...)
-}
-
 // Info records an informational line.
 func Info(format string, args ...any) { emit("INFO", 2, format, args...) }
 

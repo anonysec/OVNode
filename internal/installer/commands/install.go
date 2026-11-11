@@ -23,7 +23,7 @@ func Install(c *Config, runner Runner) error {
 	}
 	if !c.Local {
 		if state == StateInstalled {
-			return fmt.Errorf("Already installed (%s exists). Run 'update' to refresh or 'uninstall' first.", c.AppDir)
+			return fmt.Errorf("already installed (%s exists); run 'update' to refresh or 'uninstall' first", c.AppDir)
 		}
 		if state == StateUnitOnly || state == StateNodeData {
 			c.RefusePartialNode()
@@ -85,7 +85,7 @@ func Install(c *Config, runner Runner) error {
 			return err
 		}
 		if err := systemctlBounded(runner, "restart", c.Service); err != nil {
-			return fmt.Errorf("Could not start %s: %w", c.Service, err)
+			return fmt.Errorf("could not start %s: %w", c.Service, err)
 		}
 	}
 	// [5/7] Health
@@ -180,7 +180,7 @@ func (c *Config) ensureOpenVPNDirs() error {
 func (c *Config) setupTLS(r Runner) error {
 	if c.TLSMethod == "custom" {
 		if c.TLSKey == "" || c.TLSCert == "" {
-			return fmt.Errorf("Custom TLS key/cert files not found")
+			return fmt.Errorf("custom TLS key/cert files not found")
 		}
 	}
 	// letsencrypt/selfsigned are handled by the panel PKI flow.

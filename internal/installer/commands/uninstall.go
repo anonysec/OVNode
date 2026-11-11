@@ -32,7 +32,7 @@ func Uninstall(c *Config, runner Runner) error {
 		fmt.Fprintf(os.Stderr, "  openvpn  %s ← server config and every issued client cert\n", c.OpenVPNRoot)
 		fmt.Fprint(os.Stderr, "delete the data and the PKI as well? type purge\n")
 		if !confirmWord("purge") {
-			return fmt.Errorf("Cancelled.")
+			return fmt.Errorf("cancelled")
 		}
 	} else {
 		fmt.Fprint(os.Stderr, "  this removes\n")
@@ -40,7 +40,7 @@ func Uninstall(c *Config, runner Runner) error {
 		fmt.Fprintf(os.Stderr, "  data     kept at %s\n", c.DataBase)
 	}
 	if !confirmOne("remove the app and stop all services?") {
-		return fmt.Errorf("Cancelled.")
+		return fmt.Errorf("cancelled")
 	}
 	// Stop the NAT unit, then the service units.
 	_ = systemctlBounded(runner, "stop", c.NatService)

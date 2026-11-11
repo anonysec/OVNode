@@ -9,20 +9,6 @@ import (
 	"testing"
 )
 
-// flagsToArgs is the single source through which the fake binary is
-// invoked in tests: the fake-runner assertions in scripts/test-installer.sh
-// build this list from the same matrix.
-func flagsToArgs() []string {
-	return []string{
-		"--port", "2083",
-		"--vpn-ports", "1194,443",
-		"--proto", "udp",
-		"--name", "eu-1",
-		"--tls", "1",
-		"--panel-ip", "203.0.113.9",
-	}
-}
-
 // TestParseMatchesBashContract pins the flag/env surfaces that Stage 2
 // must preserve: OVN_* env mirrors every flag, CLI wins, deprecated
 // spellings keep working, and the entry gates (uninstall/update on a
