@@ -25,9 +25,24 @@ type timeEntry struct {
 }
 
 type window struct {
-	max  int
-	span time.Duration
-	hits map[string]timeEntry
+	max      int
+	span     time.Duration
+	hits     map[string]timeEntry
+	lastTrim time.Time
+}
+
+// trimInterval bounds how often the full-map expiry sweep runs. The old code
+// swept on every request: 10,000 client buckets meant 10,000 map iterations
+// per call, which is a cheap way for a distributed brute force to burn the
+// node's CPU.
+const trimInterval = 5 * time.Second
+
+func (w *window) maybeTrim(now time.Time) {
+	if !w.lastTrim.IsZero() && now.Sub(w.lastTrim) < trimInterval {
+		return
+	}
+	w.trim(now)
+	w.lastTrim = now
 }
 
 type Limiter struct {
@@ -83,7 +98,7 @@ func (w *window) cap(now time.Time) {
 
 func (w *window) allow(key string) (bool, time.Duration) {
 	now := time.Now()
-	w.trim(now)
+	w.maybeTrim(now)
 	w.cap(now)
 	e := w.hits[key]
 	if len(e.ts) >= w.max {
@@ -101,7 +116,7 @@ func (w *window) allow(key string) (bool, time.Duration) {
 
 func (w *window) blocked(key string) (bool, time.Duration) {
 	now := time.Now()
-	w.trim(now)
+	w.maybeTrim(now)
 	e := w.hits[key]
 	if len(e.ts) >= w.max {
 		retry := w.span - now.Sub(e.ts[0])
@@ -115,7 +130,7 @@ func (w *window) blocked(key string) (bool, time.Duration) {
 
 func (w *window) record(key string) {
 	now := time.Now()
-	w.trim(now)
+	w.maybeTrim(now)
 	e := w.hits[key]
 	e.ts = append(e.ts, now)
 	e.last = now

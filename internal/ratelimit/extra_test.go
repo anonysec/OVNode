@@ -40,14 +40,37 @@ func TestFailedAuthBackoff(t *testing.T) {
 
 func TestPruneEvictsTenPercentAtOnce(t *testing.T) {
 	l := New()
-	start := time.Now()
 	for i := 0; i < 12000; i++ {
 		l.Allow(fmt.Sprintf("c%d", i))
 	}
-	if elapsed := time.Since(start); elapsed >= 30*time.Second {
-		t.Fatalf("loop took %v, want under 30s", elapsed)
-	}
 	if len(l.t.hits) > maxBuckets {
 		t.Fatalf("t.hits len = %d, want <= %d (cap with 10%% eviction)", len(l.t.hits), maxBuckets)
+	}
+}
+
+// The expiry sweep is time-gated, not per-request. Force it and check the
+// stale bucket is gone without another 12,000 calls.
+func TestTrimDropsExpiredBuckets(t *testing.T) {
+	w := &window{max: 1, span: 5 * time.Millisecond, hits: map[string]timeEntry{}}
+	w.allow("old")
+	time.Sleep(10 * time.Millisecond)
+	w.lastTrim = time.Time{}
+	w.allow("new")
+	if _, ok := w.hits["old"]; ok {
+		t.Fatal("expired bucket survived the sweep")
+	}
+	if _, ok := w.hits["new"]; !ok {
+		t.Fatal("fresh bucket was dropped")
+	}
+}
+
+// A second request inside the gate must not sweep the map again.
+func TestTrimIsTimeGated(t *testing.T) {
+	w := &window{max: 1, span: time.Hour, hits: map[string]timeEntry{}}
+	w.allow("a")
+	gated := w.lastTrim
+	w.allow("b")
+	if !w.lastTrim.Equal(gated) {
+		t.Fatal("the sweep ran again inside the interval")
 	}
 }
