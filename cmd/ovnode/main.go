@@ -18,7 +18,7 @@ import (
 	"path/filepath"
 	"strings"
 
-	assets "ovnode"
+	"ovnode/internal/assets"
 	"ovnode/internal/config"
 	"ovnode/internal/hooks"
 	"ovnode/internal/httpapi"

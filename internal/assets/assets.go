@@ -13,10 +13,10 @@
 //     from a release, which is two versions that can drift.
 //   - The installer downloads the product and nothing else.
 //
-// The embed lives in the module root because go:embed cannot reach outside
-// its own directory, and install.sh has to stay at the repository root: its
-// URL is the published install command.
-package ovnode
+// The scripts live beside this file because go:embed cannot reach outside
+// its own directory. The published bootstrap URL is
+// https://raw.githubusercontent.com/anonysec/OVNode/main/internal/assets/install.sh.
+package assets
 
 import (
 	_ "embed"

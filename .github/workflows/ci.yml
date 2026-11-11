@@ -43,7 +43,7 @@ jobs:
           go install golang.org/x/tools/cmd/deadcode@v0.52.0
           test -z "$(deadcode -test ./... 2>&1)"
       - name: Shellcheck
-        run: shellcheck -S warning install.sh lib.sh ovnode.sh scripts/smoke-test.sh
+        run: shellcheck -S warning internal/assets/install.sh internal/assets/lib.sh internal/assets/ovnode.sh scripts/smoke-test.sh
       - name: Contract drift check
         run: |
           if ! curl -fsSL -o /tmp/panel-contract.json             https://raw.githubusercontent.com/anonysec/OVManager/main/internal/node/contract.json; then

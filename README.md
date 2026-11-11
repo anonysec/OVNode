@@ -96,7 +96,7 @@ The VPN server half of an [OVManager](https://github.com/anonysec/OVManager) dep
 - `1194/udp` reachable by your users, and `2083/tcp` reachable from the panel.
 
 ```bash
-bash <(curl -sSL https://raw.githubusercontent.com/anonysec/OVNode/main/install.sh) -y
+bash <(curl -sSL https://raw.githubusercontent.com/anonysec/OVNode/main/internal/assets/install.sh) -y
 
 # Pin the installer to a release tag instead of `main`; the release
 # `SHA256SUMS` file lists the SHA-256 of each release binary.
@@ -107,13 +107,13 @@ installer (`ovnode install`). To answer every setting yourself, run the
 interactive installer instead:
 
 ```bash
-bash <(curl -sSL https://raw.githubusercontent.com/anonysec/OVNode/main/install.sh) interactive
+bash <(curl -sSL https://raw.githubusercontent.com/anonysec/OVNode/main/internal/assets/install.sh) interactive
 ```
 
 **With no terminal** — a run without one cannot ask, so it needs `-y` to say that is intended. The two flags are `-y/--yes` and `-h/--help`, and everything else is an `OVN_*` variable:
 
 ```bash
-curl -fsSL https://raw.githubusercontent.com/anonysec/OVNode/main/install.sh -o install.sh
+curl -fsSL https://raw.githubusercontent.com/anonysec/OVNode/main/internal/assets/install.sh -o install.sh
 OVN_NAME=eu-1 OVN_VPN_PORTS=1194,443,8443 OVN_IPV6=1 bash install.sh -y
 ```
 
@@ -328,4 +328,4 @@ MIT. See [LICENSE](LICENSE).
 OVManager and OVNode are independent repositories released on the same line (currently `2.0.3`). The OVManager installer can install OVNode on the same host; register the node in OVManager under **Nodes → Add Node**. The node never calls the panel — see the OVManager guide [Adding nodes](https://anonysec.github.io/OVManager/wiki/nodes.html).
 
 ## Dev builds
-Install a rolling dev build: `OVN_VERSION=dev bash <(curl -sSL https://raw.githubusercontent.com/anonysec/OVNode/main/install.sh)`. Dev versions look like `dev-YYYYMMDD.N-<sha>`.
+Install a rolling dev build: `OVN_VERSION=dev bash <(curl -sSL https://raw.githubusercontent.com/anonysec/OVNode/main/internal/assets/install.sh)`. Dev versions look like `dev-YYYYMMDD.N-<sha>`.
