@@ -111,7 +111,7 @@ func hookEventLogPath() string {
 	if v := fsx.Env("LOG_FILE", ""); v != "" {
 		return v
 	}
-	return "/var/log/ovnode/hook-events.log"
+	return filepath.Join(fsx.LogDir(), "hook-events.log")
 }
 
 type hookEvent struct {
