@@ -11,6 +11,7 @@ import (
 	"net/http/httptest"
 	"os"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"testing"
 )
@@ -45,6 +46,11 @@ func TestHandleBackupServesPKIAndState(t *testing.T) {
 	}
 	if ct := rec.Header().Get("Content-Type"); ct != "application/gzip" {
 		t.Fatalf("content type = %q, want application/gzip", ct)
+	}
+	// The archive is framed: a truncation must never look like a 200 with a
+	// short body.
+	if cl := rec.Header().Get("Content-Length"); cl != strconv.Itoa(rec.Body.Len()) {
+		t.Fatalf("content length = %q, body = %d", cl, rec.Body.Len())
 	}
 
 	gz, err := gzip.NewReader(rec.Body)
