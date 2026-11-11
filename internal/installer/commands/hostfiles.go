@@ -33,14 +33,14 @@ RuntimeDirectory=ovnode-openvpn
 RuntimeDirectoryMode=0755
 PrivateTmp=yes
 ProtectSystem=strict
-ReadWritePaths=%s %s /var/lib/ovnode /var/log/ovnode /run/ovnode-openvpn /tmp
+ReadWritePaths=%s %s %s %s /run/ovnode-openvpn /tmp
 RestrictAddressFamilies=AF_UNIX AF_INET AF_INET6 AF_NETLINK
 ProtectKernelTunables=yes
 ProtectHome=yes
 
 [Install]
 WantedBy=multi-user.target
-`, c.NodeName, c.AppDir, c.AppDir, c.AgentBin(), c.AppDir, c.OpenVPNRoot)
+`, c.NodeName, c.AppDir, c.AppDir, c.AgentBin(), c.AppDir, c.OpenVPNRoot, c.DataBase, c.LogDir)
 	path := filepath.Join(c.systemdDir(), c.Service)
 	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
 		return err

@@ -188,7 +188,7 @@ func AgentBin() string {
 			return exe
 		}
 	}
-	return "/opt/ovnode/ovnode-server"
+	return "/opt/" + InstanceName() + "/ovnode-server"
 }
 
 func RequiredDirs() []string {

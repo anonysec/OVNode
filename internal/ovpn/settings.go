@@ -46,7 +46,8 @@ func VPNNetwork() string {
 	// backwards-compat default for the canonical single instance
 	dataDir := fsx.OVNodeDir()
 	root := fsx.OpenVPNRoot()
-	if dataDir == "/var/lib/ovnode" && (root == "/etc/openvpn" || root == "/var/lib/ovnode/openvpn") {
+	canonical := "/var/lib/" + fsx.InstanceName()
+	if dataDir == canonical && (root == "/etc/openvpn" || root == canonical+"/openvpn") {
 		return "10.66.0.0"
 	}
 	// deterministic per-instance subnet in 10.8.1.0 .. 10.8.254.0

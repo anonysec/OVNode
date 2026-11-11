@@ -79,7 +79,7 @@ func NewServer() *Server {
 	s.panelAllow, s.allowEmpty = parsePanelAllow(os.Getenv("OVNODE_PANEL_ALLOW"))
 	s.appDirPath = fsx.EnvOr("APP_DIR", "")
 	if s.appDirPath == "" {
-		for _, c := range []string{"/opt/ovnode", "/usr/local/ovnode"} {
+		for _, c := range []string{"/opt/" + fsx.InstanceName(), "/usr/local/" + fsx.InstanceName()} {
 			if _, err := os.Stat(c + "/install.sh"); err == nil {
 				s.appDirPath = c
 				break
@@ -87,7 +87,7 @@ func NewServer() *Server {
 		}
 	}
 	if s.appDirPath == "" {
-		s.appDirPath = "/opt/ovnode"
+		s.appDirPath = "/opt/" + fsx.InstanceName()
 	}
 	return s
 }
@@ -335,7 +335,7 @@ func TLSMaterial() (string, string, error) {
 
 // setupPrintedPath is the marker that makes the first-boot print happen once.
 func setupPrintedPath() string {
-	dir := fsx.EnvOr("DATA_DIR", "/var/lib/ovnode")
+	dir := fsx.EnvOr("DATA_DIR", "/var/lib/"+fsx.InstanceName())
 	return filepath.Join(dir, ".setup-printed")
 }
 

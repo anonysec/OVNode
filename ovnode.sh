@@ -18,8 +18,9 @@ INSTANCE_NAME="${OVN_INSTANCE:-$_INVOKED_NAME}"
 : "${INSTANCE_NAME:=ovnode}"
 APP_DIR="${OVN_APP_DIR:-/opt/$INSTANCE_NAME}"
 DATA_BASE="${OVN_DATA_BASE:-/var/lib/$INSTANCE_NAME}"
-OPENVPN_ROOT="$(env_get "${APP_DIR:-/opt/ovnode}/.env" OVNODE_OPENVPN_ROOT 2>/dev/null || true)"; : "${OPENVPN_ROOT:=/var/lib/ovnode/openvpn}"
-LOG_DIR="$(env_get "${APP_DIR:-/opt/ovnode}/.env" OVNODE_LOG_DIR 2>/dev/null || true)"; : "${LOG_DIR:=/var/log/ovnode}"
+INSTANCE="${OVNODE_INSTANCE:-ovnode}"
+OPENVPN_ROOT="$(env_get "${APP_DIR:-/opt/$INSTANCE}/.env" OVNODE_OPENVPN_ROOT 2>/dev/null || true)"; : "${OPENVPN_ROOT:=/var/lib/$INSTANCE/openvpn}"
+LOG_DIR="$(env_get "${APP_DIR:-/opt/$INSTANCE}/.env" OVNODE_LOG_DIR 2>/dev/null || true)"; : "${LOG_DIR:=/var/log/$INSTANCE}"
 # Panel pairing record — one panel owns the node; `ovnode auth disconnect` is
 # the release, so the path has to be known to the CLI as well as the agent.
 PAIRING_FILE="${OVN_DATA_DIR:-/var/lib/$INSTANCE_NAME}/state/pairing.json"

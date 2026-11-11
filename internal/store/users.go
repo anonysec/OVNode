@@ -401,7 +401,7 @@ func fixRuntimeSpecial(openvpnRoot, pkiDir string, gid int) error {
 			}
 		}
 	}
-	if filepath.Clean(fsx.LogDir()) == "/var/log/ovnode" {
+	if filepath.Clean(fsx.LogDir()) == "/var/log/"+fsx.InstanceName() {
 		if err := repairRuntimeDir(fsx.LogDir(), 0o770|os.ModeSetgid, gid); err != nil {
 			return err
 		}

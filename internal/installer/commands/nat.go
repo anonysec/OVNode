@@ -68,7 +68,10 @@ func (c *Config) setupLogrotate() error {
 		if v := os.Getenv("OVNODE_LOG_FILE"); v != "" {
 			hookLog = v
 		} else {
-			hookLog = "/var/log/ovnode/hook-events.log"
+			hookLog = "/var/log/" + c.Instance + "/hook-events.log"
+			if c.Instance == "" {
+				hookLog = "/var/log/ovnode/hook-events.log"
+			}
 		}
 	}
 	group := c.RuntimeGroup
