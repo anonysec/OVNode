@@ -1,5 +1,18 @@
 # Changelog
 
+## 2.0.3 — 2026-11-11
+
+The Go installer rewrite reaches a release: `install.sh` downloads the binary and `SHA256SUMS`, verifies the checksum, then runs `ovnode install`, with the previous bash installer kept as `install-legacy.sh`.
+
+- `GET /sync/backup` serves the node PKI + state backup archive.
+- The node negotiates wire-contract v3 with the panel.
+- The pairing cache is invalidated when the panel lease expires.
+- Rollback and restore validate the snapshot and every tar member before the agent is stopped; manifest keys, size and member count are capped.
+- Bundle verify drains and closes gzip readers on every path, and caps the manifest.
+- NAT extra ports are validated at load and clamped; `RUNTIME_USER`/`RUNTIME_GROUP` are validated when the environment file is written.
+- PKI: EKU checked, secret permissions restored, systemd unit hardened; the agent supervises the OpenVPN child in a single unit.
+- CI: staticcheck 2026.2.2, gosec v2.30.0, a deadcode gate, and a contract drift check against the panel.
+
 ## 2.0.2 — 2026-11-09
 
 - Release binaries are verified against the release SHA256SUMS before install; the thin `install.sh` bootstrap downloads, verifies, then runs the Go installer (`ovnode install`). The previous bash installer ships one release as `install-legacy.sh`.
