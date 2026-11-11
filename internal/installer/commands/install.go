@@ -65,6 +65,9 @@ func Install(c *Config, runner Runner) error {
 	if err := os.MkdirAll(c.DataDir(), 0o755); err != nil {
 		return err
 	}
+	if err := os.MkdirAll("/var/log/ovnode", 0o755); err != nil {
+		return err
+	}
 	if err := c.ensureOpenVPNDirs(); err != nil {
 		return err
 	}
@@ -159,6 +162,8 @@ func (c *Config) ensureOpenVPNDirs() error {
 	data := c.DataDir()
 	ovn := c.OpenVPNRoot
 	dirs := []string{
+		"/etc/ovnode",
+		"/etc/ovnode/tls",
 		filepath.Join(ovn, "server"),
 		filepath.Join(ovn, "ccd"),
 		data,
