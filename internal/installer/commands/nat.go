@@ -3,7 +3,7 @@ package commands
 import (
 	"fmt"
 	"os"
-	"ovnode/internal/fsx"
+	"path/filepath"
 	"strings"
 )
 
@@ -55,29 +55,37 @@ func b2i(b bool) int {
 }
 
 func (c *Config) setupLogrotate() error {
-	// Preserved shape; RUNNER is the boundary for pkg_install.
 	if err := os.MkdirAll("/etc/logrotate.d", 0o755); err != nil {
 		return err
 	}
-	content := fmt.Sprintf("%s/server/*/openvpn.log {\n    size 10M\n    rotate 3\n    compress\n    missingok\n    notifempty\n    postrotate\n        systemctl kill -s HUP %s >/dev/null 2>&1 || true\n    endscript\n}\n", c.OpenVPNRoot, c.Service)
-	path := c.logrotatePath()
-	if err := os.WriteFile(path, []byte(content), 0o644); err != nil {
+	// The OpenVPN children are supervised by the agent (no separate unit), so
+	// the rotation signal goes straight to each child's PID. SIGHUP makes
+	// OpenVPN reopen its log-append file.
+	hookLog := filepath.Join(c.LogDir, "hook-events.log")
+	content := fmt.Sprintf(`%[1]s/server/*/openvpn.log {
+    size 10M
+    rotate 3
+    compress
+    missingok
+    notifempty
+    postrotate
+        for pidfile in %[1]s/server/*/ovnode.pid; do
+            [ -f "$pidfile" ] && kill -HUP "$(cat "$pidfile")" 2>/dev/null || true
+        done
+    endscript
+}
+
+%[2]s {
+    size 10M
+    rotate 5
+    compress
+    missingok
+    notifempty
+    copytruncate
+}
+`, c.OpenVPNRoot, hookLog)
+	if err := os.WriteFile(c.logrotatePath(), []byte(content), 0o644); err != nil {
 		return err
-	}
-	hookLog := c.EnvGet("LogFile")
-	if hookLog == "" {
-		if v := os.Getenv("LogFile"); v != "" {
-			hookLog = v
-		} else {
-			hookLog = "/var/log/" + c.Instance + "/hook-events.log"
-			if c.Instance == "" {
-				hookLog = "/var/log/" + fsx.InstanceName() + "/hook-events.log"
-			}
-		}
-	}
-	group := c.RuntimeGroup
-	if group == "" {
-		group = "nogroup"
 	}
 	fmt.Fprintf(os.Stderr, "  # %s\n", hookLog)
 	return nil
