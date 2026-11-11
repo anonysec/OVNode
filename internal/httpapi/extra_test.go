@@ -90,6 +90,11 @@ func TestHandleUpdateInvalidVersion(t *testing.T) {
 }
 
 func TestHandleUpdateLock(t *testing.T) {
+	// TriggerUpdate hands the upgrade to systemd-run; an unprivileged runner
+	// (CI) has no system manager to enqueue the transient unit.
+	if err := exec.Command("systemd-run", "--quiet", "--scope", "--", "true").Run(); err != nil {
+		t.Skip("skipping: systemd-run is required to start an update")
+	}
 	s := testServer(t)
 	dir := t.TempDir()
 	path := filepath.Join(dir, "install.sh")
