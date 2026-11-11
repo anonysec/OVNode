@@ -91,6 +91,8 @@ func TestWriteEnvShape(t *testing.T) {
 		"OVNODE_RUNTIME_USER=ovnode-vpn\n" +
 		"OVNODE_RUNTIME_GROUP=ovnode-vpn\n" +
 		"TLS_METHOD=selfsigned\n" +
+		"OVNODE_OPENVPN_ROOT=/var/lib/ovnode/openvpn\n" +
+		"OVNODE_NAT_CONF=/etc/default/ovnode-nat\n" +
 		"OVNODE_PANEL_ALLOW=203.0.113.9\n"
 	if string(data) != want {
 		t.Fatalf(".env = %q\nwant %q", data, want)

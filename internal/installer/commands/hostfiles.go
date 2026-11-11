@@ -7,6 +7,12 @@ import (
 )
 
 func (c *Config) systemdDir() string { return envOr("OVN_SYSTEMD_DIR", "/etc/systemd/system") }
+func (c *Config) natConfigPath() string {
+	if c.Instance == "" || c.Instance == "ovnode" {
+		return "/etc/default/ovnode-nat"
+	}
+	return "/etc/default/" + c.Instance + "-nat"
+}
 
 func (c *Config) writeSystemdUnit(r Runner) error {
 	content := fmt.Sprintf(`[Unit]
@@ -27,14 +33,14 @@ RuntimeDirectory=ovnode-openvpn
 RuntimeDirectoryMode=0755
 PrivateTmp=yes
 ProtectSystem=strict
-ReadWritePaths=%s /etc/ovnode /etc/openvpn /var/lib/ovnode /var/log/ovnode /run/ovnode-openvpn /tmp
+ReadWritePaths=%s %s /var/lib/ovnode /var/log/ovnode /run/ovnode-openvpn /tmp
 RestrictAddressFamilies=AF_UNIX AF_INET AF_INET6 AF_NETLINK
 ProtectKernelTunables=yes
 ProtectHome=yes
 
 [Install]
 WantedBy=multi-user.target
-`, c.NodeName, c.AppDir, c.AppDir, c.AgentBin(), c.AppDir)
+`, c.NodeName, c.AppDir, c.AppDir, c.AgentBin(), c.AppDir, c.OpenVPNRoot)
 	path := filepath.Join(c.systemdDir(), c.Service)
 	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
 		return err
@@ -50,20 +56,20 @@ WantedBy=multi-user.target
 func (c *Config) writeNatUnit(r Runner) error {
 	content := fmt.Sprintf(`[Unit]
 Description=OVNode native NAT
-ConditionPathExists=/etc/default/ovnode-nat
+ConditionPathExists=%s
 After=network-online.target
 Wants=network-online.target
 
 [Service]
 Type=oneshot
-EnvironmentFile=-/etc/default/ovnode-nat
+EnvironmentFile=-%s
 ExecStart=%s nat apply
 ExecStop=%s nat cleanup
 RemainAfterExit=yes
 
 [Install]
 WantedBy=multi-user.target
-`, c.AgentBin(), c.AgentBin())
+`, c.natConfigPath(), c.natConfigPath(), c.AgentBin(), c.AgentBin())
 	path := filepath.Join(c.systemdDir(), c.NatService)
 	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
 		return err

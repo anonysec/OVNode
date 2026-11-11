@@ -8,8 +8,9 @@ import (
 
 func (c *Config) setupNAT(r Runner) error {
 	natEnabled := !c.NoNAT
+	natConfigPath := c.natConfigPath()
 	if natEnabled {
-		if data, err := os.ReadFile("/etc/default/ovnode-nat"); err == nil {
+		if data, err := os.ReadFile(natConfigPath); err == nil {
 			for _, line := range strings.Split(string(data), "\n") {
 				if strings.HasPrefix(line, "VPN_NAT_ENABLED=") {
 					v := strings.TrimSpace(strings.Trim(strings.TrimPrefix(line, "VPN_NAT_ENABLED="), `"`))
@@ -24,7 +25,7 @@ func (c *Config) setupNAT(r Runner) error {
 	if err := os.MkdirAll("/etc/default", 0o755); err != nil {
 		return err
 	}
-	if err := os.WriteFile("/etc/default/ovnode-nat", []byte(content), 0o644); err != nil {
+	if err := os.WriteFile(natConfigPath, []byte(content), 0o644); err != nil {
 		return err
 	}
 	if !natEnabled {

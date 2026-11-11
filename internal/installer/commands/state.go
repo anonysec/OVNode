@@ -113,7 +113,16 @@ func (c *Config) resolveDirs() {
 	} else {
 		c.DataBase = "/var/lib/ovnode"
 	}
-	c.OpenVPNRoot = "/etc/openvpn"
+	// OpenVPN root: per-instance so multiple ovnode instances (and other
+	// projects' OpenVPN) never share /etc/openvpn. Override via
+	// OVN_OPENVPN_ROOT for custom locations.
+	if v := os.Getenv("OVN_OPENVPN_ROOT"); v != "" {
+		c.OpenVPNRoot = v
+	} else if c.Instance != "" && c.Instance != "ovnode" {
+		c.OpenVPNRoot = "/var/lib/" + c.Instance + "/openvpn"
+	} else {
+		c.OpenVPNRoot = "/var/lib/ovnode/openvpn"
+	}
 }
 
 // AgentBin mirrors bash AGENT_BIN.

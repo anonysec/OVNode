@@ -27,6 +27,8 @@ func (c *Config) writeEnv() error {
 	fmt.Fprintf(&b, "OVNODE_RUNTIME_USER=%s\n", c.RuntimeUser)
 	fmt.Fprintf(&b, "OVNODE_RUNTIME_GROUP=%s\n", c.RuntimeGroup)
 	fmt.Fprintf(&b, "TLS_METHOD=%s\n", c.TLSMethod)
+	fmt.Fprintf(&b, "OVNODE_OPENVPN_ROOT=%s\n", c.OpenVPNRoot)
+	fmt.Fprintf(&b, "OVNODE_NAT_CONF=%s\n", c.natConfigPath())
 	if c.ExtraPorts != "" {
 		fmt.Fprintf(&b, "OVNODE_EXTRA_PORTS=%s\n", c.ExtraPorts)
 	}

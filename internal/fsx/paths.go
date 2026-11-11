@@ -94,7 +94,16 @@ func toUpper(s string) string {
 
 const DefaultOpenVPNRoot = "/etc/openvpn"
 
-func OpenVPNRoot() string { return envOr("OVNODE_OPENVPN_ROOT", DefaultOpenVPNRoot) }
+func OpenVPNRoot() string {
+	// Backwards compat: existing installs keep /etc/openvpn.
+	if v := envOr("OVNODE_OPENVPN_ROOT", ""); v != "" {
+		return v
+	}
+	if _, err := os.Stat("/etc/openvpn/server/server.conf"); err == nil {
+		return DefaultOpenVPNRoot
+	}
+	return "/var/lib/ovnode/openvpn"
+}
 
 func IsInstalledTree() bool {
 	return filepath.Clean(OpenVPNRoot()) == DefaultOpenVPNRoot
