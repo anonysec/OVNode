@@ -15,9 +15,7 @@ import (
 // WriteUserState merges limit and disabled into <usersDir>/<cn>/state.
 //
 // A nil field keeps its current value, so a caller that only changes the
-// limit never clears the disabled flag. The legacy split files (a `limit`
-// value file and a `disabled` existence marker) are removed once the merged
-// file lands, so the tree converges on one format.
+// limit never clears the disabled flag. One `state` file is the only format.
 func WriteUserState(usersDir, cn string, limit *int, disabled *bool) error {
 	return WriteUserPolicy(usersDir, cn, nil, limit, disabled)
 }
@@ -40,17 +38,6 @@ func WriteUserPolicy(usersDir, cn string, name *string, limit *int, disabled *bo
 		current, err := ReadUserState(usersDir, cn)
 		if err != nil {
 			return err
-		}
-		if !current.NameSet {
-			if data, err := readPolicyFile(filepath.Join(dir, "name")); err == nil {
-				current.Name = strings.TrimSpace(string(data))
-				if err := validateName(current.Name); err != nil {
-					return err
-				}
-				current.NameSet = true
-			} else if !os.IsNotExist(err) {
-				return err
-			}
 		}
 		if name != nil {
 			current.Name, current.NameSet = *name, true
@@ -89,11 +76,6 @@ func WriteUserPolicy(usersDir, cn string, name *string, limit *int, disabled *bo
 			return err
 		}
 		InvalidateNameCache()
-		for _, legacy := range []string{"limit", "disabled", "name"} {
-			if err := os.Remove(filepath.Join(dir, legacy)); err != nil && !os.IsNotExist(err) {
-				return err
-			}
-		}
 		return nil
 	})
 }

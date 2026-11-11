@@ -55,10 +55,6 @@ func ReadUserState(usersDir, cn string) (UserState, error) {
 		}
 		return UserState{}, err
 	}
-	// disabledSet records that the merged file spoke about `disabled` at all.
-	// A merged file that says disabled=0 is authoritative: consulting the
-	// legacy marker afterwards would re-disable a user the merge re-enabled.
-	disabledSet := false
 	statePath := filepath.Join(dir, "state")
 	if data, err := readPolicyFile(statePath); err == nil {
 		seen := map[string]bool{}
@@ -83,7 +79,6 @@ func ReadUserState(usersDir, cn string) (UserState, error) {
 				if v != "0" && v != "1" {
 					return UserState{}, fmt.Errorf("corrupt policy disabled flag in %s", statePath)
 				}
-				disabledSet = true
 				st.Disabled = v == "1"
 			case "name":
 				if err := validateName(v); err != nil {
@@ -99,26 +94,6 @@ func ReadUserState(usersDir, cn string) (UserState, error) {
 		}
 	} else if !os.IsNotExist(err) {
 		return UserState{}, err
-	}
-	if !disabledSet {
-		if _, err := readPolicyFile(filepath.Join(dir, "disabled")); err == nil {
-			st.Disabled = true
-		} else if !os.IsNotExist(err) {
-			return UserState{}, err
-		}
-	}
-	if !st.LimitSet {
-		if raw, err := readPolicyFile(filepath.Join(dir, "limit")); err == nil {
-			line := strings.TrimSuffix(strings.TrimSuffix(string(raw), "\n"), "\r")
-			n, err := strconv.Atoi(line)
-			if err != nil || !isDigits(line) {
-				return UserState{}, fmt.Errorf("corrupt legacy limit in %s", dir)
-			}
-			st.Limit = n
-			st.LimitSet = true
-		} else if !os.IsNotExist(err) {
-			return UserState{}, err
-		}
 	}
 	return st, nil
 }

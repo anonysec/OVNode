@@ -4,7 +4,6 @@
 package store
 
 import (
-	"encoding/json"
 	"fmt"
 	"io/fs"
 	"os"
@@ -156,21 +155,11 @@ func OVPNPath(usersDir, cn string) (string, error) {
 	return filepath.Join(dir, "client.ovpn"), nil
 }
 
-// EnsureLayout creates the ovnode tree and runs legacy migration once at
-// startup. Permission repair is separate: FixRuntimePermissions does not
-// migrate, so a restart does not replay legacy moves.
-func EnsureLayout(openvpnRoot string) {
-	ovnodeDir := filepath.Join(openvpnRoot, "ovnode")
-	for _, d := range []string{
-		filepath.Join(ovnodeDir, "users"),
-		filepath.Join(ovnodeDir, "sessions"),
-		filepath.Join(ovnodeDir, "usage"),
-		filepath.Join(ovnodeDir, "scripts"),
-		filepath.Join(ovnodeDir, "state"),
-	} {
-		os.MkdirAll(d, 0o755)
-	}
-	MigrateLegacy(openvpnRoot)
+// EnsureLayout creates the node's own state directory. The users, sessions
+// and usage trees are created on demand with the right modes; there is no
+// second tree under the OpenVPN root.
+func EnsureLayout() {
+	_ = fsx.MkdirAllNoFollow(filepath.Join(fsx.OVNodeDir(), "state"), 0o750)
 }
 
 // rule is one permission row. match returns the file mode, the owner gid,
@@ -187,65 +176,13 @@ type rule struct {
 // permRules returns the repair table in walk order. The runtime gid is
 // resolved by the caller.
 func permRules(openvpnRoot string, gid int) []rule {
-	legacy := filepath.Join(openvpnRoot, "ovnode")
 	pkiDir := filepath.Join(openvpnRoot, "server", "pki")
 	var rules []rule
 	for _, dir := range []string{
-		openvpnRoot, filepath.Join(openvpnRoot, "server"), pkiDir, filepath.Join(openvpnRoot, "ccd"), legacy, fsx.OVNodeDir(),
+		openvpnRoot, filepath.Join(openvpnRoot, "server"), pkiDir, filepath.Join(openvpnRoot, "ccd"), fsx.OVNodeDir(),
 	} {
 		rules = append(rules, rule{path: dir, dir: 0o750 | os.ModeSetgid, file: 0o750 | os.ModeSetgid, gid: gid})
 	}
-	for _, name := range []string{"users", "sessions", "usage", "scripts", "state"} {
-		rules = append(rules, rule{path: filepath.Join(legacy, name), dir: 0o750 | os.ModeSetgid, file: 0o750 | os.ModeSetgid, gid: gid})
-	}
-	for _, name := range []string{"clients", "limits", "disabled", "ovnode-active", "scripts"} {
-		source := filepath.Join(openvpnRoot, name)
-		if _, err := os.Lstat(source); os.IsNotExist(err) {
-			continue
-		}
-		n := name
-		rules = append(rules, rule{
-			path:      source,
-			dir:       0o750 | os.ModeSetgid,
-			file:      0o600,
-			gid:       gid,
-			recursive: true,
-			match: func(path string, info fs.FileInfo) (os.FileMode, int, bool) {
-				if info.IsDir() {
-					return 0o750 | os.ModeSetgid, gid, true
-				}
-				switch n {
-				case "limits", "disabled":
-					return 0o640, gid, true
-				case "clients":
-					return 0o600, gid, true
-				}
-				if filepath.Ext(path) == ".ovpn" || filepath.Ext(path) == ".key" {
-					return 0o600, gid, true
-				}
-				return 0, 0, false
-			},
-		})
-	}
-	rules = append(rules, rule{
-		path:      filepath.Join(legacy, "users"),
-		dir:       0o750 | os.ModeSetgid,
-		file:      0o600,
-		gid:       gid,
-		recursive: true,
-		match: func(path string, info fs.FileInfo) (os.FileMode, int, bool) {
-			if info.IsDir() {
-				return 0o750 | os.ModeSetgid, gid, true
-			}
-			switch info.Name() {
-			case "state", "limit", "disabled", "name":
-				return 0o640, gid, true
-			case "cert.pem", "ca.pem":
-				return 0o644, gid, true
-			}
-			return 0o600, gid, true
-		},
-	})
 	ub := fsx.UsersDir()
 	rules = append(rules, rule{
 		path:      ub,
@@ -484,121 +421,4 @@ func repairRuntimeDir(path string, perm os.FileMode, gid int) error {
 		return err
 	}
 	return fsx.SetPermissions(path, perm, 0, gid)
-}
-
-// MigrateLegacy moves pre-store state into the ovnode tree (files moved, never copied).
-func MigrateLegacy(openvpnRoot string) {
-	ovnodeDir := filepath.Join(openvpnRoot, "ovnode")
-	usersDir := filepath.Join(ovnodeDir, "users")
-	sessionsDir := filepath.Join(ovnodeDir, "sessions")
-	legacyClients := filepath.Join(openvpnRoot, "clients")
-	legacyLimits := filepath.Join(openvpnRoot, "limits")
-	legacyDisabled := filepath.Join(openvpnRoot, "disabled")
-	legacyActive := filepath.Join(openvpnRoot, "ovnode-active")
-	legacyScripts := filepath.Join(openvpnRoot, "scripts")
-
-	// uid_map.json {uid: username} -> users/<uid>/name
-	uidMap := filepath.Join(legacyClients, "uid_map.json")
-	if info, err := os.Stat(uidMap); err == nil && !info.IsDir() {
-		data, _ := os.ReadFile(uidMap)
-		// parse minimal JSON manually: {"uid":"name",...}
-		// use encoding/json
-		var m map[string]string
-		if json.Unmarshal(data, &m) == nil {
-			for uid, name := range m {
-				if !fsx.StoreKeyRe.MatchString(uid) {
-					continue
-				}
-				namePath := filepath.Join(usersDir, uid, "name")
-				if _, err := os.Stat(namePath); err != nil {
-					os.MkdirAll(filepath.Join(usersDir, uid), 0o755)
-					fsx.WriteFileAtomic(namePath, []byte(name+"\n"), 0o600)
-				}
-			}
-		}
-		os.Remove(uidMap)
-	}
-
-	// move .ovpn files
-	moveDir(legacyClients, usersDir, ".ovpn", func(cn, usersDir string) string {
-		return filepath.Join(usersDir, cn, "client.ovpn")
-	})
-	// move limits
-	moveDir(legacyLimits, usersDir, "", func(cn, usersDir string) string {
-		return filepath.Join(usersDir, cn, "limit")
-	})
-	// move disabled
-	moveDir(legacyDisabled, usersDir, "", func(cn, usersDir string) string {
-		return filepath.Join(usersDir, cn, "disabled")
-	})
-
-	// session markers verbatim
-	if info, err := os.Stat(legacyActive); err == nil && info.IsDir() {
-		entries, _ := os.ReadDir(legacyActive)
-		for _, e := range entries {
-			if e.IsDir() {
-				continue
-			}
-			src := filepath.Join(legacyActive, e.Name())
-			dst := filepath.Join(sessionsDir, e.Name())
-			if _, err := os.Stat(dst); err != nil {
-				os.Rename(src, dst)
-			}
-		}
-		os.Remove(legacyActive)
-	}
-
-	// remove old hook copies
-	for _, fname := range []string{"ovnode-client-connect.sh", "ovnode-client-disconnect.sh", "ovnode-mlogin.env"} {
-		os.Remove(filepath.Join(legacyScripts, fname))
-	}
-	os.Remove(legacyScripts)
-}
-
-func moveFile(src, dst string) {
-	if err := os.Rename(src, dst); err != nil {
-		data, rerr := os.ReadFile(src)
-		if rerr != nil {
-			return
-		}
-		if werr := fsx.WriteFileAtomic(dst, data, 0o644); werr == nil {
-			os.Remove(src)
-		}
-	}
-}
-
-func moveDir(srcDir, usersDir, suffix string, dstFor func(string, string) string) {
-	info, err := os.Stat(srcDir)
-	if err != nil || !info.IsDir() {
-		return
-	}
-	entries, _ := os.ReadDir(srcDir)
-	for _, e := range entries {
-		if e.IsDir() {
-			continue
-		}
-		name := e.Name()
-		cn := name
-		if suffix != "" {
-			if !strings.HasSuffix(name, suffix) {
-				continue
-			}
-			cn = name[:len(name)-len(suffix)]
-		}
-		if !fsx.StoreKeyRe.MatchString(cn) {
-			continue
-		}
-		src := filepath.Join(srcDir, name)
-		fi, err := os.Stat(src)
-		if err != nil || fi.IsDir() {
-			continue
-		}
-		dst := dstFor(cn, usersDir)
-		if _, err := os.Stat(dst); err != nil {
-			moveFile(src, dst)
-		} else {
-			os.Remove(src)
-		}
-	}
-	os.Remove(srcDir)
 }

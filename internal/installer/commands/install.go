@@ -111,9 +111,6 @@ func Install(c *Config, runner Runner) error {
 	c.openFirewall(runner)
 	// [7/7] Command
 	c.installCLI()
-	if err := c.writeInstallResult(filepath.Join(c.DataBase, "install-result.env"), runner); err != nil {
-		return err
-	}
 	if err := c.writeSetupInfo(runner); err != nil {
 		return err
 	}

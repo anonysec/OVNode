@@ -221,7 +221,7 @@ func tlsSeenPath() string {
 
 // ovnodeStateDir returns the node's own state directory.
 func ovnodeStateDir() string {
-	return filepath.Join(openvpnRoot(), "ovnode", "state")
+	return filepath.Join(fsx.OVNodeDir(), "state")
 }
 
 type tlsSeen struct {

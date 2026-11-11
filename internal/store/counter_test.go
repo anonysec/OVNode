@@ -78,28 +78,6 @@ func TestCounterResetPreservesLiveOffsets(t *testing.T) {
 	}
 }
 
-// TestCounterLegacyMigration: a legacy digit file is the starting total.
-func TestCounterLegacyMigration(t *testing.T) {
-	dir := t.TempDir()
-	if err := os.WriteFile(filepath.Join(dir, "alice"), []byte("1234\n"), 0o644); err != nil {
-		t.Fatal(err)
-	}
-	st, err := ReadUsageState(dir, "alice")
-	if err != nil {
-		t.Fatal(err)
-	}
-	if st.Total != 1234 || st.Version != 0 {
-		t.Fatalf("legacy state = %+v, want total 1234 version 0", st)
-	}
-	st, err = RecordSessionUsage(dir, "alice", "S1", 10, false)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if st.Total != 1244 || st.Version != 2 || st.Epoch == "" {
-		t.Fatalf("migrated state = %+v, want total 1244 v2 with epoch", st)
-	}
-}
-
 // TestCounterMalformedIsUnavailable: corrupt, empty, unknown-version and
 // incomplete v2 files are errors, never a zero total.
 func TestCounterMalformedIsUnavailable(t *testing.T) {

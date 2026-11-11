@@ -9,7 +9,6 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
-	"strconv"
 	"strings"
 	"sync/atomic"
 	"time"
@@ -74,7 +73,6 @@ func isHex(s string) bool {
 
 // ReadUsageState reads the persisted counter for one CN.
 //
-// A legacy unsigned-integer file is accepted as the starting total (version 0).
 // Empty, corrupt, incomplete, or unknown-version files return an error rather
 // than a zero total: they are unavailable, not a fresh epoch.
 func ReadUsageState(usageDir, cn string) (UsageState, error) {
@@ -98,18 +96,6 @@ func ReadUsageState(usageDir, cn string) (UsageState, error) {
 	trimmed := strings.TrimSpace(string(data))
 	if trimmed == "" {
 		return UsageState{}, fmt.Errorf("empty counter file for %q", cn)
-	}
-	if isAllDigits(trimmed) {
-		n, err := strconv.ParseUint(trimmed, 10, 64)
-		if err != nil {
-			return UsageState{}, err
-		}
-		return UsageState{
-			Version:  0,
-			Epoch:    "",
-			Total:    n,
-			Sessions: map[string]UsageSession{},
-		}, nil
 	}
 	// Strict v2 validation: unknown fields, a missing/empty epoch, a missing
 	// sessions map, or a version other than 2 is unavailable, not zero.
@@ -150,18 +136,6 @@ func ReadUsageState(usageDir, cn string) (UsageState, error) {
 		}
 	}
 	return st, nil
-}
-
-func isAllDigits(s string) bool {
-	if s == "" {
-		return false
-	}
-	for _, c := range s {
-		if c < '0' || c > '9' {
-			return false
-		}
-	}
-	return true
 }
 
 func writeUsageState(usageDir, safe string, st UsageState) error {

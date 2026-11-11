@@ -4,6 +4,7 @@
 package store
 
 import (
+	"fmt"
 	"os"
 	"path/filepath"
 	"testing"
@@ -65,58 +66,6 @@ func TestWriteUserStateKeepsUnlimitedDistinct(t *testing.T) {
 	}
 }
 
-// A state write must converge the tree: the legacy split files are removed
-// once the merged file lands, so the hook cannot read a stale one. The
-// legacy marker is still authoritative before the merge — it is the only
-// record the node has — so it is carried into the merged file.
-func TestWriteUserStateRemovesLegacyFiles(t *testing.T) {
-	dir := t.TempDir()
-	userDir := filepath.Join(dir, "carol")
-	if err := os.MkdirAll(userDir, 0o755); err != nil {
-		t.Fatal(err)
-	}
-	if err := os.WriteFile(filepath.Join(userDir, "limit"), []byte("9\n"), 0o644); err != nil {
-		t.Fatal(err)
-	}
-	if err := os.WriteFile(filepath.Join(userDir, "disabled"), nil, 0o644); err != nil {
-		t.Fatal(err)
-	}
-	if err := SetLimit(dir, "carol", 2); err != nil {
-		t.Fatalf("SetLimit: %v", err)
-	}
-	for _, name := range []string{"limit", "disabled"} {
-		if _, err := os.Stat(filepath.Join(userDir, name)); !os.IsNotExist(err) {
-			t.Errorf("legacy %s file still present", name)
-		}
-	}
-	st, err := ReadUserState(dir, "carol")
-	if err != nil {
-		t.Fatal(err)
-	}
-	if st.Limit != 2 {
-		t.Errorf("limit = %d, want 2", st.Limit)
-	}
-	if !st.Disabled {
-		t.Error("disabled = false, want true — the legacy marker was lost in the merge")
-	}
-
-	// The merged file is authoritative from now on: an explicit
-	// deactivation must survive a later limit write.
-	if err := SetDisabled(dir, "carol", false); err != nil {
-		t.Fatalf("SetDisabled: %v", err)
-	}
-	if err := SetLimit(dir, "carol", 4); err != nil {
-		t.Fatalf("SetLimit: %v", err)
-	}
-	st, err = ReadUserState(dir, "carol")
-	if err != nil {
-		t.Fatal(err)
-	}
-	if st.Disabled {
-		t.Error("disabled = true, want false — the merged file was overridden")
-	}
-}
-
 // A CN that reaches the filesystem as a path component must be refused.
 func TestWriteUserStateRejectsTraversal(t *testing.T) {
 	dir := t.TempDir()
@@ -172,11 +121,17 @@ func TestWriteNamePreservesUnspecifiedPolicy(t *testing.T) {
 	}
 }
 
-func TestAccumulatedUsageCountsOnlyDigits(t *testing.T) {
-	dir := t.TempDir()
-	if err := os.WriteFile(filepath.Join(dir, "eve"), []byte("1234\n"), 0o644); err != nil {
+func writeCounter(t *testing.T, dir, cn string, total uint64) {
+	t.Helper()
+	body := fmt.Sprintf(`{"version":2,"epoch":"e","total":%d,"sessions":{}}`, total)
+	if err := os.WriteFile(filepath.Join(dir, cn), []byte(body), 0o644); err != nil {
 		t.Fatal(err)
 	}
+}
+
+func TestAccumulatedUsageReadsTheCounter(t *testing.T) {
+	dir := t.TempDir()
+	writeCounter(t, dir, "eve", 1234)
 	if err := os.WriteFile(filepath.Join(dir, "frank"), []byte("not-a-number"), 0o644); err != nil {
 		t.Fatal(err)
 	}
@@ -194,9 +149,7 @@ func TestAccumulatedUsageCountsOnlyDigits(t *testing.T) {
 // The .lock.<cn> file is the store's own flock file, not a user.
 func TestAllAccumulatedUsageSkipsLockFiles(t *testing.T) {
 	dir := t.TempDir()
-	if err := os.WriteFile(filepath.Join(dir, "gina"), []byte("10\n"), 0o644); err != nil {
-		t.Fatal(err)
-	}
+	writeCounter(t, dir, "gina", 10)
 	if err := os.WriteFile(filepath.Join(dir, ".lock.gina"), []byte("99\n"), 0o644); err != nil {
 		t.Fatal(err)
 	}
@@ -214,9 +167,7 @@ func TestAllAccumulatedUsageSkipsLockFiles(t *testing.T) {
 // total back, so the removal happens under the usage lock.
 func TestResetUsageRemovesBankedBytes(t *testing.T) {
 	dir := t.TempDir()
-	if err := os.WriteFile(filepath.Join(dir, "hank"), []byte("500\n"), 0o644); err != nil {
-		t.Fatal(err)
-	}
+	writeCounter(t, dir, "hank", 500)
 	InvalidateUsageCache()
 	if err := ResetUsage(dir, "hank"); err != nil {
 		t.Fatalf("ResetUsage: %v", err)

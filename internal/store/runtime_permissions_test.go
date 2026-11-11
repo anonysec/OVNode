@@ -192,26 +192,6 @@ func TestRuntimeRepairRejectsNonRegularEntries(t *testing.T) {
 	}
 }
 
-func TestRuntimePermissionsRejectLegacyMapSymlink(t *testing.T) {
-	dir := runtimeRepairFixture(t)
-	if err := os.MkdirAll(filepath.Join(dir, "openvpn/clients"), 0o755); err != nil {
-		t.Fatal(err)
-	}
-	if err := os.WriteFile(filepath.Join(dir, "protected"), []byte(`{"alice":"private-name"}`), 0o600); err != nil {
-		t.Fatal(err)
-	}
-	link := filepath.Join(dir, "openvpn/clients/uid_map.json")
-	if err := os.Symlink("/protected", link); err != nil {
-		t.Fatal(err)
-	}
-	if output, err := repairInJail(t, dir); err == nil {
-		t.Errorf("repair followed a legacy map symlink: %s", output)
-	}
-	if _, err := os.Lstat(link); err != nil {
-		t.Errorf("repair consumed an untrusted legacy map: %v", err)
-	}
-}
-
 func TestRuntimePermissionsNoManagedVPNTree(t *testing.T) {
 	dir := t.TempDir()
 	t.Setenv("OVNODE_OPENVPN_ROOT", filepath.Join(dir, "openvpn"))
@@ -241,7 +221,7 @@ func TestReadUserStateRejectsUnreadableMaterial(t *testing.T) {
 	if os.Getuid() != 0 {
 		t.Skip("root required to drop UID")
 	}
-	for _, kind := range []string{"directory", "state", "limit", "disabled", "disabled-directory", "disabled-dangling-symlink", "valid-default"} {
+	for _, kind := range []string{"directory", "state", "valid-default"} {
 		t.Run(kind, func(t *testing.T) {
 			dir, err := os.MkdirTemp("", "ovnode-policy-")
 			if err != nil {
@@ -258,18 +238,8 @@ func TestReadUserStateRejectsUnreadableMaterial(t *testing.T) {
 			switch kind {
 			case "directory":
 				err = os.Chmod(userDir, 0o700)
-			case "state", "limit", "disabled":
-				body := ""
-				if kind == "state" {
-					body = "limit=0\ndisabled=1\n"
-				} else if kind == "limit" {
-					body = "2\n"
-				}
-				err = os.WriteFile(filepath.Join(userDir, kind), []byte(body), 0o600)
-			case "disabled-directory":
-				err = os.Mkdir(filepath.Join(userDir, "disabled"), 0o755)
-			case "disabled-dangling-symlink":
-				err = os.Symlink("missing", filepath.Join(userDir, "disabled"))
+			case "state":
+				err = os.WriteFile(filepath.Join(userDir, "state"), []byte("limit=0\ndisabled=1\n"), 0o600)
 			}
 			if err != nil {
 				t.Fatal(err)

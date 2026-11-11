@@ -143,6 +143,4 @@ func generateAPIKey() string {
 	return "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef"
 }
 
-func filepath2(a, b string) string { return a + "/" + b }
-
 var stderr = GetStderr()

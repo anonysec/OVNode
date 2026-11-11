@@ -54,49 +54,6 @@ func (c *Config) writeEnv() error {
 	return os.Chmod(path, 0o600)
 }
 
-// writeInstallResult mirrors write_install_result.
-func (c *Config) writeInstallResult(path string, runner Runner) error {
-	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
-		return err
-	}
-	addr := primaryIP(runner)
-	proto := "http"
-	if c.TLSMethod != "none" {
-		proto = "https"
-	}
-	cert := c.TLSCert
-	if cert == "" {
-		if v := os.Getenv("SSL_CERTFILE"); v != "" {
-			cert = v
-		} else {
-			cert = filepath.Join(c.OpenVPNRoot, "server/pki/issued/server.crt")
-		}
-	}
-	rows := []struct{ k, v string }{
-		{"OVNODE_VERSION", c.Version},
-		{"OVNODE_NAME", c.NodeName},
-		{"OVNODE_API_PORT", c.Port},
-		{"OVNODE_VPN_PORT", c.VPNSport},
-		{"OVNODE_VPN_EXTRA_PORTS", c.ExtraPorts},
-		{"OVNODE_VPN_PROTO", c.Proto},
-		{"OVNODE_TLS_METHOD", c.TLSMethod},
-		{"OVNODE_ADDRESS", addr},
-		{"OVNODE_PROTOCOL", proto},
-		{"OVNODE_API_KEY", c.APIKey},
-		{"OVNODE_CERT_FILE", cert},
-		{"OVNODE_DATA_DIR", c.DataDir()},
-		{"OVNODE_SERVICE", c.Service},
-	}
-	var b strings.Builder
-	for _, r := range rows {
-		fmt.Fprintf(&b, "%s=%q\n", r.k, r.v)
-	}
-	if err := os.WriteFile(path, []byte(b.String()), 0o600); err != nil {
-		return err
-	}
-	return os.Chmod(path, 0o600)
-}
-
 // writeSetupInfo mirrors write_setup_info.
 func (c *Config) writeSetupInfo(runner Runner) error {
 	path := filepath.Join(c.DataDir(), "setup-info")

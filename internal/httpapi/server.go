@@ -396,9 +396,9 @@ func markSetupPrinted() {
 // Run starts the agent.
 func Run() error {
 	if _, err := os.Lstat(pki.PKIDir()); err == nil {
-		store.EnsureLayout(pki.OpenVPNRoot())
+		store.EnsureLayout()
 	} else if _, err := os.Lstat(filepath.Join(pki.OpenVPNRoot(), "server", "server.conf")); err == nil {
-		store.EnsureLayout(pki.OpenVPNRoot())
+		store.EnsureLayout()
 	}
 	if err := store.FixRuntimePermissions(pki.OpenVPNRoot()); err != nil {
 		return fmt.Errorf("runtime permissions: %w", err)

@@ -39,7 +39,7 @@ func TestPermissionTransitionNeverGrantsWritableDescriptor(t *testing.T) {
 	for _, mode := range []string{"transition", "repair"} {
 		t.Run(mode, func(t *testing.T) {
 			root := filepath.Join(dir, mode)
-			for _, path := range []string{"app", "openvpn/server/pki/private", "openvpn/limits", "openvpn/ovnode/users/alice", "logs"} {
+			for _, path := range []string{"app", "openvpn/server/pki/private", "data/users/alice", "logs"} {
 				if err := os.MkdirAll(filepath.Join(root, path), 0o755); err != nil {
 					t.Fatal(err)
 				}
@@ -47,8 +47,8 @@ func TestPermissionTransitionNeverGrantsWritableDescriptor(t *testing.T) {
 			if err := os.WriteFile(filepath.Join(root, "app/.env"), nil, 0o600); err != nil {
 				t.Fatal(err)
 			}
-			policy := filepath.Join(root, "openvpn/limits/alice")
-			if err := os.WriteFile(policy, []byte("7\n"), 0o660); err != nil {
+			policy := filepath.Join(root, "data/users/alice/state")
+			if err := os.WriteFile(policy, []byte("limit=7\ndisabled=0\n"), 0o660); err != nil {
 				t.Fatal(err)
 			}
 			if err := os.Chmod(policy, 0o660); err != nil {
@@ -60,7 +60,7 @@ func TestPermissionTransitionNeverGrantsWritableDescriptor(t *testing.T) {
 			}
 			cmd := exec.CommandContext(ctx, bin, mode, argument)
 			cmd.Env = append(os.Environ(), "OVN_APP_DIR="+filepath.Join(root, "app"), "OVNODE_OPENVPN_ROOT="+filepath.Join(root, "openvpn"),
-				"OVNODE_DATA_DIR="+filepath.Join(root, "data"), "OVNODE_USERS_DIR="+filepath.Join(root, "openvpn/ovnode/users"),
+				"OVNODE_DATA_DIR="+filepath.Join(root, "data"), "OVNODE_USERS_DIR="+filepath.Join(root, "data/users"),
 				"OVNODE_SESSIONS_DIR="+filepath.Join(root, "data/sessions"), "OVNODE_USAGE_DIR="+filepath.Join(root, "data/usage"),
 				"OVNODE_LOG_DIR="+filepath.Join(root, "logs"), "OVNODE_LOG_FILE="+filepath.Join(root, "logs/events.log"), "OVNODE_RUNTIME_GROUP=65533")
 			cmd.SysProcAttr = &syscall.SysProcAttr{Ptrace: true}
@@ -153,11 +153,7 @@ func TestPermissionTransitionNeverGrantsWritableDescriptor(t *testing.T) {
 				t.Fatal("controlled fixture did not observe the target group transition")
 			}
 			if opened {
-				finalPath := policy
-				if mode == "repair" {
-					finalPath = filepath.Join(root, "openvpn/ovnode/users/alice/limit")
-				}
-				info, err := os.Stat(finalPath)
+				info, err := os.Stat(policy)
 				if err != nil || info.Mode().Perm() != 0o640 {
 					t.Fatalf("final policy mode must already be restrictive: %v (%v)", info, err)
 				}
