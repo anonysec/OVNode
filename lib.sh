@@ -500,7 +500,7 @@ issue_letsencrypt() {
     fi
 
     local extra_args=()
-    if [[ "$is_ip" == "1" ]]; then extra_args=(--certificate-profile shortlived --days 6); fi
+    if [[ "$is_ip" == "1" ]]; then extra_args=(--certificate-profile shortlived --days 6 --server letsencrypt); fi
 
     "$HOME/.acme.sh/acme.sh" --issue -d "$domain" --standalone "${extra_args[@]}" \
         --accountemail "$email" >/dev/null 2>&1 \
