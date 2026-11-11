@@ -316,7 +316,7 @@ func EnsureClientTemplate() error {
 		tunnelAddr = "auto"
 	}
 
-	tmpl := "client\ndev tun\nproto " + proto + "\n" + RemoteLines(tunnelAddr, port) + "\nresolv-retry infinite\nnobind\npersist-key\npersist-tun\nremote-cert-tls server\ntls-version-min 1.3\nauth SHA256\ndata-ciphers AES-128-GCM:AES-256-GCM:CHACHA20-POLY1305\ncipher AES-128-GCM\nignore-unknown-option block-outside-dns\nblock-outside-dns\nmssfix 1400\nverb 3\n"
+	tmpl := "client\ndev tun\nproto " + proto + "\n" + RemoteLines(tunnelAddr, port) + "\nresolv-retry infinite\nnobind\npersist-key\npersist-tun\nremote-cert-tls server\ntls-version-min 1.3\nauth SHA256\ndata-ciphers AES-128-GCM:AES-256-GCM:CHACHA20-POLY1305\ncipher AES-128-GCM\nignore-unknown-option block-outside-dns\nblock-outside-dns\nsndbuf 4194304\nrcvbuf 4194304\ntxqueuelen 10000\nmssfix 1400\nfast-io\nverb 3\n"
 	return fsx.WriteFileAtomic(template, []byte(tmpl), 0o644)
 }
 
