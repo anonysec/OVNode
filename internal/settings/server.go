@@ -189,37 +189,37 @@ func SaveTo(path string, s Server) error {
 // Validate checks every field against the bounds the UI enforces.
 func (s Server) Validate() error {
 	if _, ok := NormalizeProtocol(s.Protocol); !ok {
-		return fmt.Errorf("Protocol %q is not udp, tcp or both", s.Protocol)
+		return fmt.Errorf("protocol %q is not udp, tcp or both", s.Protocol)
 	}
 	if s.Port < 1 || s.Port > 65535 {
-		return fmt.Errorf("Port %d is outside 1-65535", s.Port)
+		return fmt.Errorf("port %d is outside 1-65535", s.Port)
 	}
 	if s.TunnelAddress != "" && s.TunnelAddress != "auto" {
 		if net.ParseIP(s.TunnelAddress) == nil && !validDomain(s.TunnelAddress) {
-			return fmt.Errorf("TunnelAddress %q is not an IP or hostname", s.TunnelAddress)
+			return fmt.Errorf("tunnelAddress %q is not an IP or hostname", s.TunnelAddress)
 		}
 	}
 	seen := map[int]bool{s.Port: true}
 	for _, p := range s.ExtraPorts {
 		if p < 1 || p > 65535 {
-			return fmt.Errorf("Extra port %d is outside 1-65535", p)
+			return fmt.Errorf("extra port %d is outside 1-65535", p)
 		}
 		if seen[p] {
-			return fmt.Errorf("Extra port %d is listed twice", p)
+			return fmt.Errorf("extra port %d is listed twice", p)
 		}
 		seen[p] = true
 	}
 	if s.MaxClients < 1 || s.MaxClients > 10000 {
-		return fmt.Errorf("MaxClients %d is outside 1-10000", s.MaxClients)
+		return fmt.Errorf("maxClients %d is outside 1-10000", s.MaxClients)
 	}
 	if s.KeepalivePing < 5 || s.KeepalivePing > 300 {
-		return fmt.Errorf("KeepalivePing %d is outside 5-300", s.KeepalivePing)
+		return fmt.Errorf("keepalivePing %d is outside 5-300", s.KeepalivePing)
 	}
 	if s.KeepaliveTimeout < 30 || s.KeepaliveTimeout > 900 {
-		return fmt.Errorf("KeepaliveTimeout %d is outside 30-900", s.KeepaliveTimeout)
+		return fmt.Errorf("keepaliveTimeout %d is outside 30-900", s.KeepaliveTimeout)
 	}
 	if s.KeepaliveTimeout <= s.KeepalivePing {
-		return fmt.Errorf("KeepaliveTimeout must be greater than KeepalivePing")
+		return fmt.Errorf("keepaliveTimeout must be greater than KeepalivePing")
 	}
 	for name, addr := range map[string]string{"DnsPrimary": s.DNSPrimary, "DnsSecondary": s.DNSSecondary} {
 		if addr != "" && net.ParseIP(addr) == nil {
@@ -227,43 +227,43 @@ func (s Server) Validate() error {
 		}
 	}
 	if s.DNSDomain != "" && !validDomain(s.DNSDomain) {
-		return fmt.Errorf("DnsDomain %q is not a valid domain", s.DNSDomain)
+		return fmt.Errorf("dnsDomain %q is not a valid domain", s.DNSDomain)
 	}
 	for _, route := range s.PushRoutes {
 		if _, _, err := net.ParseCIDR(route); err != nil {
-			return fmt.Errorf("PushRoutes entry %q is not a CIDR", route)
+			return fmt.Errorf("pushRoutes entry %q is not a CIDR", route)
 		}
 	}
 	if s.IPv6Enabled {
 		ip, _, err := net.ParseCIDR(s.IPv6Prefix)
 		if err != nil || ip.To4() != nil {
-			return fmt.Errorf("Ipv6Prefix %q is not an IPv6 CIDR", s.IPv6Prefix)
+			return fmt.Errorf("ipv6Prefix %q is not an IPv6 CIDR", s.IPv6Prefix)
 		}
 	}
 	if s.TunMTU != 0 && (s.TunMTU < 1200 || s.TunMTU > 1500) {
-		return fmt.Errorf("TunMtu %d is outside 1200-1500 (0 = auto)", s.TunMTU)
+		return fmt.Errorf("tunMtu %d is outside 1200-1500 (0 = auto)", s.TunMTU)
 	}
 	if s.Mssfix != 0 && (s.Mssfix < 500 || s.Mssfix > 1450) {
-		return fmt.Errorf("Mssfix %d is outside 500-1450 (0 = auto)", s.Mssfix)
+		return fmt.Errorf("mssfix %d is outside 500-1450 (0 = auto)", s.Mssfix)
 	}
 	switch s.CipherFirst {
 	case CipherAES128, CipherAES256, CipherChaCha:
 	default:
-		return fmt.Errorf("CipherFirst %q is not a supported cipher", s.CipherFirst)
+		return fmt.Errorf("cipherFirst %q is not a supported cipher", s.CipherFirst)
 	}
 	switch s.TLSMin {
 	case "1.2", "1.3":
 	default:
-		return fmt.Errorf("TlsMin %q is not 1.2 or 1.3", s.TLSMin)
+		return fmt.Errorf("tlsMin %q is not 1.2 or 1.3", s.TLSMin)
 	}
 	if s.RenegSec < 600 || s.RenegSec > 86400 {
-		return fmt.Errorf("RenegSec %d is outside 600-86400", s.RenegSec)
+		return fmt.Errorf("renegSec %d is outside 600-86400", s.RenegSec)
 	}
 	if s.InactiveTimeout < 0 || s.InactiveTimeout > 86400 {
-		return fmt.Errorf("InactiveTimeout %d is outside 0-86400", s.InactiveTimeout)
+		return fmt.Errorf("inactiveTimeout %d is outside 0-86400", s.InactiveTimeout)
 	}
 	if s.Verb < 0 || s.Verb > 4 {
-		return fmt.Errorf("Verb %d is outside 0-4", s.Verb)
+		return fmt.Errorf("verb %d is outside 0-4", s.Verb)
 	}
 	return nil
 }
