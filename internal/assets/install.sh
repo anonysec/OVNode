@@ -51,6 +51,7 @@ URL="https://github.com/$REPO/releases/download/$TAG/$ASSET"
 SUMS_URL="https://github.com/$REPO/releases/download/$TAG/SHA256SUMS"
 command -v curl >/dev/null 2>&1 || fail "curl is required to download the release"
 mkdir -p "$AppDir"
+DOWNLOADED=0
 if [[ -x "$AppDir/ovnode" ]]; then
   printf '  ok    $AppDir/ovnode already present, reusing verified binary\n' >&2
 else
@@ -59,13 +60,17 @@ else
   curl -fsSL --max-time 60 --retry 3 --retry-delay 2 --retry-max-time 120 -o "$TMP/SHA256SUMS" "$SUMS_URL" || fail "Could not download SHA256SUMS for v$VERSION, refusing to install an unverified release"
   ( cd "$TMP" && grep " $ASSET\$" SHA256SUMS | sha256sum -c - >/dev/null ) || fail "Checksum verification failed for $ASSET (v$VERSION): SHA256SUMS is missing a line for $ASSET or the download does not match, refusing to install"
   install -m 0755 "$TMP/$ASSET" "$AppDir/ovnode"
+  DOWNLOADED=1
   rm -rf "$TMP"; trap - EXIT
   printf '  ok    release v%s verified and installed\n' "$VERSION" >&2
 fi
-# Prefer the installed agent: the bootstrap copy can be older than the tree
-# (an update stages a new ovnode-server), and the update path must run the
-# binary that belongs to the tree.
+# Run the binary downloaded in this run: it is the release the user asked for
+# and carries this run's installer fixes. A pre-existing $AppDir/ovnode is a
+# leftover from an earlier run and can be older than the installed agent, so
+# fall back to ovnode-server unless something was just downloaded.
 BIN="$AppDir/ovnode-server"
-[[ -x "$BIN" ]] || BIN="$AppDir/ovnode"
+if [[ "$DOWNLOADED" -eq 1 || ! -x "$BIN" ]]; then
+  BIN="$AppDir/ovnode"
+fi
 "$BIN" assets write --dest "$AppDir" >/dev/null || true
 exec "$BIN" install "$@"
