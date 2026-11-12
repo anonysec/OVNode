@@ -34,7 +34,8 @@ func SuperviseOpenVPN(ctx context.Context) bool {
 		if _, err := os.Stat(conf); err != nil {
 			continue
 		}
-		go supervise(ctx, conf)
+		go supervise(ctx, proto)
+		go ensureStatusReadable(ctx, proto)
 		started = true
 	}
 	return started
@@ -60,7 +61,27 @@ func (w *logLineWriter) Write(p []byte) (int, error) {
 	return len(p), nil
 }
 
-func supervise(ctx context.Context, conf string) {
+// ensureStatusReadable makes the OpenVPN status file readable by the hook
+// user. OpenVPN starts as root and creates the file 0600 root:root; the hooks
+// run as RuntimeUser and cannot read it, which hides live sessions from the
+// status fallback.
+func ensureStatusReadable(ctx context.Context, proto string) {
+	path := fsx.StatusFile(proto)
+	for i := 0; i < 50; i++ {
+		if _, err := os.Stat(path); err == nil {
+			_ = os.Chmod(path, 0o644)
+			return
+		}
+		select {
+		case <-ctx.Done():
+			return
+		case <-time.After(100 * time.Millisecond):
+		}
+	}
+}
+
+func supervise(ctx context.Context, proto string) {
+	conf := fsx.ServerConf(proto)
 	backoff := time.Second
 	for {
 		select {

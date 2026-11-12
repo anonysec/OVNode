@@ -1,5 +1,14 @@
 # Changelog
 
+## 2.0.10 — 2026-11-12
+
+- The management auth budget is 2 seconds (it was 200 ms). A slow auth made
+  the takeover send a kill with no reply, reject the reconnecting client, and
+  leave the old session.
+- The agent chmods the per-protocol status file to 0644 after OpenVPN starts,
+  so the hook user can read it on a fresh install. (2.0.9's unit `UMask` did
+  not cover the root-created status file.)
+
 ## 2.0.9 — 2026-11-12
 
 - Takeover now uses the management `kill <cn>` command. `client-kill` by CID

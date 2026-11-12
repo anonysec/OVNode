@@ -33,7 +33,7 @@ const (
 const (
 	mgmtDialTimeout = 2 * time.Second
 	mgmtReplyBudget = 2 * time.Second
-	mgmtAuthBudget  = 200 * time.Millisecond
+	mgmtAuthBudget  = 2 * time.Second
 	mgmtBannerIdle  = 150 * time.Millisecond
 	mgmtBannerTotal = 1 * time.Second
 	statusBudget    = 3 * time.Second
