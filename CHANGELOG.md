@@ -1,5 +1,16 @@
 # Changelog
 
+## 2.0.9 — 2026-11-12
+
+- Takeover now uses the management `kill <cn>` command. `client-kill` by CID
+  returns no reply under DCO and could leave the old session running; the
+  verification also requires a complete `status 3` reply, so an empty reply
+  cannot count as "verified".
+- The systemd unit sets `UMask=0007`, so the per-protocol status files are
+  group-readable by the runtime user the hooks run as. The status-file
+  fallback can then count live sessions even when the management socket is
+  unavailable.
+
 ## 2.0.8 — 2026-11-12
 
 - The management `status 3` reply is tab-separated, but the hook parsed it as

@@ -254,13 +254,14 @@ func Takeover(host string, port int, passFile, cn string, cids []string) (Takeov
 	}
 
 	var lines []string
-	for _, cid := range cids {
-		cmd := "client-kill " + cid + " max-login-takeover"
-		_ = conn.SetWriteDeadline(time.Now().Add(mgmtReplyBudget))
-		if _, err := conn.Write([]byte(cmd + "\n")); err != nil {
-			lines = append(lines, fmt.Sprintf("KILL FAIL %s (%s)", cmd, err))
-			continue
-		}
+	// client-kill by CID returns no reply under DCO and can leave the old
+	// session running. kill by common name is one command, works with DCO, and
+	// is exactly the limit=1 takeover: every session of this CN goes.
+	cmd := "kill " + cn
+	_ = conn.SetWriteDeadline(time.Now().Add(mgmtReplyBudget))
+	if _, err := conn.Write([]byte(cmd + "\n")); err != nil {
+		lines = append(lines, fmt.Sprintf("KILL FAIL %s (%s)", cmd, err))
+	} else {
 		reply := m.readUntil(time.Now().Add(mgmtReplyBudget), "SUCCESS", "ERROR")
 		verdict := "FAIL"
 		if strings.Contains(strings.ToUpper(reply), "SUCCESS") {
@@ -273,10 +274,15 @@ func Takeover(host string, port int, passFile, cn string, cids []string) (Takeov
 	deadline := time.Now().Add(verifyBudget)
 	for time.Now().Before(deadline) {
 		_ = conn.SetWriteDeadline(time.Now().Add(mgmtReplyBudget))
-		if _, err := conn.Write([]byte("status 2\n")); err != nil {
+		if _, err := conn.Write([]byte("status 3\n")); err != nil {
 			break
 		}
 		text := m.readUntil(time.Now().Add(statusBudget), "END")
+		// An empty/truncated reply is not proof the session is gone; only a
+		// complete status with no CN can verify the takeover.
+		if !strings.Contains(text, "END") {
+			break
+		}
 		if !mgmtHasCN(text, cn) {
 			verified = true
 			break
