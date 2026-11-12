@@ -19,10 +19,12 @@ point, not a guarantee.
 Install with `Proto=both` (panel: protocol **Both**):
 
 ```bash
-Proto=both VpnPorts=443 bash install.sh -y
+Proto=both VpnPorts=1194 bash install.sh -y
 ```
 
-The node runs one OpenVPN process per protocol on port 443:
+The node runs one OpenVPN process per protocol on the port you choose (1194 is
+the default). 443 is only a good choice when nothing else on the server uses
+it; most web servers do:
 
 - UDP and TCP each have their own config, status, PID, log and management
   socket under `/var/lib/<instance>/openvpn/server/<proto>/`.
@@ -31,9 +33,10 @@ The node runs one OpenVPN process per protocol on port 443:
   TCP, tried in order. The same `.ovpn` therefore works on MCI (UDP) and MTN
   (TCP) without a second node or a hand-edited template.
 
-If a specific ISP blocks port 443 entirely, add another port with
-`VpnPorts=443,8443` (or set extra ports from the panel). Every port gets its
-own connection block per protocol.
+If an ISP blocks the port you chose, add another one with
+`VpnPorts=1194,8443` (or set extra ports from the panel). Every port gets its
+own connection block per protocol. Use 443 as an extra port only when it is
+free on the server.
 
 ## Two single-protocol nodes
 

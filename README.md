@@ -38,11 +38,12 @@ bash install.sh -y
 ```
 
 The bootstrap downloads the release binary, verifies it against
-`SHA256SUMS`, then runs the Go installer. For a second instance on the same
-host:
+`SHA256SUMS`, then runs the Go installer. `VpnPorts` defaults to 1194; choose a
+port nothing else is using. 443 is a common web-server port, so use it only
+when it is free. For a second instance on the same host:
 
 ```bash
-Instance=node2 VpnPorts=443 ApiPort=2084 bash install.sh -y
+Instance=node2 VpnPorts=1194 ApiPort=2084 bash install.sh -y
 # or: bash install.sh --instance node2 ...
 ```
 
@@ -53,7 +54,7 @@ Instance=node2 VpnPorts=443 ApiPort=2084 bash install.sh -y
 | `Instance` | `ovnode` | Selects `/opt/<name>`, `/var/lib/<name>`, `/var/log/<name>`, `<name>.service` |
 | `ApiPort` | `2083` | Panel-to-node API port |
 | `ApiKey` | generated | Shared secret, minimum 16 characters |
-| `VpnPorts` | `1194` | Primary port, then extra ports (`443,8443`) |
+| `VpnPorts` | `1194` | Primary port, then extra ports (e.g. `8443`); pick a free port |
 | `Proto` | `udp` | `udp`, `tcp`, or `both` |
 | `VpnNetwork` | derived | VPN pool base address (default `10.66.<pair>.0` /23) |
 | `Ipv6` | off | `1` adds a ULA pool and an IPv6 route push |
