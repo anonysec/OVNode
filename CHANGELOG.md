@@ -1,5 +1,12 @@
 # Changelog
 
+## 2.0.5 — 2026-11-12
+
+- A custom-named CLI now passes its own `AppDir`, `Instance`, `DataDir`,
+  `OpenVpnRoot` and `LogDir` (plus `Yes`/`Purge`) when it delegates to the
+  installer, so `testnode uninstall` targets `/opt/testnode` instead of the
+  default `/opt/ovnode` instance.
+
 ## 2.0.4 — 2026-11-12
 
 - The bootstrap always downloads and checksum-verifies the requested release

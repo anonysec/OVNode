@@ -11,7 +11,7 @@
 set -Eeuo pipefail
 
 # ── Constants ──────────────────────────────────────────────────────────
-VERSION="2.0.4"
+VERSION="2.0.5"
 _INVOKED_NAME="$(basename "${BASH_SOURCE[0]:-$0}")"
 _INVOKED_NAME="${_INVOKED_NAME%.sh}"
 INSTANCE_NAME="${Instance:-$_INVOKED_NAME}"
@@ -97,7 +97,12 @@ UV_BIN=""
 run_installer() {
     [[ -e "$AppDir" ]] || [[ "$1" == "uninstall" ]] || die "Not installed ($AppDir missing)" "$EX_NOTINSTALLED"
     [[ -x "$INSTALLER" ]] || die "Installer missing ($INSTALLER)" "$EX_ERROR"
-    exec "$INSTALLER" "$@"
+    # The bootstrap and the Go installer default to the product's first
+    # instance (/opt/ovnode). Carry this CLI's identity so `testnode update`
+    # or `testnode uninstall` target /opt/testnode, not the sibling node.
+    exec env AppDir="$AppDir" Instance="$INSTANCE" DataDir="$DATA_BASE" \
+        OpenVpnRoot="$OPENVPN_ROOT" LogDir="$LOG_DIR" Yes="$YES" Purge="$PURGE" \
+        "$INSTALLER" "$@"
 }
 
 delegate_update() {
