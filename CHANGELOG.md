@@ -1,5 +1,10 @@
 # Changelog
 
+## 2.0.12 — 2026-11-12
+
+- Ignore live rows that have no pool address. They are the connection being
+  admitted or a rejected attempt, and counting them blocked the next login.
+
 ## 2.0.11 — 2026-11-12
 
 - Exclude the connection being admitted from the live-session count. OpenVPN

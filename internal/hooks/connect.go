@@ -395,7 +395,10 @@ func writeLastKill(usersDir, safeCN string, at int64) string {
 func liveRows(sessions []ovpn.Session) []ovpn.Session {
 	var out []ovpn.Session
 	for _, s := range sessions {
-		if s.VirtualAddress == "" && s.ClientID == "" && s.RealAddress == "" {
+		// A connected client always has a pool address. Rows without one are
+		// this very hook's pending client or a rejected attempt; counting
+		// them would block the next login.
+		if s.VirtualAddress == "" {
 			continue
 		}
 		out = append(out, s)

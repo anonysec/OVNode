@@ -371,3 +371,17 @@ func TestConnectExcludesItsOwnLiveSession(t *testing.T) {
 		t.Fatalf("Connect exit code = %d, want 0 for the only device", code)
 	}
 }
+
+func TestConnectIgnoresPendingRowsWithoutAPoolAddress(t *testing.T) {
+	tr := newTree(t)
+	tr.user(t, "u1", "limit=1\ndisabled=0\n")
+	status := "HEADER,CLIENT_LIST,Common Name,Real Address,Virtual Address,Virtual IPv6 Address,Bytes Received,Bytes Sent,Connected Since,Connected Since (time_t),Username,Client ID,Peer ID\n" +
+		"CLIENT_LIST,u1,9.9.9.9:5001,,,0,0,,,,7,0\n"
+	if err := os.WriteFile(tr.status, []byte(status), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	setClientEnv(t, "u1", "10.8.0.2")
+	if code := Connect(tr.config(), ""); code != 0 {
+		t.Fatalf("Connect exit code = %d, want 0; a pending row is not a live device", code)
+	}
+}
