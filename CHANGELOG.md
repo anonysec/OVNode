@@ -1,5 +1,13 @@
 # Changelog
 
+## 2.0.8 — 2026-11-12
+
+- The management `status 3` reply is tab-separated, but the hook parsed it as
+  comma-separated. It therefore counted zero live sessions and let a
+  max_logins=1 user open a second connection. Parse tabs (and commas for older
+  status files), fall back to every protocol's status file when the management
+  reply is empty, and recognize tab rows during takeover verification.
+
 ## 2.0.7 — 2026-11-12
 
 - The uninstall confirmation now prints its question. It used to wait for

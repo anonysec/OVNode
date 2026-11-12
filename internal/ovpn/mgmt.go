@@ -64,10 +64,29 @@ func validateMgmtHost(host string) error {
 // management socket (status 3) over the status file, which OpenVPN only
 // rewrites every few seconds.
 func LiveSessionsForCN(statusFile, cn string) []Session {
-	if sessions, ok := mgmtSessionsForCN(cn); ok {
+	if sessions, ok := mgmtSessionsForCN(cn); ok && len(sessions) > 0 {
 		return sessions
 	}
-	return SessionsForCN(statusFile, cn)
+	// An empty management reply (a parser/version mismatch or a protocol whose
+	// socket did not answer) must not hide live sessions: fall back to every
+	// selected protocol's status file.
+	files := StatusFiles()
+	if len(files) == 0 {
+		files = []string{statusFile}
+	}
+	seen := map[string]bool{}
+	var out []Session
+	for _, file := range files {
+		for _, session := range SessionsForCN(file, cn) {
+			key := session.CommonName + "|" + session.VirtualAddress
+			if seen[key] {
+				continue
+			}
+			seen[key] = true
+			out = append(out, session)
+		}
+	}
+	return out
 }
 
 // managementTargets is one socket per running protocol.
@@ -152,8 +171,15 @@ func parseMgmtSessions(text, cn string) []Session {
 		if !strings.Contains(line, "CLIENT_LIST") {
 			continue
 		}
+		// The management "status 3" reply is tab-separated; status files can
+		// be comma-separated on older OpenVPN builds.
+		delim := "\t"
+		if !strings.Contains(line, "\t") {
+			delim = ","
+		}
+		parts := strings.Split(line, delim)
 		if strings.HasPrefix(line, "HEADER") {
-			if parts := strings.Split(line, ","); len(parts) > 2 {
+			if len(parts) > 2 {
 				columns = columnMap(parts)
 				sawHeader = true
 			}
@@ -162,7 +188,6 @@ func parseMgmtSessions(text, cn string) []Session {
 		if !strings.HasPrefix(line, "CLIENT_LIST") {
 			continue
 		}
-		parts := strings.Split(line, ",")
 		name := field(parts, columns["Common Name"])
 		if name == "" || name != cn {
 			continue
@@ -455,10 +480,14 @@ func readPassword(path string) (string, bool) {
 func mgmtHasCN(text, cn string) bool {
 	for _, line := range strings.Split(text, "\n") {
 		line = strings.TrimRight(line, "\r")
-		if !strings.HasPrefix(line, "CLIENT_LIST,") {
+		if !strings.HasPrefix(line, "CLIENT_LIST") {
 			continue
 		}
-		parts := strings.Split(line, ",")
+		delim := "\t"
+		if !strings.Contains(line, "\t") {
+			delim = ","
+		}
+		parts := strings.Split(line, delim)
 		if len(parts) > 1 && parts[1] == cn {
 			return true
 		}
