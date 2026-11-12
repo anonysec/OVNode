@@ -1,5 +1,10 @@
 # Changelog
 
+## 2.0.7 — 2026-11-12
+
+- The uninstall confirmation now prints its question. It used to wait for
+  input silently, so pressing Enter cancelled and the command looked broken.
+
 ## 2.0.6 — 2026-11-12
 
 - `uninstall -y` (or `Yes=1`) now skips the final "remove the app and stop all

@@ -2,6 +2,7 @@ package commands
 
 import (
 	"bufio"
+	"fmt"
 	"os"
 	"strings"
 )
@@ -22,6 +23,7 @@ func confirmOne(prompt string) bool {
 	if !isTTY() {
 		return false
 	}
+	fmt.Fprintf(os.Stderr, "  %s [y/N]: ", prompt)
 	r := bufio.NewReader(os.Stdin)
 	line, _ := r.ReadString('\n')
 	answer := strings.ToLower(strings.TrimSpace(line))
