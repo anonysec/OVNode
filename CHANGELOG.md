@@ -1,5 +1,11 @@
 # Changelog
 
+## 2.0.6 — 2026-11-12
+
+- `uninstall -y` (or `Yes=1`) now skips the final "remove the app and stop all
+  services?" confirmation; it was unconditional, so an unattended uninstall
+  always reported `cancelled`.
+
 ## 2.0.5 — 2026-11-12
 
 - A custom-named CLI now passes its own `AppDir`, `Instance`, `DataDir`,

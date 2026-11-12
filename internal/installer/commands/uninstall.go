@@ -39,7 +39,7 @@ func Uninstall(c *Config, runner Runner) error {
 		fmt.Fprintf(os.Stderr, "  services %s\n", c.Service)
 		fmt.Fprintf(os.Stderr, "  data     kept at %s\n", c.DataBase)
 	}
-	if !confirmOne("remove the app and stop all services?") {
+	if !c.Yes && !confirmOne("remove the app and stop all services?") {
 		return fmt.Errorf("cancelled")
 	}
 	// Stop the NAT unit, then the service units.
