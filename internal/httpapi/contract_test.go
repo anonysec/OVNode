@@ -47,6 +47,7 @@ var contract = []contractRow{
 		Response: []string{"live_sessions", "stale_markers", "live_count", "stale_marker_count",
 			"auth_errors", "auth_errors_by_cn", "rejects", "policy_rejects", "warn_rejects",
 			"events", "last_error"}},
+	{Method: http.MethodGet, Path: "/sync/events", ResponseRaw: true},
 	{Method: http.MethodGet, Path: "/sync/logs",
 		Response: []string{"records", "last_error", "errors_1h"}},
 	{Method: http.MethodGet, Path: "/sync/config",
@@ -186,13 +187,15 @@ func TestContractMatchesThePanelTable(t *testing.T) {
 }
 
 // nodeOnlyRoutes are the routes the node serves for its own sake. The panel
-// does not call them today; they are not drift.
+// does not call them today; they are not drift. /sync/events joins this set
+// with node 2.0.15 and moves onto the panel's table with panel 2.0.5.
 var nodeOnlyRoutes = map[string]bool{
 	"GET /sync/config":                  true,
 	"PUT /sync/users/{cn}":              true,
 	"PUT /sync/pki":                     true,
 	"POST /sync/user":                   true,
 	"POST /sync/user/{uid}/reset-usage": true,
+	"GET /sync/events":                  true,
 }
 
 // methodName renders an HTTP method the way the panel's table spells it.

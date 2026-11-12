@@ -29,6 +29,7 @@ import (
 	"syscall"
 	"time"
 
+	"ovnode/internal/events"
 	"ovnode/internal/fsx"
 	"ovnode/internal/logging"
 	"ovnode/internal/ovpn"
@@ -55,6 +56,11 @@ type Server struct {
 	panelAllow []netip.Prefix
 	allowEmpty bool
 	appDirPath string
+
+	// hub + streamSlots back GET /sync/events. Run sets them; a Server
+	// without a hub (tests) serves the snapshot and closes.
+	hub         *events.Hub
+	streamSlots chan struct{}
 }
 
 // NewServer builds the server from the environment.
@@ -147,6 +153,7 @@ func (s *Server) routes() *http.ServeMux {
 	mux.HandleFunc("GET /sync/status", s.guard(s.handleStatus, false))
 	mux.HandleFunc("GET /sync/usage", s.guard(s.handleUsage, false))
 	mux.HandleFunc("GET /sync/sessions", s.guard(s.handleSessions, false))
+	mux.HandleFunc("GET /sync/events", s.gzipSkip(s.guard(s.handleEvents, false)))
 	mux.HandleFunc("GET /sync/logs", s.guard(s.handleLogs, false))
 	mux.HandleFunc("GET /sync/config", s.guard(s.handleConfigGet, false))
 	mux.HandleFunc("POST /sync/config", longWrite(s.guard(s.handleConfigPost, false)))
@@ -229,7 +236,7 @@ func gzipMiddleware(next http.Handler) http.Handler {
 			next.ServeHTTP(w, r)
 			return
 		}
-		if r.Pattern == "GET /sync/download/ovpn/{uid}" {
+		if r.Pattern == "GET /sync/download/ovpn/{uid}" || r.Pattern == "GET /sync/events" {
 			next.ServeHTTP(w, r)
 			return
 		}
@@ -436,6 +443,16 @@ func Run() error {
 	// The agent now owns the OpenVPN daemon: ovnode.service forks openvpn as
 	// a child and respawns it in SuperviseOpenVPN. There is no second unit.
 	ovpn.SuperviseOpenVPN(ctx)
+	// Event push: hooks poke the datagram socket, the watcher turns local
+	// state changes into hub payloads, /sync/events streams to the panel.
+	s.hub = events.NewHub()
+	s.streamSlots = make(chan struct{}, maxEventStreams)
+	go func() {
+		if err := events.Listen(ctx, s.hub, eventsSnapshot); err != nil {
+			logging.Warn("events: socket listener: %v", err)
+		}
+	}()
+	go events.Watch(ctx, s.hub, time.Second, eventsSnapshot)
 	logging.Info("ovnode agent %s starting (addr=%s, openvpn_root=%s)",
 		version.Version, s.Addr, pki.OpenVPNRoot())
 	fmt.Println("ovnode serve listening on", s.Addr)
