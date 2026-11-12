@@ -1,5 +1,13 @@
 # Changelog
 
+## 2.0.3 — 2026-11-12
+
+- A custom node name chosen in the wizard now gets its own shell files and
+  CLI: the installer writes the embedded `install.sh`, `ovnode.sh` and
+  `lib.sh` into that instance's tree, so `testnode` (for example) has
+  `testnode status` and `testnode uninstall`. Previously only the binary,
+  `.env` and the service were created for the new name.
+
 ## 2.0.2 — 2026-11-12
 
 - The installer summary prints the instance's own certificate PEM (and only

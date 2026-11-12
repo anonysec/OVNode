@@ -7,6 +7,8 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+
+	"ovnode/internal/assets"
 )
 
 // installIncomplete reports a tree that has .env and the binary but no CA:
@@ -83,6 +85,11 @@ func Install(c *Config, runner Runner) error {
 		return err
 	}
 	if err := c.writeEnv(); err != nil {
+		return err
+	}
+	// A wizard can change the instance after the bootstrap chose its AppDir;
+	// put the embedded shell files in this tree so installCLI has its source.
+	if _, err := assets.Write(c.AppDir); err != nil {
 		return err
 	}
 	schemeHost := c.schemeHost()

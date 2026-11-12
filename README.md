@@ -7,7 +7,7 @@ deployment: the OpenVPN node agent the panel drives over a private `/sync` API.
   <img src=".github/assets/banner.svg" alt="OVNode — the VPN server agent for OVManager" width="820">
   <br><br>
 
-  [![Version](https://img.shields.io/badge/version-2.0.2-blue)](CHANGELOG.md)
+  [![Version](https://img.shields.io/badge/version-2.0.3-blue)](CHANGELOG.md)
   [![License: MIT](https://img.shields.io/badge/License-MIT-green.svg)](LICENSE)
   [![CI](https://github.com/anonysec/OVNode/actions/workflows/ci.yml/badge.svg)](https://github.com/anonysec/OVNode/actions/workflows/ci.yml)
   [![Go](https://img.shields.io/badge/go-1.27-00ADD8?logo=go&logoColor=white)](go.mod)
