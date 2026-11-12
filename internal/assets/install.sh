@@ -51,26 +51,18 @@ URL="https://github.com/$REPO/releases/download/$TAG/$ASSET"
 SUMS_URL="https://github.com/$REPO/releases/download/$TAG/SHA256SUMS"
 command -v curl >/dev/null 2>&1 || fail "curl is required to download the release"
 mkdir -p "$AppDir"
-DOWNLOADED=0
-if [[ -x "$AppDir/ovnode" ]]; then
-  printf '  ok    $AppDir/ovnode already present, reusing verified binary\n' >&2
-else
-  TMP="$(mktemp -d)"; trap 'rm -rf "$TMP"' EXIT
-  curl -fsSL --max-time 60 --retry 3 --retry-delay 2 --retry-max-time 120 -o "$TMP/$ASSET" "$URL" || fail "No release file for v$VERSION, see https://github.com/$REPO/releases"
-  curl -fsSL --max-time 60 --retry 3 --retry-delay 2 --retry-max-time 120 -o "$TMP/SHA256SUMS" "$SUMS_URL" || fail "Could not download SHA256SUMS for v$VERSION, refusing to install an unverified release"
-  ( cd "$TMP" && grep " $ASSET\$" SHA256SUMS | sha256sum -c - >/dev/null ) || fail "Checksum verification failed for $ASSET (v$VERSION): SHA256SUMS is missing a line for $ASSET or the download does not match, refusing to install"
-  install -m 0755 "$TMP/$ASSET" "$AppDir/ovnode"
-  DOWNLOADED=1
-  rm -rf "$TMP"; trap - EXIT
-  printf '  ok    release v%s verified and installed\n' "$VERSION" >&2
-fi
-# Run the binary downloaded in this run: it is the release the user asked for
-# and carries this run's installer fixes. A pre-existing $AppDir/ovnode is a
-# leftover from an earlier run and can be older than the installed agent, so
-# fall back to ovnode-server unless something was just downloaded.
-BIN="$AppDir/ovnode-server"
-if [[ "$DOWNLOADED" -eq 1 || ! -x "$BIN" ]]; then
-  BIN="$AppDir/ovnode"
-fi
+# Always fetch and verify the requested release. Reusing a leftover
+# $AppDir/ovnode was how an older installer kept running after an install or
+# a failed attempt; the release tag, not a stale file, is the target.
+TMP="$(mktemp -d)"; trap 'rm -rf "$TMP"' EXIT
+curl -fsSL --max-time 60 --retry 3 --retry-delay 2 --retry-max-time 120 -o "$TMP/$ASSET" "$URL" || fail "No release file for v$VERSION, see https://github.com/$REPO/releases"
+curl -fsSL --max-time 60 --retry 3 --retry-delay 2 --retry-max-time 120 -o "$TMP/SHA256SUMS" "$SUMS_URL" || fail "Could not download SHA256SUMS for v$VERSION, refusing to install an unverified release"
+( cd "$TMP" && grep " $ASSET\$" SHA256SUMS | sha256sum -c - >/dev/null ) || fail "Checksum verification failed for $ASSET (v$VERSION): SHA256SUMS is missing a line for $ASSET or the download does not match, refusing to install"
+install -m 0755 "$TMP/$ASSET" "$AppDir/ovnode"
+rm -rf "$TMP"; trap - EXIT
+printf '  ok    release v%s verified and installed\n' "$VERSION" >&2
+# Run the binary downloaded in this run: it carries this run's installer
+# fixes and is the only copy whose checksum was just verified.
+BIN="$AppDir/ovnode"
 "$BIN" assets write --dest "$AppDir" >/dev/null || true
 exec "$BIN" install "$@"

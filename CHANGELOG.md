@@ -1,5 +1,12 @@
 # Changelog
 
+## 2.0.4 — 2026-11-12
+
+- The bootstrap always downloads and checksum-verifies the requested release
+  instead of reusing a leftover `AppDir/ovnode`. A stale copy could keep an
+  older installer running, which made a renamed instance fall back to the
+  existing `ovnode` tree.
+
 ## 2.0.3 — 2026-11-12
 
 - A custom node name chosen in the wizard now gets its own shell files and
