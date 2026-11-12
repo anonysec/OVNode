@@ -1,5 +1,11 @@
 # Changelog
 
+## 2.0.13 — 2026-11-12
+
+- A fresh install generated a constant API key (a 64-character placeholder
+  committed in the source). Every node therefore shared one publicly known
+  key. The installer now generates 32 random bytes with crypto/rand.
+
 ## 2.0.12 — 2026-11-12
 
 - Ignore live rows that have no pool address. They are the connection being

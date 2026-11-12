@@ -1,6 +1,8 @@
 package commands
 
 import (
+	"crypto/rand"
+	"encoding/hex"
 	"errors"
 	"fmt"
 	"regexp"
@@ -139,8 +141,15 @@ func (c *Config) validate() error {
 	return nil
 }
 
+// generateAPIKey returns a fresh 32-byte hex key. It must never be a constant:
+// every node with the same public placeholder would accept the same key.
 func generateAPIKey() string {
-	return "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef"
+	buf := make([]byte, 32)
+	if _, err := rand.Read(buf); err != nil {
+		// The installer cannot continue safely with a predictable key.
+		panic("crypto/rand failed: " + err.Error())
+	}
+	return hex.EncodeToString(buf)
 }
 
 var stderr = GetStderr()

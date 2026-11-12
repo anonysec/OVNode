@@ -401,3 +401,22 @@ func TestPrintCertificatePrintsOnlyThePEM(t *testing.T) {
 		t.Fatalf("fingerprint missing: %s", text)
 	}
 }
+
+// Every fresh install must get its own key; a constant placeholder would be
+// shared by every node in the field.
+func TestGenerateAPIKeyIsRandom(t *testing.T) {
+	first := generateAPIKey()
+	second := generateAPIKey()
+	if len(first) != 64 {
+		t.Fatalf("key length = %d, want 64 hex chars", len(first))
+	}
+	if !apiKeyRe.MatchString(first) {
+		t.Fatalf("key %q does not match the accepted charset", first)
+	}
+	if first == second {
+		t.Fatal("two keys are identical; the generator is not random")
+	}
+	if first == "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef" {
+		t.Fatal("key is the old hardcoded placeholder")
+	}
+}
