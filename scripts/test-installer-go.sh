@@ -3,11 +3,12 @@
 # SPDX-License-Identifier: MIT
 #
 # Go-side installer harness: runs `ovnode install|update|uninstall` (the same
-# install.sh now execs) with TestFakeRunner=1. The fake runner records
-# every external command without root or systemd, and SystemdDir keeps
-# anyNodeUnit() inside the temp tree so this box's real
-# /etc/systemd/system/ovnode.service cannot flip a fresh-box case to
-# unit-only.
+# install.sh now execs) with TestFakeRunner=1. The fake runner records every
+# external command and skips systemd, and SystemdDir keeps anyNodeUnit()
+# inside the temp tree so this box's real /etc/systemd/system/ovnode.service
+# cannot flip a fresh-box case to unit-only. The installer still writes host
+# files under /etc (sysctl, logrotate, cron), so the harness runs as root;
+# CI invokes it with sudo.
 #
 # Run: bash scripts/test-installer-go.sh
 set -uo pipefail   # no -e: a failing case is data, not a reason to stop

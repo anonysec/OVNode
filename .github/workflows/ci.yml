@@ -64,7 +64,9 @@ jobs:
             exit 1
           fi
       - name: Installer regression tests
-        run: bash scripts/test-installer-go.sh
+        # The fake runner skips systemd, but the installer still writes host
+        # files (/etc/sysctl.d, logrotate, cron), so the harness needs root.
+        run: sudo --preserve-env=PATH,HOME bash scripts/test-installer-go.sh
 
   lint:
     runs-on: ubuntu-latest
