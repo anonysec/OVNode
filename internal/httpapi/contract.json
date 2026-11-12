@@ -46,7 +46,7 @@
     "request_at": "internal/node/events.go:StreamEvents",
     "response_at": [],
     "response_raw": true,
-    "note": "SSE stream: event frames carry kind/revision/data; added in 2.0.15, consumed by the panel from 2.0.5"
+    "note": "SSE stream, not the envelope: event frames carry kind/revision/data and a snapshot on (re)connect; a node before 2.0.15 answers 404 and the panel polls instead (live_stream.go supervisor)"
   },
   {
     "method": "GET",
