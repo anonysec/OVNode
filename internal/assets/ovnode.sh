@@ -19,8 +19,6 @@ INSTANCE_NAME="${Instance:-$_INVOKED_NAME}"
 AppDir="${AppDir:-/opt/$INSTANCE_NAME}"
 DATA_BASE="${DataDir:-/var/lib/$INSTANCE_NAME}"
 INSTANCE="${Instance:-$INSTANCE_NAME}"
-OPENVPN_ROOT="$(env_get "${AppDir:-/opt/$INSTANCE}/.env" OpenVpnRoot 2>/dev/null || true)"; : "${OPENVPN_ROOT:=/var/lib/$INSTANCE/openvpn}"
-LOG_DIR="$(env_get "${AppDir:-/opt/$INSTANCE}/.env" LogDir 2>/dev/null || true)"; : "${LOG_DIR:=/var/log/$INSTANCE}"
 # Panel pairing record — one panel owns the node; `ovnode auth disconnect` is
 # the release, so the path has to be known to the CLI as well as the agent.
 PAIRING_FILE="${DataDir:-/var/lib/$INSTANCE_NAME}/state/pairing.json"
@@ -79,6 +77,11 @@ for _lib in lib.sh; do
     . "$_libdir/$_lib"
 done
 unset _lib _libdir
+
+# These read .env, so they wait for lib.sh above to define env_get; calling it
+# earlier failed silently (stderr discarded) and ignored declared paths.
+OPENVPN_ROOT="$(env_get "${AppDir:-/opt/$INSTANCE}/.env" OpenVpnRoot 2>/dev/null || true)"; : "${OPENVPN_ROOT:=/var/lib/$INSTANCE/openvpn}"
+LOG_DIR="$(env_get "${AppDir:-/opt/$INSTANCE}/.env" LogDir 2>/dev/null || true)"; : "${LOG_DIR:=/var/log/$INSTANCE}"
 
 trap 'echo -e "\n  ${RD}Interrupted.${NC}" >&2; exit 130' INT TERM
 trap 'render_warn "Command failed near line $LINENO (running: ${BASH_COMMAND:0:80})"' ERR

@@ -63,3 +63,19 @@ func TestWriteInstallsEveryAsset(t *testing.T) {
 		}
 	}
 }
+
+// The CLI reads OpenVpnRoot/LogDir from .env at startup, so it must source
+// lib.sh (where env_get lives) first. Calling env_get before the source fails
+// silently — stderr is discarded — and the declared paths are ignored.
+func TestOperatorSourcesLibBeforeReadingEnv(t *testing.T) {
+	body := string(Operator)
+	source := strings.Index(body, `. "$_libdir/$_lib"`)
+	call := strings.Index(body, `env_get "`)
+	if source < 0 || call < 0 {
+		t.Fatalf("source=%d call=%d", source, call)
+	}
+	if call < source {
+		line := strings.SplitN(body[call:], "\n", 2)[0]
+		t.Fatalf("env_get is called before lib.sh is sourced: %s", line)
+	}
+}
