@@ -1,5 +1,8 @@
 #!/usr/bin/env bash
 # shellcheck disable=SC2034,SC2012
+# AppDir is a contract with the script that sources this library (install.sh
+# or ovnode.sh), so shellcheck's standalone view reports it as unassigned.
+# shellcheck disable=SC2154
 # Copyright (c) 2026 anonysec
 # SPDX-License-Identifier: MIT
 #
