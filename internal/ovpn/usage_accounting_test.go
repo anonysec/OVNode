@@ -144,3 +144,31 @@ func TestIncompleteStatusSnapshotIsRejected(t *testing.T) {
 	}
 	_ = fsx.StatusFile("udp")
 }
+
+// The panel bills by parsing each totals key as a numeric panel id and drops
+// anything else. Keying by the display name made every user's usage invisible.
+func TestTotalsKeyedByCommonNameNotDisplayName(t *testing.T) {
+	accountingTree(t)
+	if err := store.WriteName(pki.UsersDir(), "2", "winston"); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := store.RecordSessionUsage(pki.UsageDir(), "2", "2.10.66.0.2.1", 4096, true); err != nil {
+		t.Fatal(err)
+	}
+	accountingStatus(t, "")
+	usage, err := UsersUsage()
+	if err != nil {
+		t.Fatal(err)
+	}
+	totals := usage["totals"].(map[string]uint64)
+	if got := totals["2"]; got != 4096 {
+		t.Fatalf(`totals["2"] = %d, want 4096 (keys: %v)`, got, totals)
+	}
+	if _, leaked := totals["winston"]; leaked {
+		t.Fatalf("totals keyed by display name; the panel cannot bill it: %v", totals)
+	}
+	epochs := usage["totals_epochs"].(map[string]string)
+	if _, ok := epochs["2"]; !ok {
+		t.Fatalf("totals_epochs missing the CN: %v", epochs)
+	}
+}

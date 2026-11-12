@@ -62,7 +62,7 @@ func UsersUsage() (map[string]any, error) {
 	if err != nil {
 		return nil, err
 	}
-	totals, totalsEpochs, err := readTotals(display, present)
+	totals, totalsEpochs, err := readTotals(present)
 	if err != nil {
 		return nil, err
 	}
@@ -202,9 +202,13 @@ func needsWrite(cn, sessionID string, bytes uint64) bool {
 // readTotals loads every persisted counter and builds the totals and
 // totals_epochs maps with the same contributor set. Unreadable counters
 // fail the sample.
-func readTotals(display func(string) string, present map[string]map[string]bool) (map[string]uint64, map[string]string, error) {
+//
+// Keys are COMMON NAMES, never display names: the panel bills by parsing each
+// key as a numeric panel id (OpenVPN's CN guarantee) and drops anything else.
+// Keying by user name reported usage the panel could never count.
+func readTotals(present map[string]map[string]bool) (map[string]uint64, map[string]string, error) {
 	totals := map[string]uint64{}
-	epochsByCN := map[string]string{}
+	totalsEpochs := map[string]string{}
 	entries, err := os.ReadDir(pki.UsageDir())
 	if err != nil {
 		return nil, nil, err
@@ -229,34 +233,12 @@ func readTotals(display func(string) string, present map[string]map[string]bool)
 		if err != nil {
 			return nil, nil, err
 		}
-		totals[display(cn)] += st.Total
-		epochsByCN[cn] = st.Epoch
+		totals[cn] += st.Total
+		totalsEpochs[cn] = st.Epoch
 	}
 	for _, cn := range allCNs {
 		if err := store.PruneReceipts(pki.UsageDir(), cn, present[cn]); err != nil {
 			return nil, nil, err
-		}
-	}
-	totalsEpochs := map[string]string{}
-	byName := map[string][]string{}
-	for _, cn := range allCNs {
-		byName[display(cn)] = append(byName[display(cn)], cn)
-	}
-	for name, cns := range byName {
-		if len(cns) == 1 {
-			totalsEpochs[name] = epochsByCN[cns[0]]
-			continue
-		}
-		sort.Strings(cns)
-		pairs := make([]string, 0, len(cns))
-		for _, cn := range cns {
-			pairs = append(pairs, cn+"="+epochsByCN[cn])
-		}
-		totalsEpochs[name] = strings.Join(pairs, ",")
-	}
-	for name := range totals {
-		if _, ok := totalsEpochs[name]; !ok {
-			totalsEpochs[name] = ""
 		}
 	}
 	return totals, totalsEpochs, nil

@@ -1,5 +1,11 @@
 # Changelog
 
+## 2.0.14 — 2026-11-12
+
+- `/sync/usage` keyed `totals` and `totals_epochs` by the user DISPLAY NAME.
+  The panel bills by parsing each key as a numeric panel id and drops anything
+  else, so data usage never reached `users.used`. Key by common name.
+
 ## 2.0.13 — 2026-11-12
 
 - A fresh install generated a constant API key (a 64-character placeholder
