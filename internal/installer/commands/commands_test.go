@@ -312,3 +312,34 @@ func TestStageStaticAssetsCarriesEnvAndScripts(t *testing.T) {
 		}
 	}
 }
+
+// The scripts must come from the release being installed: a node updated from
+// 2.0.0 to a newer build otherwise keeps the old operator CLI, which is how a
+// fixed .env read stayed broken after the update that shipped it.
+func TestStageStaticAssetsUsesTheStagedBinary(t *testing.T) {
+	oldDir, stage := t.TempDir(), t.TempDir()
+	script := "#!/bin/sh\n[ \"$1\" = assets ] && [ \"$2\" = write ] || exit 1\nprintf 'from-new\\n' > \"$4/lib.sh\"\n"
+	if err := os.WriteFile(filepath.Join(stage, "ovnode"), []byte(script), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := stageStaticAssets(oldDir, stage); err != nil {
+		t.Fatal(err)
+	}
+	body, err := os.ReadFile(filepath.Join(stage, "lib.sh"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if string(body) != "from-new\n" {
+		t.Fatalf("lib.sh = %q, want the staged binary's copy", body)
+	}
+}
+
+func TestStageStaticAssetsFailsWhenTheStagedBinaryCannotWrite(t *testing.T) {
+	oldDir, stage := t.TempDir(), t.TempDir()
+	if err := os.WriteFile(filepath.Join(stage, "ovnode"), []byte("#!/bin/sh\nexit 7\n"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := stageStaticAssets(oldDir, stage); err == nil {
+		t.Fatal("a staged binary that cannot write its assets must fail the update")
+	}
+}

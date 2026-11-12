@@ -3,6 +3,7 @@ package commands
 import (
 	"fmt"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"strings"
 
@@ -35,10 +36,25 @@ func stageStaticAssets(oldDir, stage string) error {
 			return err
 		}
 	}
-	if _, err := assets.Write(stage); err != nil {
-		return err
+	return writeStagedAssets(stage)
+}
+
+// writeStagedAssets writes the shell files embedded in the release being
+// installed, not the ones in the process doing the update. Running the staged
+// binary is what keeps install.sh, ovnode.sh and lib.sh in step with the new
+// agent; the running binary's copy is a fallback for a local update that has
+// no downloaded binary.
+func writeStagedAssets(stage string) error {
+	bin := filepath.Join(stage, "ovnode")
+	if info, err := os.Stat(bin); err == nil && !info.IsDir() && info.Mode().Perm()&0o111 != 0 {
+		out, err := exec.Command(bin, "assets", "write", "--dest", stage).CombinedOutput()
+		if err != nil {
+			return fmt.Errorf("staged release cannot write its assets: %w (%s)", err, strings.TrimSpace(string(out)))
+		}
+		return nil
 	}
-	return nil
+	_, err := assets.Write(stage)
+	return err
 }
 
 // Update reproduces do_update, including the failover ordering.
