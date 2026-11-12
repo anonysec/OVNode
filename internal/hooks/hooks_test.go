@@ -355,3 +355,19 @@ func TestDisconnectIsIdempotent(t *testing.T) {
 		t.Fatalf("usage = %q, want total 150", string(data))
 	}
 }
+
+// The client-connect hook can already see its own client row. Counting it as
+// an old session makes a limit=1 user reject their only device.
+func TestConnectExcludesItsOwnLiveSession(t *testing.T) {
+	tr := newTree(t)
+	tr.user(t, "u1", "limit=1\ndisabled=0\n")
+	status := "HEADER,CLIENT_LIST,Common Name,Real Address,Virtual Address,Virtual IPv6 Address,Bytes Received,Bytes Sent,Connected Since,Connected Since (time_t),Username,Client ID,Peer ID\n" +
+		"CLIENT_LIST,u1,9.9.9.9:5001,10.8.0.2,,,,0,0,,,,7,0\n"
+	if err := os.WriteFile(tr.status, []byte(status), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	setClientEnv(t, "u1", "10.8.0.2")
+	if code := Connect(tr.config(), ""); code != 0 {
+		t.Fatalf("Connect exit code = %d, want 0 for the only device", code)
+	}
+}

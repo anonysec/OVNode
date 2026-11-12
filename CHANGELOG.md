@@ -1,5 +1,11 @@
 # Changelog
 
+## 2.0.11 — 2026-11-12
+
+- Exclude the connection being admitted from the live-session count. OpenVPN
+  lists the new client before `client-connect`; a limit=1 user counted their
+  own row as the old session and was rejected even with no other device.
+
 ## 2.0.10 — 2026-11-12
 
 - The management auth budget is 2 seconds (it was 200 ms). A slow auth made

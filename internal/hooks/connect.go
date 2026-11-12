@@ -139,6 +139,23 @@ func validHookCN(cn, safeCN string) bool {
 	return safeCN == cn && HookCNValid(safeCN)
 }
 
+// filterSelf drops the live row that is this very connection: same real
+// address/port or same pool address.
+func filterSelf(sessions []ovpn.Session, trustedIP, trustedPort, poolIP string) []ovpn.Session {
+	out := sessions[:0]
+	for _, s := range sessions {
+		if trustedIP != "" && s.TrustedIP == trustedIP &&
+			(trustedPort == "" || s.TrustedPort == trustedPort) {
+			continue
+		}
+		if poolIP != "" && s.VirtualAddress == poolIP {
+			continue
+		}
+		out = append(out, s)
+	}
+	return out
+}
+
 func newMarker(safeCN, trustedIP, trustedPort, poolIP, key string, connStart int64) store.Marker {
 	return store.Marker{
 		CommonName:  safeCN,
@@ -241,7 +258,11 @@ func connectLocked(
 	// One live read for the whole hook: the live session count of this
 	// CN decides admission. Fresh markers the live list has not echoed yet
 	// count as live too.
-	sessions := liveSessions(cfg, safeCN)
+	// OpenVPN may already list the connection being admitted (client-connect
+	// runs after the client row exists). Exclude this peer/pool; otherwise a
+	// limit=1 user counts their own new session as the old one and is rejected
+	// even when they are the only device.
+	sessions := filterSelf(liveSessions(cfg, safeCN), trustedIP, trustedPort, poolIP)
 	count := len(sessions) + freshMarkerCount(cfg, safeCN, sessions, key)
 
 	if count >= limit {
