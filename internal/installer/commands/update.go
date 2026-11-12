@@ -24,7 +24,7 @@ func stageStaticAssets(oldDir, stage string) error {
 	for _, item := range []struct {
 		name string
 		mode os.FileMode
-	}{{".env", 0o600}, {"VERSION", 0o644}} {
+	}{{".env", 0o600}, {"VERSION", 0o644}, {installMarker, 0o644}} {
 		data, err := os.ReadFile(filepath.Join(oldDir, item.name))
 		if err != nil {
 			if os.IsNotExist(err) {

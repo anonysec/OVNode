@@ -9,6 +9,21 @@ import (
 	"ovnode/internal/pki"
 )
 
+// installIncomplete reports a tree that has .env and the binary but no CA:
+// a first install that failed at `ca init`. Retrying install must finish it
+// rather than report "already installed" and leave the node dead.
+func (c *Config) installIncomplete() bool {
+	if _, err := os.Stat(filepath.Join(c.AppDir, installMarker)); err == nil {
+		return false
+	}
+	_, err := os.Stat(filepath.Join(c.OpenVPNRoot, "server", "pki", "ca.crt"))
+	return err != nil
+}
+
+// installMarker is written only after a complete install; a tree without it
+// and without a CA is a first install that failed part way.
+const installMarker = ".installed"
+
 // Install reproduces do_install; it is the installer beyond the bootstrap.
 func Install(c *Config, runner Runner) error {
 	state := c.PreState
@@ -21,8 +36,9 @@ func Install(c *Config, runner Runner) error {
 			}
 		}
 	}
+	partial := state == StateInstalled && c.installIncomplete()
 	if !c.Local {
-		if state == StateInstalled {
+		if state == StateInstalled && !partial {
 			return alreadyInstalled("(%s exists); run 'update' to refresh or 'uninstall' first", c.AppDir)
 		}
 		if state == StateUnitOnly || state == StateNodeData {
@@ -36,6 +52,9 @@ func Install(c *Config, runner Runner) error {
 		return fmt.Errorf("%w: %d", ErrRoot, ExitError)
 	}
 	if err := c.validate(); err != nil {
+		return err
+	}
+	if err := ensureDependencies(runner); err != nil {
 		return err
 	}
 	// [1/7] Preflight
@@ -117,6 +136,7 @@ func Install(c *Config, runner Runner) error {
 	if err := c.writeSetupInfo(runner); err != nil {
 		return err
 	}
+	_ = os.WriteFile(filepath.Join(c.AppDir, installMarker), []byte(c.Version+"\n"), 0o644)
 	c.successCard(schemeHost, scheme)
 	return nil
 }

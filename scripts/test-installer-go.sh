@@ -88,6 +88,7 @@ mkdir -p "$EXIST_APP" "$WORK/existing/units" "$WORK/existing/bin"
 cp "$BIN" "$EXIST_APP/ovnode"; chmod 0755 "$EXIST_APP/ovnode"
 printf 'Instance=eu-1\nApiKey=keep-me\nApiPort=2083\n' > "$EXIST_APP/.env"
 chmod 600 "$EXIST_APP/.env"
+printf '2.0.0\n' > "$EXIST_APP/.installed"
 printf 'unit\n' > "$WORK/existing/units/ovnode.service"
 export ApiKey=0123456789abcdef0123456789abcdef
 go_case existing "$EXIST_APP" "$WORK/existing-fake.log" -- install -y

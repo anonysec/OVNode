@@ -343,3 +343,27 @@ func TestStageStaticAssetsFailsWhenTheStagedBinaryCannotWrite(t *testing.T) {
 		t.Fatal("a staged binary that cannot write its assets must fail the update")
 	}
 }
+
+func TestInstallIncompleteDetectsMissingCA(t *testing.T) {
+	c := &Config{OpenVPNRoot: t.TempDir()}
+	if !c.installIncomplete() {
+		t.Fatal("a tree without a CA must be treated as a failed first install")
+	}
+	pkiDir := filepath.Join(c.OpenVPNRoot, "server", "pki")
+	if err := os.MkdirAll(pkiDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(pkiDir, "ca.crt"), []byte("ca"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if c.installIncomplete() {
+		t.Fatal("a tree with a CA is a complete install")
+	}
+	c2 := &Config{OpenVPNRoot: t.TempDir(), AppDir: t.TempDir()}
+	if err := os.WriteFile(filepath.Join(c2.AppDir, installMarker), []byte("2.0.0\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if c2.installIncomplete() {
+		t.Fatal("the completion marker makes a tree complete")
+	}
+}
