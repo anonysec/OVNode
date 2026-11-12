@@ -10,6 +10,7 @@ import (
 	"strings"
 
 	"ovnode/internal/config"
+	"ovnode/internal/events"
 	"ovnode/internal/fsx"
 	"ovnode/internal/logging"
 	"ovnode/internal/store"
@@ -22,6 +23,14 @@ import (
 // a previous generation whose pool was reused must not bank into, or delete,
 // the new generation's marker.
 func Disconnect(cfg config.Hook, arg string) int {
+	exit := disconnectDecision(cfg, arg)
+	_ = events.NotifyHook("disconnect", hookEventCN(arg))
+	return exit
+}
+
+// disconnectDecision is the original Disconnect body; the wrapper keeps the
+// notify send off every return path.
+func disconnectDecision(cfg config.Hook, arg string) int {
 	cn := os.Getenv("common_name")
 	if cn == "" {
 		cn = arg

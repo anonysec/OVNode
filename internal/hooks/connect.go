@@ -24,6 +24,7 @@ import (
 	"crypto/rand"
 	"encoding/hex"
 	"ovnode/internal/config"
+	"ovnode/internal/events"
 	"ovnode/internal/fsx"
 	"ovnode/internal/logging"
 	"ovnode/internal/ovpn"
@@ -44,6 +45,23 @@ import (
 // The take-over never refuses a client because the management socket was
 // down: a transient double session is cheaper than a refused reconnect.
 func Connect(cfg config.Hook, arg string) int {
+	exit := connectDecision(cfg, arg)
+	_ = events.NotifyHook("connect", hookEventCN(arg))
+	return exit
+}
+
+// connectDecision is the original Connect body; the wrapper keeps the
+// notify send off every return path.
+// hookEventCN resolves the common name the same way the hooks do; empty is
+// fine — any hook fire still makes the agent republish its snapshot.
+func hookEventCN(arg string) string {
+	if cn := os.Getenv("common_name"); cn != "" {
+		return cn
+	}
+	return arg
+}
+
+func connectDecision(cfg config.Hook, arg string) int {
 	cn := os.Getenv("common_name")
 	if cn == "" {
 		cn = arg
