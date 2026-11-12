@@ -40,6 +40,16 @@
   },
   {
     "method": "GET",
+    "path": "/sync/events",
+    "request": [],
+    "response": [],
+    "request_at": "internal/node/events.go:StreamEvents",
+    "response_at": [],
+    "response_raw": true,
+    "note": "SSE stream: event frames carry kind/revision/data; added in 2.0.15, consumed by the panel from 2.0.5"
+  },
+  {
+    "method": "GET",
     "path": "/sync/logs",
     "query": [
       "level",

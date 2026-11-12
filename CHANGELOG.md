@@ -1,5 +1,15 @@
 # Changelog
 
+## 2.0.15 — 2026-11-12
+
+- Event push: `GET /sync/events` streams session changes, a display-only
+  usage sample every 10 s and a 20 s heartbeat to the panel, fed by the
+  client-connect/disconnect hooks over a local unixgram socket plus a 1 s
+  state watcher. Steady-state node requests stay at zero while a stream is
+  open; the panel falls back to polling on a 404 (pre-2.0.15 node).
+- Hook sends are fire-and-forget (100 ms deadline): a missing or stalled
+  agent cannot slow a VPN connect.
+
 ## 2.0.14 — 2026-11-12
 
 - `/sync/usage` keyed `totals` and `totals_epochs` by the user DISPLAY NAME.

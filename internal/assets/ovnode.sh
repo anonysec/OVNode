@@ -11,7 +11,7 @@
 set -Eeuo pipefail
 
 # ── Constants ──────────────────────────────────────────────────────────
-VERSION="2.0.14"
+VERSION="2.0.15"
 _INVOKED_NAME="$(basename "${BASH_SOURCE[0]:-$0}")"
 _INVOKED_NAME="${_INVOKED_NAME%.sh}"
 INSTANCE_NAME="${Instance:-$_INVOKED_NAME}"
