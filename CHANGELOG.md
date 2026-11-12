@@ -1,5 +1,11 @@
 # Changelog
 
+## 2.0.2 — 2026-11-12
+
+- The installer summary prints the instance's own certificate PEM (and only
+  the PEM, not easy-rsa's OpenSSL text dump) plus its SHA-256 fingerprint.
+  A second-instance install used to show the bootstrap node's certificate.
+
 ## 2.0.1 — 2026-11-12
 
 - The installer is interactive on a terminal: node name, API port and key,
