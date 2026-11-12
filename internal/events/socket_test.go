@@ -26,10 +26,21 @@ func TestMain(m *testing.M) {
 		os.Exit(1)
 	}
 	logDir := filepath.Join(root, "log")
+	vpnRoot := filepath.Join(root, "openvpn")
+	if err := os.MkdirAll(filepath.Join(vpnRoot, "server", "udp"), 0o755); err != nil {
+		fmt.Fprintln(os.Stderr, err)
+		os.Exit(1)
+	}
+	if err := os.MkdirAll(filepath.Join(root, "sessions"), 0o755); err != nil {
+		fmt.Fprintln(os.Stderr, err)
+		os.Exit(1)
+	}
 	if err := os.WriteFile(filepath.Join(root, ".env"), []byte(
 		"DataDir="+root+"\n"+
 			"UsageDir="+usage+"\n"+
+			"SessionsDir="+filepath.Join(root, "sessions")+"\n"+
 			"LogDir="+logDir+"\n"+
+			"OpenVpnRoot="+vpnRoot+"\n"+
 			"LogFile="+filepath.Join(logDir, "hook-events.log")+"\n"), 0o600); err != nil {
 		fmt.Fprintln(os.Stderr, err)
 		os.Exit(1)

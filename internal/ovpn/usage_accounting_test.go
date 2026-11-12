@@ -172,3 +172,26 @@ func TestTotalsKeyedByCommonNameNotDisplayName(t *testing.T) {
 		t.Fatalf("totals_epochs missing the CN: %v", epochs)
 	}
 }
+
+// The events usage tick reads totals up to 6x/minute; it must not prune
+// receipts or write anything as a side effect the way UsersUsage does.
+func TestPersistedTotalsReadOnly(t *testing.T) {
+	accountingTree(t)
+	if _, err := store.RecordSessionUsage(pki.UsageDir(), "2", "sess1", 4096, true); err != nil {
+		t.Fatal(err)
+	}
+	writes := countWrites(t, pki.UsageDir(), func() {
+		for i := 0; i < 3; i++ {
+			totals, err := PersistedTotals()
+			if err != nil {
+				t.Fatal(err)
+			}
+			if totals["2"] != 4096 {
+				t.Fatalf("totals = %v, want {2:4096}", totals)
+			}
+		}
+	})
+	if writes != 0 {
+		t.Fatalf("PersistedTotals wrote %d files, want 0", writes)
+	}
+}

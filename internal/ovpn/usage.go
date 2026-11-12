@@ -199,6 +199,34 @@ func needsWrite(cn, sessionID string, bytes uint64) bool {
 	return bytes > sess.Bytes
 }
 
+// PersistedTotals returns the authoritative per-CN counters without touching
+// receipts or the live snapshot: the events stream reports these for display
+// only and must not prune or reconcile as a side effect.
+func PersistedTotals() (map[string]uint64, error) {
+	totals := map[string]uint64{}
+	entries, err := os.ReadDir(pki.UsageDir())
+	if err != nil {
+		if os.IsNotExist(err) {
+			return totals, nil
+		}
+		return nil, err
+	}
+	for _, e := range entries {
+		if e.IsDir() || strings.HasPrefix(e.Name(), ".lock.") {
+			continue
+		}
+		if !fsx.StoreKeyRe.MatchString(e.Name()) {
+			continue
+		}
+		st, err := store.ReadUsageState(pki.UsageDir(), e.Name())
+		if err != nil {
+			return nil, err
+		}
+		totals[e.Name()] = st.Total
+	}
+	return totals, nil
+}
+
 // readTotals loads every persisted counter and builds the totals and
 // totals_epochs maps with the same contributor set. Unreadable counters
 // fail the sample.
