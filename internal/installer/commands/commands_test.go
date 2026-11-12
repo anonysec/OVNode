@@ -4,6 +4,7 @@
 package commands
 
 import (
+	"io"
 	"os"
 	"path/filepath"
 	"strings"
@@ -365,5 +366,38 @@ func TestInstallIncompleteDetectsMissingCA(t *testing.T) {
 	}
 	if c2.installIncomplete() {
 		t.Fatal("the completion marker makes a tree complete")
+	}
+}
+
+func TestPrintCertificatePrintsOnlyThePEM(t *testing.T) {
+	root := t.TempDir()
+	c := &Config{OpenVPNRoot: root, AppDir: t.TempDir()}
+	path := filepath.Join(root, "server", "pki", "issued", "server.crt")
+	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	body := "Certificate:\n    Data:\n        Version: 3\n-----BEGIN CERTIFICATE-----\nZGVy\n-----END CERTIFICATE-----\n"
+	if err := os.WriteFile(path, []byte(body), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	old := os.Stderr
+	r, w, err := os.Pipe()
+	if err != nil {
+		t.Fatal(err)
+	}
+	os.Stderr = w
+	c.printCertificate()
+	_ = w.Close()
+	os.Stderr = old
+	out, _ := io.ReadAll(r)
+	text := string(out)
+	if !strings.Contains(text, "-----BEGIN CERTIFICATE-----") || !strings.Contains(text, "-----END CERTIFICATE-----") {
+		t.Fatalf("PEM missing from summary: %s", text)
+	}
+	if strings.Contains(text, "Data:") {
+		t.Fatalf("OpenSSL text leaked into summary: %s", text)
+	}
+	if !strings.Contains(text, "SHA256") {
+		t.Fatalf("fingerprint missing: %s", text)
 	}
 }

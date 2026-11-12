@@ -7,8 +7,6 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
-
-	"ovnode/internal/pki"
 )
 
 // installIncomplete reports a tree that has .env and the binary but no CA:
@@ -190,22 +188,24 @@ func (c *Config) printCertificate() {
 		path = c.EnvGet("TlsCertFile")
 	}
 	if path == "" {
-		path = pki.ServerCert()
+		path = filepath.Join(c.OpenVPNRoot, "server", "pki", "issued", "server.crt")
 	}
 	raw, err := os.ReadFile(path)
 	if err != nil {
 		return
 	}
-	fmt.Fprintf(os.Stderr, "\n  Certificate (%s)\n", path)
-	fmt.Fprintln(os.Stderr, strings.TrimSpace(string(raw)))
-	if block, _ := pem.Decode(raw); block != nil {
-		sum := sha256.Sum256(block.Bytes)
-		parts := make([]string, len(sum))
-		for i, b := range sum {
-			parts[i] = fmt.Sprintf("%02X", b)
-		}
-		fmt.Fprintf(os.Stderr, "  SHA256    %s\n", strings.Join(parts, ":"))
+	block, _ := pem.Decode(raw)
+	if block == nil {
+		return
 	}
+	fmt.Fprintf(os.Stderr, "\n  Certificate (%s)\n", path)
+	fmt.Fprintln(os.Stderr, strings.TrimSpace(string(pem.EncodeToMemory(block))))
+	sum := sha256.Sum256(block.Bytes)
+	parts := make([]string, len(sum))
+	for i, b := range sum {
+		parts[i] = fmt.Sprintf("%02X", b)
+	}
+	fmt.Fprintf(os.Stderr, "  SHA256    %s\n", strings.Join(parts, ":"))
 }
 
 func stage(n, total int, label string) {
@@ -267,5 +267,4 @@ func (c *Config) setupTLS(r Runner) error {
 	return nil
 }
 
-var _ = pki.PKIDir
 var _ = strings.TrimSpace
