@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"os"
 	"os/exec"
+	"strings"
 )
 
 // ensureDependencies installs the runtime the node cannot start without. A
@@ -39,10 +40,10 @@ func ensureDependencies(r Runner) error {
 		return fmt.Errorf("openvpn and easy-rsa are missing; install them with your package manager")
 	}
 	fmt.Fprintln(os.Stderr, "  Installing OpenVPN and easy-rsa...")
-	_ = r.Run(update[0], update[1:]...)
+	_, _ = r.Output(update[0], update[1:]...)
 	args := append(append([]string{}, install[1:]...), "openvpn", "easy-rsa")
-	if err := r.Run(install[0], args...); err != nil {
-		return fmt.Errorf("install openvpn and easy-rsa: %w", err)
+	if out, err := r.Output(install[0], args...); err != nil {
+		return fmt.Errorf("install openvpn and easy-rsa: %w\n%s", err, strings.TrimSpace(string(out)))
 	}
 	if !dependenciesPresent() {
 		return fmt.Errorf("openvpn or easy-rsa is still missing after install")
@@ -64,7 +65,7 @@ func dependenciesPresent() bool {
 func packageManager(has func(string) bool) (update, install []string, ok bool) {
 	switch {
 	case has("apt-get"):
-		return []string{"apt-get", "update", "-qq"}, []string{"apt-get", "install", "-y", "-qq"}, true
+		return []string{"apt-get", "update", "-qq"}, []string{"apt-get", "install", "-y", "-qq", "--no-install-recommends"}, true
 	case has("dnf"):
 		return []string{"dnf", "-q", "makecache"}, []string{"dnf", "install", "-y", "-q"}, true
 	case has("yum"):

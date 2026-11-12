@@ -5,12 +5,55 @@ package ovpn
 
 import (
 	"fmt"
+	"net"
 	"os"
 	"path/filepath"
 	"strings"
 
+	"ovnode/internal/fsx"
 	"ovnode/internal/pki"
 )
+
+// serverSANOption builds the self-signed server certificate's SAN list. The
+// node's API certificate is pinned by the panel, so the SANs are for operators
+// and tools that still check the hostname: TlsDomain is a comma-separated list
+// of domains and IPs (for example the server's public address).
+func serverSANOption() string {
+	sans := []string{"DNS:server", "DNS:localhost"}
+	seen := map[string]bool{"DNS:server": true, "DNS:localhost": true}
+	for _, part := range strings.Split(fsx.Get("TlsDomain", ""), ",") {
+		part = strings.TrimSpace(part)
+		if part == "" {
+			continue
+		}
+		entry := ""
+		if ip := net.ParseIP(part); ip != nil {
+			entry = "IP:" + ip.String()
+		} else if validDNSName(part) {
+			entry = "DNS:" + strings.ToLower(part)
+		}
+		if entry == "" || seen[entry] {
+			continue
+		}
+		seen[entry] = true
+		sans = append(sans, entry)
+	}
+	return "--subject-alt-name=" + strings.Join(sans, ",")
+}
+
+func validDNSName(value string) bool {
+	if value == "" || len(value) > 253 {
+		return false
+	}
+	for _, r := range value {
+		switch {
+		case r >= 'a' && r <= 'z', r >= 'A' && r <= 'Z', r >= '0' && r <= '9', r == '.', r == '-':
+		default:
+			return false
+		}
+	}
+	return !strings.HasPrefix(value, "-") && !strings.HasSuffix(value, "-")
+}
 
 func InitPKI() error {
 	for _, d := range append(pki.RequiredDirs(), pki.OVNodeDir()) {
@@ -69,7 +112,7 @@ func InitPKI() error {
 			return fmt.Errorf("incomplete server identity: restore the missing certificate or key")
 		}
 		if !serverCert {
-			if err := pki.RunEasyRSAChecked("--subject-alt-name=DNS:server,DNS:localhost", "build-server-full", "server", "nopass"); err != nil {
+			if err := pki.RunEasyRSAChecked(serverSANOption(), "build-server-full", "server", "nopass"); err != nil {
 				return err
 			}
 		}

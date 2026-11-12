@@ -31,6 +31,9 @@ func (c *Config) writeEnv() error {
 	if c.TLSKey != "" {
 		fmt.Fprintf(&b, "TlsKeyFile=%s\n", c.TLSKey)
 	}
+	if c.TLSDomain != "" {
+		fmt.Fprintf(&b, "TlsDomain=%s\n", c.TLSDomain)
+	}
 	if c.PanelIP != "" {
 		fmt.Fprintf(&b, "ApiAllowedCidrs=%s\n", c.PanelIP)
 	}

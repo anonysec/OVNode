@@ -1,5 +1,17 @@
 # Changelog
 
+## 2.0.1 — 2026-11-12
+
+- The installer is interactive on a terminal: node name, API port and key,
+  VPN ports, protocol, TLS method, self-signed SANs, IPv6 and the panel
+  allowlist. `-y` keeps the unattended defaults.
+- Numbered install steps, with apt and easy-rsa output suppressed; apt uses
+  `--no-install-recommends`, so the pcscd/opensc noise is gone.
+- The self-signed server certificate takes its SANs from `TlsDomain`; the
+  summary prints the certificate PEM and SHA-256 fingerprint for pinning.
+- Includes the 2.0.0 fixes for dependency installation, resuming a partial
+  first install, and running the binary downloaded in the current run.
+
 ## 2.0.0 — 2026-11-11
 
 First release of the reset line. **No upgrade path from pre-2.0.0 builds**:

@@ -7,7 +7,7 @@ deployment: the OpenVPN node agent the panel drives over a private `/sync` API.
   <img src=".github/assets/banner.svg" alt="OVNode — the VPN server agent for OVManager" width="820">
   <br><br>
 
-  [![Version](https://img.shields.io/badge/version-2.0.0-blue)](CHANGELOG.md)
+  [![Version](https://img.shields.io/badge/version-2.0.1-blue)](CHANGELOG.md)
   [![License: MIT](https://img.shields.io/badge/License-MIT-green.svg)](LICENSE)
   [![CI](https://github.com/anonysec/OVNode/actions/workflows/ci.yml/badge.svg)](https://github.com/anonysec/OVNode/actions/workflows/ci.yml)
   [![Go](https://img.shields.io/badge/go-1.27-00ADD8?logo=go&logoColor=white)](go.mod)
@@ -34,13 +34,19 @@ upgradable; the schema and state formats were reset.
 
 ```bash
 curl -fsSL https://raw.githubusercontent.com/anonysec/OVNode/main/internal/assets/install.sh -o install.sh
-bash install.sh -y
+bash install.sh            # interactive: node name, ports, protocol, TLS and SANs
+bash install.sh -y         # unattended defaults (udp/1194, self-signed)
 ```
 
 The bootstrap downloads the release binary, verifies it against
-`SHA256SUMS`, then runs the Go installer. `VpnPorts` defaults to 1194; choose a
-port nothing else is using. 443 is a common web-server port, so use it only
-when it is free. For a second instance on the same host:
+`SHA256SUMS`, then runs the Go installer. The interactive installer asks for
+the node name, API port/key, VPN ports, protocol, TLS method and (for a
+self-signed API certificate) the SAN list. The summary prints the certificate
+PEM and its SHA-256 fingerprint for pinning.
+
+`VpnPorts` defaults to 1194; choose a port nothing else is using. 443 is a
+common web-server port, so use it only when it is free. For a second instance
+on the same host:
 
 ```bash
 Instance=node2 VpnPorts=1194 ApiPort=2084 bash install.sh -y

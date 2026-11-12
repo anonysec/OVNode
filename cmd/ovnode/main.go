@@ -90,9 +90,20 @@ func runInstallCommand(command string) {
 	if action == "recover-update" {
 		action = "update"
 	}
+	if action == "interactive" {
+		action = "install"
+	}
 	var runErr error
 	switch action {
 	case "install":
+		if !cfg.Yes {
+			if err := commands.Interactive(cfg); err != nil {
+				fmt.Fprintln(os.Stderr, "ovnode installer: "+err.Error())
+				usage()
+				flush()
+				os.Exit(commands.ExitCode(err))
+			}
+		}
 		runErr = commands.Install(cfg, r)
 	case "update":
 		runErr = commands.Update(cfg, r)
