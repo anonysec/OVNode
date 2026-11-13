@@ -226,7 +226,7 @@ func freshMarkerCount(cfg config.Hook, safeCN string, sessions []ovpn.Session, o
 			continue
 		}
 		m, ok := store.ReadMarker(filepath.Join(cfg.SessionsDir, e.Name()))
-		if !ok {
+		if !ok || m.CommonName != safeCN {
 			continue
 		}
 		created := m.Created
