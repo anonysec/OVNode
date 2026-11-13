@@ -138,7 +138,7 @@ func Install(c *Config, runner Runner) error {
 	// [5/7] Health
 	stage(5, 7, "Health")
 	healthURL := scheme + "://127.0.0.1:" + c.Port + "/sync/health"
-	if !waitHealth(healthURL, 60) {
+	if !healthCheck(healthURL, 60) {
 		return fmt.Errorf("health: no answer on /sync/health after 60s")
 	}
 	stageOK("health")
@@ -224,6 +224,15 @@ func stage(n, total int, label string) {
 
 func stageOK(label string) {
 	fmt.Fprintf(os.Stderr, "  ok    %s\n", label)
+}
+
+// healthCheck skips the probe under the fake installer runner: the harness
+// starts no process, so nothing can answer.
+func healthCheck(url string, timeout int) bool {
+	if IsFake() {
+		return true
+	}
+	return waitHealth(url, timeout)
 }
 
 // healthPoll is the pause between health probes; a var so tests do not sleep.
