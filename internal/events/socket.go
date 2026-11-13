@@ -136,7 +136,7 @@ func Listen(ctx context.Context, h *Hub, sessions func() (any, error)) error {
 			}
 			_ = json.Unmarshal(buf[:n], &poke)
 			logging.Event(fsx.LogFile(), "events: hook poke op=%s cn=%s cid=%s", poke.Op, poke.CN, poke.CID)
-			if poke.CID != "" {
+			if poke.CID != "" || poke.Virtual != "" {
 				go runKill(killRequest{
 					CID:     poke.CID,
 					Proto:   poke.Proto,
@@ -205,11 +205,17 @@ func runKill(req killRequest) {
 		sessions, answered := sessionsForKill(req.CN)
 		if answered {
 			target, ok := findKillTarget(sessions, req.Virtual, req.Real)
-			if !ok {
+			if ok {
+				req.CID, req.Proto = target.ClientID, target.Protocol
+			} else if req.CID != "" {
 				logging.Event(fsx.LogFile(), "events: kill cid=%s virtual=%s already gone", req.CID, req.Virtual)
 				return
+			} else if attempt < 2 {
+				// The hook counted a marker the status file had not echoed
+				// yet; management may list it a moment later.
+				time.Sleep(time.Second)
+				continue
 			}
-			req.CID, req.Proto = target.ClientID, target.Protocol
 		}
 		if req.CID == "" {
 			if attempt < 2 {

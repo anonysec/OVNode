@@ -185,10 +185,10 @@ func liveSessions(cfg config.Hook, safeCN string) []ovpn.Session {
 	return liveRows(ovpn.StatusSessionsForCN(cfg.StatusFile, safeCN))
 }
 
-// freshMarkerCount counts markers of this CN written in the marker window
-// and absent from the live list: a connect accepted seconds ago is live
-// before the status file or management has echoed it.
-func freshMarkerCount(cfg config.Hook, safeCN string, sessions []ovpn.Session, ownKey string) int {
+// freshMarkers returns markers of this CN written in the marker window and
+// absent from the live list: a connect accepted seconds ago is live before
+// the status file has echoed it.
+func freshMarkers(cfg config.Hook, safeCN string, sessions []ovpn.Session, ownKey string) []store.Marker {
 	seen := make(map[string]bool, len(sessions))
 	for _, s := range sessions {
 		if s.VirtualAddress != "" {
@@ -199,10 +199,10 @@ func freshMarkerCount(cfg config.Hook, safeCN string, sessions []ovpn.Session, o
 		}
 	}
 	now := time.Now().Unix()
-	count := 0
+	var out []store.Marker
 	entries, err := os.ReadDir(cfg.SessionsDir)
 	if err != nil {
-		return 0
+		return nil
 	}
 	for _, e := range entries {
 		if e.IsDir() || e.Name() == ownKey || !strings.HasPrefix(e.Name(), safeCN+".") {
@@ -222,9 +222,9 @@ func freshMarkerCount(cfg config.Hook, safeCN string, sessions []ovpn.Session, o
 		if seen[m.PoolIP] || seen[m.TrustedIP+":"+m.TrustedPort] {
 			continue
 		}
-		count++
+		out = append(out, m)
 	}
-	return count
+	return out
 }
 
 // connectLocked is the policy under the per-CN lock.
@@ -244,11 +244,12 @@ func connectLocked(
 	// limit=1 user counts their own new session as the old one and is rejected
 	// even when they are the only device.
 	sessions := filterSelf(liveSessions(cfg, safeCN), trustedIP, trustedPort, poolIP)
-	count := len(sessions) + freshMarkerCount(cfg, safeCN, sessions, key)
+	fresh := freshMarkers(cfg, safeCN, sessions, key)
+	count := len(sessions) + len(fresh)
 
 	if count >= limit {
 		if limit == 1 {
-			if !takeover(cfg, safeCN, trustedIP, trustedPort, poolIP, sessions, count) {
+			if !takeover(cfg, safeCN, trustedIP, trustedPort, poolIP, sessions, fresh, count) {
 				return 1
 			}
 		} else {
@@ -408,15 +409,32 @@ func takeover(
 	cfg config.Hook,
 	safeCN, trustedIP, trustedPort, poolIP string,
 	sessions []ovpn.Session,
+	fresh []store.Marker,
 	count int,
 ) bool {
 	safeIP := Sanitize(orUnknown(trustedIP))
 	safePort := Sanitize(orUnknown(trustedPort))
-	targets := make([]ovpn.Session, 0, len(sessions))
+	seen := make(map[string]bool, len(sessions))
+	targets := make([]ovpn.Session, 0, len(sessions)+len(fresh))
 	for _, s := range sessions {
+		if s.VirtualAddress != "" {
+			seen[s.VirtualAddress] = true
+		}
 		if isDigits(s.ClientID) {
 			targets = append(targets, s)
 		}
+	}
+	// A marker written seconds ago has no client id yet. Its virtual address
+	// is enough for the agent to resolve the session once management sees it.
+	for _, m := range fresh {
+		if m.PoolIP == "" || seen[m.PoolIP] {
+			continue
+		}
+		targets = append(targets, ovpn.Session{
+			CommonName:     safeCN,
+			VirtualAddress: m.PoolIP,
+			RealAddress:    m.TrustedIP + ":" + m.TrustedPort,
+		})
 	}
 	logging.Event(cfg.LogFile,
 		"CN=%s ip=%s:%s pool=%s limit=1 status=%d; TAKEOVER (%d queued client-kill targets)",

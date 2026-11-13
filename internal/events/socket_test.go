@@ -183,3 +183,34 @@ func TestListenQueuesTargetedKill(t *testing.T) {
 		t.Fatal("kill was not queued")
 	}
 }
+
+// A kill queued from a fresh marker has no client id yet. The agent must
+// retry the virtual lookup instead of dropping the target as gone.
+func TestRunKillRetriesAFreshVirtual(t *testing.T) {
+	prevKill, prevSessions := killSession, sessionsForKill
+	t.Cleanup(func() { killSession, sessionsForKill = prevKill, prevSessions })
+
+	calls := 0
+	sessionsForKill = func(cn string) ([]ovpn.Session, bool) {
+		calls++
+		if calls == 1 {
+			return nil, true
+		}
+		return []ovpn.Session{{CommonName: cn, VirtualAddress: "10.8.0.2", ClientID: "9", Protocol: "udp"}}, true
+	}
+	got := make(chan string, 1)
+	killSession = func(proto string, cmds []string) ([]string, error) {
+		got <- proto + "|" + cmds[0]
+		return []string{"SUCCESS: client-kill command succeeded"}, nil
+	}
+
+	runKill(killRequest{CN: "u1", Virtual: "10.8.0.2"})
+	select {
+	case cmd := <-got:
+		if cmd != "udp|client-kill 9" {
+			t.Fatalf("kill = %q, want udp|client-kill 9", cmd)
+		}
+	default:
+		t.Fatal("no kill was sent")
+	}
+}

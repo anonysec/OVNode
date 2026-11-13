@@ -22,7 +22,7 @@ func TestFreshMarkerCountIgnoresLongerCN(t *testing.T) {
 	}); err != nil {
 		t.Fatal(err)
 	}
-	if got := freshMarkerCount(tr.config(), "a", nil, "a.10.8.0.9"); got != 0 {
-		t.Fatalf("freshMarkerCount = %d, want 0 for another CN", got)
+	if got := freshMarkers(tr.config(), "a", nil, "a.10.8.0.9"); len(got) != 0 {
+		t.Fatalf("freshMarkers = %d, want 0 for another CN", len(got))
 	}
 }
