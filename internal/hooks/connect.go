@@ -448,11 +448,6 @@ func takeover(
 		"CN=%s ip=%s:%s pool=%s limit=1 status=%d; TAKEOVER (%d queued client-kill targets)",
 		safeCN, safeIP, safePort, orNone(poolIP), count, len(targets))
 
-	// The sidecar is written before the queue: the panel toasts the displaced
-	// user on their next login, even if the agent cannot deliver the kill.
-	sidecar := writeLastKill(cfg.UsersDir, safeCN, time.Now().Unix())
-	logging.Event(cfg.LogFile, "CN=%s wrote kill sidecar=%s", safeCN, sidecar)
-
 	if len(targets) == 0 {
 		logging.Event(cfg.LogFile,
 			"CN=%s ip=%s:%s pool=%s limit=1 status=%d; DEGRADE (takeover, no numeric target)",
@@ -471,19 +466,6 @@ func takeover(
 			safeCN, safeIP, safePort, orNone(poolIP), count, target.ClientID)
 	}
 	return true
-}
-
-// writeLastKill writes the kill-reason sidecar the panel reads to toast the
-// displaced user. It returns the path it wrote.
-func writeLastKill(usersDir, safeCN string, at int64) string {
-	dir := filepath.Join(usersDir, safeCN)
-	_ = os.MkdirAll(dir, 0o755) // #nosec G301 -- per-user state dir
-	path := filepath.Join(dir, "last_kill.json")
-	body := fmt.Sprintf(
-		`{"reason":"replaced by newer session (limit=1)","at":%d,"cn":"%s","reason_code":"max_login_takeover"}`+"\n",
-		at, safeCN)
-	_ = fsx.WriteFileAtomic(path, []byte(body), 0o644)
-	return path
 }
 
 // liveRows drops the rows the bash prefilter also dropped: a row with no
