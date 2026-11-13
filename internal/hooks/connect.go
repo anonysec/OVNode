@@ -295,7 +295,7 @@ func connectLocked(
 						safeCN, safeIP, safePort, orNone(poolIP), limit, count)
 					return 1
 				}
-				if err := notifyKill(target.ClientID, target.Protocol); err != nil {
+				if err := queueKill(safeCN, target); err != nil {
 					logging.Event(cfg.LogFile,
 						"CN=%s ip=%s:%s pool=%s limit=%d status=%d; DEGRADE (takeover, queue failed: %v)",
 						safeCN, safeIP, safePort, orNone(poolIP), limit, count, err)
@@ -313,7 +313,7 @@ func connectLocked(
 				}
 				newest, ok := newestSession(sessions)
 				if ok && isDigits(newest.ClientID) && newest.BytesReceived+newest.BytesSent == 0 {
-					_ = notifyKill(newest.ClientID, newest.Protocol)
+					_ = queueKill(safeCN, newest)
 					logging.Event(cfg.LogFile,
 						"CN=%s ip=%s:%s pool=%s limit=%d status=%d; RECLAIM queued client-kill cid=%s (zero-byte)",
 						safeCN, safeIP, safePort, orNone(poolIP), limit, count, newest.ClientID)
@@ -389,6 +389,14 @@ func cidNumber(cid string) int {
 	return n
 }
 
+// queueKill sends the target identity to the agent. The virtual address is
+// the stable key: the agent resolves it to the current management client id
+// under the management lock, so a stale status-file id cannot kill the new
+// session instead of the old one.
+func queueKill(cn string, target ovpn.Session) error {
+	return notifyKill(target.ClientID, target.Protocol, cn, target.VirtualAddress, target.RealAddress)
+}
+
 // bankDisplacedGeneration closes the previous generation at key with its
 // last observed status bytes, if any, before a new marker replaces it.
 // Callers hold the per-CN session lock (session lock before usage lock).
@@ -452,7 +460,7 @@ func takeover(
 		return true
 	}
 	for _, target := range targets {
-		if err := notifyKill(target.ClientID, target.Protocol); err != nil {
+		if err := queueKill(safeCN, target); err != nil {
 			logging.Event(cfg.LogFile,
 				"CN=%s ip=%s:%s pool=%s limit=1 status=%d; DEGRADE (takeover, queue failed: %v)",
 				safeCN, safeIP, safePort, orNone(poolIP), count, err)

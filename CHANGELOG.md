@@ -7,7 +7,9 @@
   connection; the agent owns the single management slot and retries. This
   removes the `kill <cn>` path that could remove the new session itself and
   the `could not verify` / AUTH_FAILED loop seen when the slot was busy.
-- A queue failure degrades to admitting the reconnect; the old row expires
+- A queued kill is resolved against the live management view by virtual
+  address, so a stale status-file client id cannot remove the new session.
+  A queue failure degrades to admitting the reconnect; the old row expires
   at keepalive. The displaced-user sidecar is still written before the
   queue, so the panel can explain the disconnect.
 

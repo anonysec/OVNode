@@ -89,6 +89,13 @@ func validateMgmtHost(host string) error {
 	return fmt.Errorf("management host %q is not loopback; set AllowRemoteMgmt=1", host)
 }
 
+// ManagementSessionsForCN returns the live management view of one CN. The
+// agent uses it to resolve a queued kill to the current client id and
+// protocol; the status file can lag behind a reconnect or a rekey.
+func ManagementSessionsForCN(cn string) ([]Session, bool) {
+	return mgmtSessionsForCN(cn)
+}
+
 // StatusSessionsForCN merges the status files of every protocol and keeps one
 // row per session. The hook uses this path for admission; it never touches
 // the single management slot.

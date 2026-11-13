@@ -50,7 +50,7 @@ func withKill(t *testing.T) *[]string {
 	t.Helper()
 	prev := notifyKill
 	var commands []string
-	notifyKill = func(cid, proto string) error {
+	notifyKill = func(cid, proto, cn, virtual, real string) error {
 		commands = append(commands, "client-kill "+cid)
 		return nil
 	}
@@ -61,7 +61,7 @@ func withKill(t *testing.T) *[]string {
 func withKillError(t *testing.T) {
 	t.Helper()
 	prev := notifyKill
-	notifyKill = func(string, string) error { return errors.New("agent socket down") }
+	notifyKill = func(string, string, string, string, string) error { return errors.New("agent socket down") }
 	t.Cleanup(func() { notifyKill = prev })
 }
 

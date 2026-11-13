@@ -12,6 +12,8 @@ import (
 	"sync"
 	"testing"
 	"time"
+
+	"ovnode/internal/ovpn"
 )
 
 func TestMain(m *testing.M) {
@@ -156,15 +158,18 @@ func TestListenQueuesTargetedKill(t *testing.T) {
 	stop := startListener(t, h, func() (any, error) { return nil, nil })
 	defer stop()
 
-	prev := killSession
-	t.Cleanup(func() { killSession = prev })
+	prevKill, prevSessions := killSession, sessionsForKill
+	t.Cleanup(func() { killSession, sessionsForKill = prevKill, prevSessions })
 	called := make(chan string, 1)
+	sessionsForKill = func(cn string) ([]ovpn.Session, bool) {
+		return []ovpn.Session{{CommonName: cn, VirtualAddress: "10.8.0.2", ClientID: "7", Protocol: "udp"}}, true
+	}
 	killSession = func(proto string, cmds []string) ([]string, error) {
 		called <- proto + "|" + cmds[0]
 		return []string{"SUCCESS: client-kill command succeeded"}, nil
 	}
 
-	if err := NotifyKill("7", "udp"); err != nil {
+	if err := NotifyKill("7", "udp", "2", "10.8.0.2", "1.1.1.1:4000"); err != nil {
 		t.Fatalf("notify kill: %v", err)
 	}
 	select {

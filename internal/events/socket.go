@@ -127,15 +127,23 @@ func Listen(ctx context.Context, h *Hub, sessions func() (any, error)) error {
 		}
 		if n > 0 {
 			var poke struct {
-				Op    string `json:"op"`
-				CN    string `json:"cn"`
-				CID   string `json:"cid"`
-				Proto string `json:"proto"`
+				Op      string `json:"op"`
+				CN      string `json:"cn"`
+				CID     string `json:"cid"`
+				Proto   string `json:"proto"`
+				Virtual string `json:"virtual"`
+				Real    string `json:"real"`
 			}
 			_ = json.Unmarshal(buf[:n], &poke)
 			logging.Event(fsx.LogFile(), "events: hook poke op=%s cn=%s cid=%s", poke.Op, poke.CN, poke.CID)
 			if poke.CID != "" {
-				go runKill(poke.CID, poke.Proto)
+				go runKill(killRequest{
+					CID:     poke.CID,
+					Proto:   poke.Proto,
+					CN:      poke.CN,
+					Virtual: poke.Virtual,
+					Real:    poke.Real,
+				})
 			}
 			snap, serr := sessions()
 			if serr == nil && snap != nil {
@@ -154,9 +162,13 @@ func NotifyHook(op, cn string) error {
 
 // NotifyKill queues a targeted management kill in the agent. The hook never
 // touches the single management slot itself: the agent owns that socket, can
-// retry, and cannot turn a transient hold into AUTH_FAILED.
-func NotifyKill(cid, proto string) error {
-	body, _ := json.Marshal(map[string]string{"op": "kill", "cid": cid, "proto": proto})
+// retry, and cannot turn a transient hold into AUTH_FAILED. The virtual and
+// real addresses let the agent resolve the current client id at kill time;
+// the status file can lag behind a reconnect or a rekey.
+func NotifyKill(cid, proto, cn, virtual, real string) error {
+	body, _ := json.Marshal(map[string]string{
+		"op": "kill", "cid": cid, "proto": proto, "cn": cn, "virtual": virtual, "real": real,
+	})
 	return send(body)
 }
 
@@ -171,28 +183,53 @@ func send(body []byte) error {
 	return nil
 }
 
-// killSession is the management call the agent makes for a queued kill. Tests
-// replace it to avoid a live socket.
-var killSession = ovpn.SendCommandsToProtocol
+type killRequest struct {
+	CID     string
+	Proto   string
+	CN      string
+	Virtual string
+	Real    string
+}
 
-// runKill retries a queued targeted kill. The management interface serves one
-// client at a time, so a busy slot is normal and not a reason to lose the
-// replacement.
-func runKill(cid, proto string) {
+// Tests replace these to avoid a live management socket.
+var (
+	killSession     = ovpn.SendCommandsToProtocol
+	sessionsForKill = ovpn.ManagementSessionsForCN
+)
+
+// runKill resolves the target against the live management view, then retries
+// the targeted kill. A status-file client id can be stale and can point at
+// the new session; the virtual address cannot.
+func runKill(req killRequest) {
 	for attempt := 0; attempt < 3; attempt++ {
+		sessions, answered := sessionsForKill(req.CN)
+		if answered {
+			target, ok := findKillTarget(sessions, req.Virtual, req.Real)
+			if !ok {
+				logging.Event(fsx.LogFile(), "events: kill cid=%s virtual=%s already gone", req.CID, req.Virtual)
+				return
+			}
+			req.CID, req.Proto = target.ClientID, target.Protocol
+		}
+		if req.CID == "" {
+			if attempt < 2 {
+				time.Sleep(time.Second)
+			}
+			continue
+		}
 		var (
 			replies []string
 			err     error
 		)
-		if proto == "" {
-			replies, err = ovpn.SendCommands([]string{"client-kill " + cid})
+		if req.Proto == "" {
+			replies, err = ovpn.SendCommands([]string{"client-kill " + req.CID})
 		} else {
-			replies, err = killSession(proto, []string{"client-kill " + cid})
+			replies, err = killSession(req.Proto, []string{"client-kill " + req.CID})
 		}
 		if err == nil {
 			for _, reply := range replies {
 				if strings.Contains(strings.ToUpper(reply), "SUCCESS") {
-					logging.Event(fsx.LogFile(), "events: kill cid=%s proto=%s ok", cid, proto)
+					logging.Event(fsx.LogFile(), "events: kill cid=%s proto=%s ok", req.CID, req.Proto)
 					return
 				}
 			}
@@ -201,7 +238,23 @@ func runKill(cid, proto string) {
 			time.Sleep(time.Second)
 		}
 	}
-	logging.Event(fsx.LogFile(), "events: kill cid=%s proto=%s failed", cid, proto)
+	logging.Event(fsx.LogFile(), "events: kill cid=%s virtual=%s failed", req.CID, req.Virtual)
+}
+
+func findKillTarget(sessions []ovpn.Session, virtual, real string) (ovpn.Session, bool) {
+	for _, session := range sessions {
+		if virtual != "" && session.VirtualAddress == virtual {
+			return session, true
+		}
+	}
+	if virtual == "" {
+		for _, session := range sessions {
+			if real != "" && session.RealAddress == real {
+				return session, true
+			}
+		}
+	}
+	return ovpn.Session{}, false
 }
 
 // vpnGroupGID resolves the ovnode-vpn group; 0 when absent (tests, docker).
