@@ -146,14 +146,14 @@ func Update(c *Config, runner Runner) error {
 		scheme = "https"
 	}
 	healthURL := scheme + "://127.0.0.1:" + c.Port + "/sync/health"
-	if !waitHealth(runner, healthURL, 60) {
+	if !waitHealth(healthURL, 60) {
 		return failover(c, u, runner)
 	}
 	// [6/6] Commit
 	_ = os.Remove(marker)
 	_ = c.setupNAT(runner)
 	_ = c.setupLogrotate()
-	if !waitHealth(runner, healthURL, 60) {
+	if !waitHealth(healthURL, 60) {
 		_ = os.WriteFile(marker, []byte{}, 0o600)
 		_ = installer.WriteUpdateState(u.statePath(c), "recovery_required", from, c.Version, safety, identity)
 		return fmt.Errorf("candidate passed verification but failed its final check; writes are blocked; run: ovnode recover-update")
@@ -188,7 +188,7 @@ func failover(c *Config, u *updateCtx, runner Runner) error {
 		scheme = "https"
 	}
 	healthURL := scheme + "://127.0.0.1:" + c.Port + "/sync/health"
-	if waitHealth(runner, healthURL, 60) {
+	if waitHealth(healthURL, 60) {
 		_ = os.Remove(u.marker(c))
 		_ = installer.WriteUpdateState(u.statePath(c), "failed_over", u.from, c.Version, u.safety, u.identity)
 		return fmt.Errorf("update failed over safely to v%s; state was restored from %s; check logs before retrying", u.from, u.safety)

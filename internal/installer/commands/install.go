@@ -2,11 +2,14 @@ package commands
 
 import (
 	"crypto/sha256"
+	"crypto/tls"
 	"encoding/pem"
 	"fmt"
+	"net/http"
 	"os"
 	"path/filepath"
 	"strings"
+	"time"
 
 	"ovnode/internal/assets"
 )
@@ -135,7 +138,7 @@ func Install(c *Config, runner Runner) error {
 	// [5/7] Health
 	stage(5, 7, "Health")
 	healthURL := scheme + "://127.0.0.1:" + c.Port + "/sync/health"
-	if !waitHealth(runner, healthURL, 60) {
+	if !waitHealth(healthURL, 60) {
 		return fmt.Errorf("health: no answer on /sync/health after 60s")
 	}
 	stageOK("health")
@@ -223,14 +226,32 @@ func stageOK(label string) {
 	fmt.Fprintf(os.Stderr, "  ok    %s\n", label)
 }
 
-// waitHealth polls <url> once per second for up to timeout seconds.
-func waitHealth(r Runner, url string, timeout int) bool {
-	_ = r
-	_ = url
-	_ = timeout
-	// The health probe is the only check; in CI it is stubbed via the
-	// fake runner, so every call succeeds immediately.
-	return true
+// healthPoll is the pause between health probes; a var so tests do not sleep.
+var healthPoll = time.Second
+
+// waitHealth polls <url> once per healthPoll for up to timeout seconds. A
+// probe is a plain GET: the endpoint is unauthenticated by design, and the
+// loopback certificate is the one this node just generated.
+func waitHealth(url string, timeout int) bool {
+	client := &http.Client{
+		Timeout: 2 * time.Second,
+		Transport: &http.Transport{
+			TLSClientConfig: &tls.Config{InsecureSkipVerify: true}, // #nosec G402 -- loopback probe of this node's own self-signed certificate
+		},
+	}
+	for i := 0; i < timeout; i++ {
+		resp, err := client.Get(url)
+		if err == nil {
+			_ = resp.Body.Close()
+			if resp.StatusCode == http.StatusOK {
+				return true
+			}
+		}
+		if i < timeout-1 {
+			time.Sleep(healthPoll)
+		}
+	}
+	return false
 }
 
 func (c *Config) startOpenVPN(r Runner) {
