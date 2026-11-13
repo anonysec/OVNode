@@ -1,16 +1,11 @@
 // Copyright (c) 2026 anonysec
 // SPDX-License-Identifier: MIT
 
-// Package hooks implements the OpenVPN client hooks.
+// Package hooks implements the OpenVPN client hooks. A non-zero exit refuses
+// the client; the decision must work with the agent down, so it reads disk.
 //
-// The hook decides admission: a non-zero exit refuses the client. It must
-// reach that decision with the agent daemon down, so everything it needs is
-// on disk or on the management socket.
-//
-// The text of the log lines is a contract with the panel: backend/openvpn/
-// sessions.py reads the event file and classifies each line, so the tokens
-// ("is disabled", "USERS_DIR missing", "could not verify", "management
-// unavailable", "REJECT", "FAILED") must survive the port.
+// The log tokens ("is disabled", "USERS_DIR missing", "REJECT", "FAILED") are
+// a contract with the panel. Keep them.
 package hooks
 
 import (
@@ -32,21 +27,9 @@ import (
 	"ovnode/internal/store"
 )
 
-// Connect is the client-connect policy.
-//
-// Exit code 0 admits the client, 1 refuses it.
-//
-// Policy, on the live session count only:
-//
-//   - limit 0: unlimited, admit.
-//   - disabled: refuse.
-//   - limit 1 at the limit: take over the old session, then admit.
-//   - limit N > 1: the node's LimitPolicy decides:
-//     strict refuses, reserve admits one temporary session, takeover replaces
-//     one existing session.
-//
-// The take-over never refuses a client because the management socket was
-// down: a transient double session is cheaper than a refused reconnect.
+// Connect is the client-connect policy: 0 admits, 1 refuses. Limit 0 is
+// unlimited, limit 1 takes over, and N > 1 follows the node policy. A down
+// management socket degrades to a temporary extra, never a refused reconnect.
 
 // overflowReserve is the single temporary session reserve mode admits for a
 // reconnect. The background reaper returns the count to the limit once the
@@ -389,18 +372,14 @@ func cidNumber(cid string) int {
 	return n
 }
 
-// queueKill sends the target identity to the agent. The virtual address is
-// the stable key: the agent resolves it to the current management client id
-// under the management lock, so a stale status-file id cannot kill the new
-// session instead of the old one.
+// queueKill sends the stable identity; the agent resolves the virtual
+// address to the current client id, so a stale status id cannot kill the new.
 func queueKill(cn string, target ovpn.Session) error {
 	return notifyKill(target.ClientID, target.Protocol, cn, target.VirtualAddress, target.RealAddress)
 }
 
-// bankDisplacedGeneration closes the previous generation at key with its
-// last observed status bytes, if any, before a new marker replaces it.
-// Callers hold the per-CN session lock (session lock before usage lock).
-// Already-polled bytes are de-duplicated by the session offset.
+// bankDisplacedGeneration closes the previous generation at key before a new
+// marker replaces it. Callers hold the per-CN lock; the offset dedupes.
 func bankDisplacedGeneration(cfg config.Hook, safeCN, key, poolIP string, sessions []ovpn.Session) error {
 	old, ok := store.ReadMarker(filepath.Join(cfg.SessionsDir, key))
 	if !ok || old.SessionID == "" {
@@ -422,14 +401,9 @@ func bankDisplacedGeneration(cfg config.Hook, safeCN, key, poolIP string, sessio
 	return err
 }
 
-// takeover queues a targeted client-kill for each old session of a limit=1
-// user and reports whether the client may continue.
-//
-// The hook never opens the management slot and never calls kill <cn>: that
-// removes every session of the user, including the new one when OpenVPN has
-// already listed it. The agent owns the slot, retries, and targets only the
-// old client ids. False is reserved for a caller that genuinely must refuse;
-// a queue failure degrades instead.
+// takeover queues a targeted client-kill for each old session and admits.
+// The hook never calls kill <cn>, which would remove the new session too;
+// the agent owns the management slot and retries.
 func takeover(
 	cfg config.Hook,
 	safeCN, trustedIP, trustedPort, poolIP string,

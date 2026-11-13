@@ -14,21 +14,11 @@ import (
 	"ovnode/internal/pairing"
 )
 
-// The panel is the client: it sends the node API key in the "key" header
-// and its identity in "X-Panel-ID".
+// authorize checks the API key, charges the rate limit, and enforces the
+// single-panel lease. The key says "allowed"; the pairing says "the owner".
 //
-// The API key says "you are allowed"; the pairing says "you are the owner".
-// One panel owns a node at a time, so a second panel with a valid key is
-// refused while the first one still holds the lease.
-
-// authorize checks the API key, charges the rate limit and enforces the
-// single-panel lease.
-//
-// The order matters: a missing key is a 401 (the diagnostic), not a 429
-// that hides it. The rate limit is keyed on the connecting address, never on
-// the submitted secret — keying on an attacker-supplied value gave every
-// guess a fresh bucket, so brute force was unlimited and a flood of bogus
-// keys evicted the real caller.
+// Order matters: a missing key is a 401, not a 429 that hides it, and the
+// limiter is keyed on the address, never on the submitted secret.
 func (s *Server) authorize(w http.ResponseWriter, r *http.Request, heavy bool) bool {
 	given := r.Header.Get("key")
 	if given == "" {
@@ -66,10 +56,8 @@ func (s *Server) authorize(w http.ResponseWriter, r *http.Request, heavy bool) b
 			return false
 		}
 	}
-	// The pairing runs only after the key is proven: the panel id is
-	// identity, not authentication.
-	// Contract negotiation: absent = legacy (accept). Runs BEFORE
-	// pairing.Enforce so a wrong contract cannot hold/renew the lease.
+	// Pairing runs after the key is proven, and the contract check before
+	// pairing, so a bad contract cannot hold or renew the lease.
 	if cv := strings.TrimSpace(r.Header.Get("X-Contract-Version")); cv != "" {
 		n, err := strconv.Atoi(cv)
 		if err != nil || n < ContractFloor {

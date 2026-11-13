@@ -1,21 +1,8 @@
 // Copyright (c) 2026 anonysec
 // SPDX-License-Identifier: MIT
 
-// Package ovnode carries the release assets the agent ships.
-//
-// The shell files the installer and the operator CLI are made of live inside
-// the binary, and the binary writes them out. Three things fall out of that:
-//
-//   - One authored copy of each. The installer on a box and the installer in
-//     the repository are the same bytes.
-//   - The scripts on a box cannot disagree with the binary beside them. The
-//     installer used to fetch its helpers from a branch while the product came
-//     from a release, which is two versions that can drift.
-//   - The installer downloads the product and nothing else.
-//
-// The scripts live beside this file because go:embed cannot reach outside
-// its own directory. The published bootstrap URL is
-// https://raw.githubusercontent.com/anonysec/OVNode/main/internal/assets/install.sh.
+// Package ovnode embeds the installer, operator CLI, and shell library, so
+// the binary and the scripts on a box are always the same release.
 package assets
 
 import (
@@ -24,15 +11,13 @@ import (
 	"path/filepath"
 )
 
-// Installer is the installer script: install, update, recover-update,
-// repair-unit, uninstall.
+// Installer is the install, update, recover, repair, and uninstall script.
 //
 //go:embed install.sh
 var Installer []byte
 
-// Operator is the operator CLI: status, logs, backup, restore, auth,
-// tls. It is a script and not a subcommand because it is the only thing on a
-// box that still works when the agent binary does not.
+// Operator is the operator CLI. It is a script because it has to work when
+// the agent binary does not.
 //
 //go:embed ovnode.sh
 var Operator []byte
@@ -58,18 +43,13 @@ func Assets() []Asset {
 	}
 }
 
-// Write writes every embedded shell file into dir and returns the paths.
-//
-// Each file is written to a temporary name and renamed into place. A rename
-// replaces the directory entry, so a script that is running right now keeps
-// reading the inode it opened: bash reads a script by byte offset as it goes,
-// and rewriting it in place under a running installer corrupts the run.
+// Write installs every embedded script into dir. The rename keeps a running
+// bash script readable: it reads by offset, so an in-place rewrite corrupts it.
 func Write(dir string) ([]string, error) {
 	if err := os.MkdirAll(dir, 0o755); err != nil {
 		return nil, err
 	}
-	// Stage every file first; only rename once all writes succeed, so a
-	// failure never leaves a half-updated set (PasarGuard-style bootstrap).
+	// Stage every file first, then rename, so a failure leaves no half set.
 	type staged struct {
 		path string
 		tmp  string
