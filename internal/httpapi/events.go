@@ -9,6 +9,7 @@ import (
 	"net/http"
 	"time"
 
+	"ovnode/internal/events"
 	"ovnode/internal/ovpn"
 )
 
@@ -65,6 +66,15 @@ func (s *Server) handleEvents(w http.ResponseWriter, r *http.Request) {
 		return true
 	}
 
+	// Subscribe before the snapshot leaves the socket: a client that reacts to
+	// the first frame immediately must not race the subscription and lose the
+	// next event. Frames published meanwhile queue in the subscriber buffer.
+	var sub *events.Sub
+	if s.hub != nil {
+		sub = s.hub.Subscribe()
+		defer s.hub.Unsubscribe(sub)
+	}
+
 	snap, err := eventsSnapshot()
 	if err != nil {
 		writeFail(w, "Event snapshot unavailable")
@@ -76,12 +86,10 @@ func (s *Server) handleEvents(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	if s.hub == nil {
+	if sub == nil {
 		// Without a hub (tests, odd embeds) the snapshot IS the stream.
 		return
 	}
-	sub := s.hub.Subscribe()
-	defer s.hub.Unsubscribe(sub)
 
 	ctx := r.Context()
 	for {

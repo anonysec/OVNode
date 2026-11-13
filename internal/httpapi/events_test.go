@@ -47,7 +47,9 @@ func httptestListener(t *testing.T) net.Listener {
 
 func openStream(t *testing.T, client *http.Client, base string) (*bufio.Reader, func()) {
 	t.Helper()
-	ctx, cancel := context.WithCancel(context.Background())
+	// A stalled stream must fail the test instead of blocking the whole
+	// package until the 10-minute go-test timeout.
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, base+"/sync/events", nil)
 	if err != nil {
 		cancel()
