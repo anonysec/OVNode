@@ -32,13 +32,19 @@ const (
 // must not hold a client handshake longer than this.
 const (
 	mgmtDialTimeout = 2 * time.Second
-	mgmtReplyBudget = 2 * time.Second
-	mgmtAuthBudget  = 2 * time.Second
-	mgmtBannerIdle  = 150 * time.Millisecond
-	mgmtBannerTotal = 1 * time.Second
-	statusBudget    = 3 * time.Second
-	verifyBudget    = 7 * time.Second
-	verifyPoll      = 500 * time.Millisecond
+	// The management interface serves one client at a time. A status read or
+	// a hook on the other protocol can hold the single slot for a moment, so
+	// a failed dial gets one short pause and a longer second try instead of
+	// turning a transient hold into a refused client.
+	mgmtDialRetryPause   = 150 * time.Millisecond
+	mgmtDialRetryTimeout = 3 * time.Second
+	mgmtReplyBudget      = 2 * time.Second
+	mgmtAuthBudget       = 2 * time.Second
+	mgmtBannerIdle       = 150 * time.Millisecond
+	mgmtBannerTotal      = 1 * time.Second
+	statusBudget         = 3 * time.Second
+	verifyBudget         = 7 * time.Second
+	verifyPoll           = 500 * time.Millisecond
 )
 
 // validateMgmtHost refuses non-loopback management hosts unless explicitly
@@ -311,12 +317,34 @@ func mgmtHost() string {
 
 // dialManagement opens a connection to one protocol's management socket.
 func dialManagement(port int) (net.Conn, error) {
+	return dialManagementTimeout(port, mgmtDialTimeout)
+}
+
+// dialManagementTimeout is the deadline-parameterized dial, shared by the
+// first attempt and the retry.
+func dialManagementTimeout(port int, timeout time.Duration) (net.Conn, error) {
 	host := mgmtHost()
 	if err := validateMgmtHost(host); err != nil {
 		return nil, err
 	}
 	addr := net.JoinHostPort(host, strconv.Itoa(port))
-	return net.DialTimeout("tcp", addr, mgmtDialTimeout)
+	return net.DialTimeout("tcp", addr, timeout)
+}
+
+// dialMgmt is the seam the retry test uses; production always dials the
+// loopback management socket.
+var dialMgmt = dialManagementTimeout
+
+// dialManagementRetry dials with one retry. A stuck single-slot management
+// interface is a transient (a status read or the other protocol's hook is
+// holding it), and refusing the client over it is the worse outcome.
+func dialManagementRetry(port int) (net.Conn, error) {
+	conn, err := dialMgmt(port, mgmtDialTimeout)
+	if err == nil {
+		return conn, nil
+	}
+	time.Sleep(mgmtDialRetryPause)
+	return dialMgmt(port, mgmtDialRetryTimeout)
 }
 
 // SendCommands runs management commands over ONE connection and returns
@@ -352,7 +380,7 @@ func SendCommands(cmds []string) ([]string, error) {
 
 // SendCommandsTo runs one batch against a single protocol socket.
 func sendCommandsTo(port int, cmds []string) ([]string, error) {
-	conn, err := dialManagement(port)
+	conn, err := dialManagementRetry(port)
 	if err != nil {
 		return nil, err
 	}
