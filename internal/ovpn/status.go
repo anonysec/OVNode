@@ -13,6 +13,7 @@ import (
 	"path/filepath"
 	"strconv"
 	"strings"
+	"time"
 )
 
 // Session is one connected client as seen in the status file.
@@ -111,19 +112,40 @@ func parseStatus(r io.Reader) (StatusSnapshot, error) {
 	return snap, nil
 }
 
+// statusRetryPause is the re-read pause when OpenVPN is mid-rewrite. A var
+// so tests do not sleep.
+var statusRetryPause = 50 * time.Millisecond
+
 // ParseSessions reads the status file and returns one Session per client.
+//
+// OpenVPN truncates and rewrites the file in place every few seconds. A read
+// in that window sees an empty or partial list, which admission would take
+// for "no live sessions"; retry once instead.
 func ParseSessions(path string) []Session {
-	f, err := os.Open(path)
-	if err != nil {
-		return nil
+	var last []Session
+	for attempt := 0; attempt < 2; attempt++ {
+		f, err := os.Open(path)
+		if err != nil {
+			return nil
+		}
+		snap, err := parseStatus(f)
+		_ = f.Close()
+		if err != nil {
+			return last
+		}
+		proto := protocolFromStatusPath(path)
+		for i := range snap.Sessions {
+			snap.Sessions[i].Protocol = proto
+		}
+		last = snap.Sessions
+		if snap.Complete {
+			return last
+		}
+		if attempt == 0 {
+			time.Sleep(statusRetryPause)
+		}
 	}
-	defer f.Close()
-	snap, _ := parseStatus(f)
-	proto := protocolFromStatusPath(path)
-	for i := range snap.Sessions {
-		snap.Sessions[i].Protocol = proto
-	}
-	return snap.Sessions
+	return last
 }
 
 // protocolFromStatusPath recovers the transport from the per-protocol status
