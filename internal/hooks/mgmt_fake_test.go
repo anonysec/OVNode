@@ -5,59 +5,30 @@ package hooks
 
 import (
 	"net"
-	"os"
-	"path/filepath"
 	"strings"
 	"testing"
 	"time"
 )
 
-func TestConnectTakeoverWithFakeManagementSocket(t *testing.T) {
+// A limit=1 takeover queues the old client id and admits the new connection.
+// It must not open the management slot or call kill <cn>.
+func TestConnectLimitOneQueuesTakeover(t *testing.T) {
 	tr := newTree(t)
 	tr.user(t, "u1", "limit=1\ndisabled=0\n")
+	writeOverflowStatus(t, tr,
+		row("u1", "9.9.9.9:5002", "10.8.0.2", "100", "200", "42"),
+	)
+	setClientEnv(t, "u1", "10.8.0.11")
+	commands := withKill(t)
 
-	status := "HEADER,CLIENT_LIST,Common Name,Real Address,Virtual Address,Virtual IPv6 Address,Bytes Received,Bytes Sent,Connected Since,Connected Since (time_t),Username,Client ID,Peer ID\n" +
-		"CLIENT_LIST,u1,9.9.9.9:5001,10.8.0.2,,,,0,0,,,,42,0\n"
-	if err := os.WriteFile(tr.status, []byte(status), 0o644); err != nil {
-		t.Fatal(err)
-	}
-
-	setClientEnv(t, "u1", "10.8.0.2")
-
-	passFile := filepath.Join(tr.dir, "mgmt-pass")
-	if err := os.WriteFile(passFile, []byte("secret\n"), 0o600); err != nil {
-		t.Fatal(err)
-	}
-
-	ln, err := net.Listen("tcp", "127.0.0.1:0")
-	if err != nil {
-		t.Fatal(err)
-	}
-	defer ln.Close()
-	port := ln.Addr().(*net.TCPAddr).Port
-
-	go func() {
-		conn, err := ln.Accept()
-		if err != nil {
-			return
-		}
-		defer conn.Close()
-		_, _ = conn.Write([]byte("OpenVPN Management Interface\nENTER PASSWORD:"))
-		readLine(conn)
-		_, _ = conn.Write([]byte("SUCCESS: password ok\n"))
-		readLine(conn)
-		_, _ = conn.Write([]byte("SUCCESS: client killed\n"))
-		readLine(conn)
-		_, _ = conn.Write([]byte("END\n"))
-		time.Sleep(100 * time.Millisecond)
-	}()
-
-	cfg := tr.config()
-	cfg.MgmtPort = port
-	cfg.MgmtPassFile = passFile
-
-	if code := Connect(cfg, ""); code != 0 {
+	if code := Connect(tr.config(), ""); code != 0 {
 		t.Fatalf("Connect exit code = %d, want 0", code)
+	}
+	if len(*commands) != 1 || (*commands)[0] != "client-kill 42" {
+		t.Fatalf("queued commands = %v, want client-kill 42", *commands)
+	}
+	if !hasEvent(tr.events(t), "TAKEOVER queued client-kill cid=42") {
+		t.Fatalf("takeover not logged: %v", tr.events(t))
 	}
 }
 

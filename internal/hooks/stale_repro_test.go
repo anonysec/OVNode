@@ -9,6 +9,7 @@ import (
 	"testing"
 	"time"
 
+	"ovnode/internal/settings"
 	"ovnode/internal/store"
 )
 
@@ -28,6 +29,7 @@ func writeOneSessionStatus(t *testing.T, tr *tree, cn, pool, real, cid string) {
 	if err := os.WriteFile(tr.status, []byte(status), 0o644); err != nil {
 		t.Fatal(err)
 	}
+	t.Setenv("StatusFile", tr.status)
 }
 
 func connectAs(t *testing.T, tr *tree, cn, pool string) int {
@@ -41,16 +43,17 @@ func connectAs(t *testing.T, tr *tree, cn, pool string) int {
 // session and the marker count must stop the excess after the fix.
 func TestStaleStatusAllowsMoreThanLimit(t *testing.T) {
 	skipUnderRace(t)
+	withPolicy(t, settings.LimitReserve)
 	tr := newTree(t)
 	tr.user(t, "u1", "limit=1\ndisabled=0\n")
 	writeOneSessionStatus(t, tr, "u1", "10.8.0.2", "9.9.9.9:5001", "1")
 	first := connectAs(t, tr, "u1", "10.8.0.11")
 	second := connectAs(t, tr, "u1", "10.8.0.12")
-	// The stale file still lists one session at limit=1, so takeover must
-	// fire. Management is pointed at a dead port here, and the first
-	// connect left a fresh marker: the second must be refused.
-	if first != 0 || second != 1 {
-		t.Fatalf("limit=1 codes = %d, %d; want 0, 1 (stale list admits too many)", first, second)
+	// The stale file still lists one session at limit=1, so the second
+	// connect queues a targeted takeover. It is admitted; the old client id
+	// is removed by the agent, not by a blocking kill <cn>.
+	if first != 0 || second != 0 {
+		t.Fatalf("limit=1 codes = %d, %d; want 0, 0 (queued takeover)", first, second)
 	}
 
 	tr2 := newTree(t)
@@ -71,10 +74,10 @@ func TestStaleStatusAllowsMoreThanLimit(t *testing.T) {
 	}
 }
 
-// TestFreshTakeoverMarkerRejectsWhenManagementDown covers the limit=1,
-// management-down path: a fresh old-session marker means the displaced
-// session is still live and must not be replaced blindly.
-func TestFreshTakeoverMarkerRejectsWhenManagementDown(t *testing.T) {
+// A fresh old-session marker no longer forces a refusal. The new connection
+// is admitted and the old client id is queued; the marker is simply the
+// displaced session's accounting record.
+func TestFreshTakeoverMarkerQueuesWhenManagementDown(t *testing.T) {
 	skipUnderRace(t)
 	tr := newTree(t)
 	tr.user(t, "u1", "limit=1\ndisabled=0\n")
@@ -90,17 +93,15 @@ func TestFreshTakeoverMarkerRejectsWhenManagementDown(t *testing.T) {
 	}); err != nil {
 		t.Fatal(err)
 	}
-	if code := connectAs(t, tr, "u1", "10.8.0.11"); code != 1 {
-		t.Fatalf("Connect with fresh marker and dead management = %d, want 1", code)
+	commands := withKill(t)
+	if code := connectAs(t, tr, "u1", "10.8.0.11"); code != 0 {
+		t.Fatalf("Connect with fresh marker = %d, want 0", code)
 	}
-	found := false
-	for _, e := range tr.events(t) {
-		if contains(e, "could not verify") && contains(e, "REJECT") {
-			found = true
-		}
+	if len(*commands) != 1 || (*commands)[0] != "client-kill 1" {
+		t.Fatalf("queued commands = %v, want client-kill 1", *commands)
 	}
-	if !found {
-		t.Fatalf("events = %q; want a could-not-verify REJECT line", tr.events(t))
+	if !hasEvent(tr.events(t), "TAKEOVER queued client-kill cid=1") {
+		t.Fatalf("events = %q; want the queued takeover line", tr.events(t))
 	}
 }
 

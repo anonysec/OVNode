@@ -1,5 +1,16 @@
 # Changelog
 
+## 2.0.20 - 2026-11-13
+
+- Limit-one takeover no longer opens the management socket in the hook. The
+  hook queues a targeted client-kill for each old session and admits the new
+  connection; the agent owns the single management slot and retries. This
+  removes the `kill <cn>` path that could remove the new session itself and
+  the `could not verify` / AUTH_FAILED loop seen when the slot was busy.
+- A queue failure degrades to admitting the reconnect; the old row expires
+  at keepalive. The displaced-user sidecar is still written before the
+  queue, so the panel can explain the disconnect.
+
 ## 2.0.19 - 2026-11-13
 
 - Session limit policy per node: `strict` refuses at the limit, `reserve`

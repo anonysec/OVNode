@@ -244,36 +244,6 @@ func freshMarkerCount(cfg config.Hook, safeCN string, sessions []ovpn.Session, o
 	return count
 }
 
-// freshMarkerPresent reports whether any marker of this CN was written
-// in the marker window. A fresh marker means the previous hook accepted a
-// session seconds ago, so a dead management socket cannot prove the old
-// session is gone.
-func freshMarkerPresent(cfg config.Hook, safeCN string) bool {
-	now := time.Now().Unix()
-	entries, err := os.ReadDir(cfg.SessionsDir)
-	if err != nil {
-		return false
-	}
-	for _, e := range entries {
-		if e.IsDir() || !strings.HasPrefix(e.Name(), safeCN+".") {
-			continue
-		}
-		m, ok := store.ReadMarker(filepath.Join(cfg.SessionsDir, e.Name()))
-		if !ok {
-			continue
-		}
-		created := m.Created
-		if created == 0 {
-			created = m.ConnectedAt
-		}
-		if created == 0 || now-created > 10 || now-created < -10 {
-			continue
-		}
-		return true
-	}
-	return false
-}
-
 // connectLocked is the policy under the per-CN lock.
 func connectLocked(
 	cfg config.Hook,
@@ -295,7 +265,7 @@ func connectLocked(
 
 	if count >= limit {
 		if limit == 1 {
-			if !takeover(cfg, cn, safeCN, trustedIP, trustedPort, poolIP, sessions, count) {
+			if !takeover(cfg, safeCN, trustedIP, trustedPort, poolIP, sessions, count) {
 				return 1
 			}
 		} else {
@@ -444,61 +414,55 @@ func bankDisplacedGeneration(cfg config.Hook, safeCN, key, poolIP string, sessio
 	return err
 }
 
-// takeover kills the old session of a limit=1 user and reports whether the
-// client may continue.
+// takeover queues a targeted client-kill for each old session of a limit=1
+// user and reports whether the client may continue.
 //
-// False means the client is refused: the old session could not be verified
-// as terminated. A management socket that is down is not a refusal — the
-// markers are replaced and the corpse is reaped by ping-restart.
+// The hook never opens the management slot and never calls kill <cn>: that
+// removes every session of the user, including the new one when OpenVPN has
+// already listed it. The agent owns the slot, retries, and targets only the
+// old client ids. False is reserved for a caller that genuinely must refuse;
+// a queue failure degrades instead.
 func takeover(
 	cfg config.Hook,
-	cn, safeCN, trustedIP, trustedPort, poolIP string,
+	safeCN, trustedIP, trustedPort, poolIP string,
 	sessions []ovpn.Session,
 	count int,
 ) bool {
 	safeIP := Sanitize(orUnknown(trustedIP))
 	safePort := Sanitize(orUnknown(trustedPort))
-	var cids []string
+	targets := make([]ovpn.Session, 0, len(sessions))
 	for _, s := range sessions {
 		if isDigits(s.ClientID) {
-			cids = append(cids, s.ClientID)
+			targets = append(targets, s)
 		}
 	}
 	logging.Event(cfg.LogFile,
-		"CN=%s ip=%s:%s pool=%s limit=1 status=%d; TAKEOVER (%d mgmt cmds, one session)",
-		safeCN, safeIP, safePort, orNone(poolIP), count, len(cids))
+		"CN=%s ip=%s:%s pool=%s limit=1 status=%d; TAKEOVER (%d queued client-kill targets)",
+		safeCN, safeIP, safePort, orNone(poolIP), count, len(targets))
 
-	// The sidecar is written BEFORE the attempt: the panel toasts the
-	// displaced user on their next login, and a takeover that failed still
-	// displaced somebody.
+	// The sidecar is written before the queue: the panel toasts the displaced
+	// user on their next login, even if the agent cannot deliver the kill.
 	sidecar := writeLastKill(cfg.UsersDir, safeCN, time.Now().Unix())
 	logging.Event(cfg.LogFile, "CN=%s wrote kill sidecar=%s", safeCN, sidecar)
 
-	result, lines := ovpn.Takeover(cfg.MgmtHost, cfg.MgmtPort, cfg.MgmtPassFile, cn, cids)
-	for _, line := range lines {
-		logging.Event(cfg.LogFile, "CN=%s mgmt: %s", safeCN, line)
-	}
-
-	switch result {
-	case ovpn.TakeoverVerified:
-		return true
-	case ovpn.TakeoverTimeout:
+	if len(targets) == 0 {
 		logging.Event(cfg.LogFile,
-			"CN=%s ip=%s:%s pool=%s takeover could not verify old session termination; REJECT",
-			cn, orUnknown(trustedIP), orUnknown(trustedPort), orNone(poolIP))
-		return false
-	default:
-		if freshMarkerPresent(cfg, safeCN) {
+			"CN=%s ip=%s:%s pool=%s limit=1 status=%d; DEGRADE (takeover, no numeric target)",
+			safeCN, safeIP, safePort, orNone(poolIP), count)
+		return true
+	}
+	for _, target := range targets {
+		if err := notifyKill(target.ClientID, target.Protocol); err != nil {
 			logging.Event(cfg.LogFile,
-				"CN=%s ip=%s:%s pool=%s takeover could not verify old session termination; REJECT",
-				cn, orUnknown(trustedIP), orUnknown(trustedPort), orNone(poolIP))
-			return false
+				"CN=%s ip=%s:%s pool=%s limit=1 status=%d; DEGRADE (takeover, queue failed: %v)",
+				safeCN, safeIP, safePort, orNone(poolIP), count, err)
+			return true
 		}
 		logging.Event(cfg.LogFile,
-			"CN=%s ip=%s:%s pool=%s limit=1 status=%d; management unavailable; DEGRADE (markers replaced, corpse reaped by ping-restart)",
-			cn, orUnknown(trustedIP), orUnknown(trustedPort), orNone(poolIP), count)
-		return true
+			"CN=%s ip=%s:%s pool=%s limit=1 status=%d; TAKEOVER queued client-kill cid=%s",
+			safeCN, safeIP, safePort, orNone(poolIP), count, target.ClientID)
 	}
+	return true
 }
 
 // writeLastKill writes the kill-reason sidecar the panel reads to toast the
