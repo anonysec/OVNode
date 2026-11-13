@@ -5,12 +5,13 @@ package store
 
 import (
 	"fmt"
+	"io"
 	"os"
 	"path/filepath"
-
-	"ovnode/internal/fsx"
 	"strconv"
 	"strings"
+
+	"ovnode/internal/fsx"
 )
 
 // Marker is one live session marker.
@@ -55,7 +56,15 @@ func WriteMarker(path string, m Marker) error {
 // ReadMarker parses a marker file. A missing file is not an error the
 // caller needs to distinguish: it means "no marker".
 func ReadMarker(path string) (Marker, bool) {
-	data, err := os.ReadFile(path)
+	// The sessions directory is group-writable by the VPN runtime user. A
+	// planted symlink or FIFO must not make the root agent read forever or
+	// follow the link; markers are tiny.
+	f, err := fsx.OpenFileNoFollow(path, os.O_RDONLY, 0)
+	if err != nil {
+		return Marker{}, false
+	}
+	defer f.Close()
+	data, err := io.ReadAll(io.LimitReader(f, 64<<10))
 	if err != nil {
 		return Marker{}, false
 	}
