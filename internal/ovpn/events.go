@@ -178,12 +178,20 @@ func clampHours(hours int) int {
 	return hours
 }
 
-// openvpnLogLines returns the tail of the OpenVPN log.
+// openvpnLogLines returns the tail of every per-protocol OpenVPN log.
 //
-// Only the tail: the log is append-only and unbounded, and the panel polls
-// this on a timer.
+// There is no server/openvpn.log: each config writes
+// server/<proto>/openvpn.log. Reading the old path left the panel's TLS
+// error list permanently empty.
 func openvpnLogLines() []string {
-	path := filepath.Join(openvpnRoot(), "server", "openvpn.log")
+	var out []string
+	for _, proto := range currentSettings().Protos() {
+		out = append(out, tailLines(fsx.OpenVPNLog(proto))...)
+	}
+	return out
+}
+
+func tailLines(path string) []string {
 	info, err := os.Stat(path)
 	if err != nil {
 		return nil
