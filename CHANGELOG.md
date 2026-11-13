@@ -1,5 +1,14 @@
 # Changelog
 
+## 2.0.18 — 2026-11-13
+
+- Overflow reclaim is limited to zero-byte failed connections. Rows that share
+  one trusted IP are no longer treated as copies of one device: several real
+  devices behind a home router or carrier NAT share an address, and the only
+  DCO kill removes all of them. The +1 reconnect reserve still admits their
+  reconnects; the extra row drains at keepalive, and the hard cap refuses a
+  further connection when live devices fill the reserve.
+
 ## 2.0.17 — 2026-11-13
 
 - Reconnect reserve: a user already at their session limit is admitted one

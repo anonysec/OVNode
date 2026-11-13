@@ -132,8 +132,9 @@ func TestConnectOverflowCapRefusesLiveSessions(t *testing.T) {
 	}
 }
 
-// Three rows that are all copies of one device on one IP are safe to drop.
-func TestConnectOverflowCapReclaimsSameIPCopies(t *testing.T) {
+// Three rows on one IP with real usage are real devices behind one NAT: the
+// hard cap refuses instead of killing all of them.
+func TestConnectOverflowCapRefusesSameIPDevices(t *testing.T) {
 	tr := newTree(t)
 	tr.user(t, "u1", "limit=2\ndisabled=0\n")
 	writeOverflowStatus(t, tr,
@@ -143,14 +144,10 @@ func TestConnectOverflowCapReclaimsSameIPCopies(t *testing.T) {
 	)
 	setClientEnv(t, "u1", "10.8.0.2")
 
-	cfg := tr.config()
-	cfg.MgmtPort = startMgmt(t, tr)
-	cfg.MgmtPassFile = filepath.Join(tr.dir, "mgmt-pass")
-
-	if code := Connect(cfg, ""); code != 0 {
-		t.Fatalf("Connect = %d, want 0 (same-IP copies reclaimed)", code)
+	if code := Connect(tr.config(), ""); code != 1 {
+		t.Fatalf("Connect = %d, want 1 (same-NAT devices are live)", code)
 	}
-	if !hasEvent(tr.events(t), "RECLAIM kill-cn") {
-		t.Fatalf("reclaim not logged: %v", tr.events(t))
+	if !hasEvent(tr.events(t), "REJECT (overflow cap, live sessions)") {
+		t.Fatalf("cap refusal not logged: %v", tr.events(t))
 	}
 }

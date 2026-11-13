@@ -45,8 +45,9 @@ func TestReapAllZeroByteOverflowAfterGrace(t *testing.T) {
 	}
 }
 
-// All rows are copies of one device on one IP: dropping the CN is safe.
-func TestReapSameIPCopiesAfterGrace(t *testing.T) {
+// Several real devices behind one NAT share an address; they must never be
+// treated as copies and killed together.
+func TestReapLeavesSameIPDevices(t *testing.T) {
 	now := time.Now()
 	sessions := []ovpn.Session{
 		{CommonName: "u2", TrustedIP: "5.5.5.5", TrustedPort: "100", ClientID: "21", ConnectedAt: now.Add(-2 * time.Minute).Unix(), BytesReceived: 10},
@@ -58,10 +59,9 @@ func TestReapSameIPCopiesAfterGrace(t *testing.T) {
 	seen := map[string]time.Time{}
 	reapOnce(now, OverflowGrace, seen)
 	got := reapOnce(now.Add(OverflowGrace+time.Second), OverflowGrace, seen)
-	if len(got) != 1 || got[0] != "u2" {
-		t.Fatalf("killed %v, want the CN u2", got)
+	if len(got) != 0 || len(*killed) != 0 {
+		t.Fatalf("kicked same-NAT devices: %v", *killed)
 	}
-	_ = killed
 }
 
 // A live second device on another IP must never be kicked.

@@ -355,24 +355,23 @@ func connectLocked(
 }
 
 // overflowAllKillable reports whether every session of the CN can be lost
-// without kicking a live device: all failed (zero tun bytes) or all copies of
-// one device on one trusted IP. Under DCO "kill <cn>" is the only working
-// management kill and removes every row, so this is the precondition for it.
+// without kicking a live device: every row is a zero-byte failed connection.
+//
+// Same-IP rows are deliberately NOT treated as copies: several real devices
+// behind one home router or a carrier NAT share an address, and under DCO the
+// only working kill ("kill <cn>") removes all of them. Killing that set would
+// drop the live devices and loop. The +1 reserve absorbs such reconnects and
+// the extra row drains at keepalive instead.
 func overflowAllKillable(sessions []ovpn.Session) bool {
 	if len(sessions) == 0 {
 		return false
 	}
-	zeroBytes := true
-	sameIP := sessions[0].TrustedIP != ""
 	for _, s := range sessions {
 		if s.BytesReceived+s.BytesSent != 0 {
-			zeroBytes = false
-		}
-		if s.TrustedIP == "" || s.TrustedIP != sessions[0].TrustedIP {
-			sameIP = false
+			return false
 		}
 	}
-	return zeroBytes || sameIP
+	return true
 }
 
 // bankDisplacedGeneration closes the previous generation at key with its

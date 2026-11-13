@@ -19,9 +19,9 @@ import (
 // ReapOverflow reclaims the +1 overflow reserve in the background.
 //
 // Under DCO the only working management kill is "kill <cn>", which removes
-// every session of the user. So a reclaim happens only when that is safe: all
-// rows are zero-byte failed connections, or all copies of one device on one
-// trusted IP. A mixed set (a live second device) is left alone and drains at
+// every session of the user. So a reclaim happens only when every row is a
+// zero-byte failed connection — safe to lose. Anything with real usage (a live
+// device, several devices behind one NAT) is left alone and drains at
 // keepalive; the next connect then decides at the hard cap.
 func ReapOverflow(ctx context.Context, interval, grace time.Duration) {
 	ticker := time.NewTicker(interval)
