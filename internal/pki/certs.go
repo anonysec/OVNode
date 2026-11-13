@@ -75,34 +75,42 @@ func crlCacheStore(e crlCacheEntry) {
 	crlCache.have = true
 }
 
-// CRLDaysRemaining returns days until CRL nextUpdate, or -1 if unreadable.
-// The result is cached by CRL file mtime.
-func CRLDaysRemaining() int {
-	if e, ok := crlCacheCurrent(); ok && e.crlExists {
-		return e.days
+// crlStatus parses the CRL once and caches both facts the panel reads: days
+// until nextUpdate and whether the current CA signed it. They are computed
+// together because a partial cache entry reported a valid CRL as mismatched.
+func crlStatus() (days int, matches, exists bool) {
+	if e, ok := crlCacheCurrent(); ok {
+		return e.days, e.matchesCA, e.crlExists
 	}
-	out, err := exec.Command("openssl", "crl", "-nextupdate", "-noout", "-in", CRLFile()).Output()
+	fi, err := os.Stat(CRLFile())
 	if err != nil {
-		return -1
-	}
-	d := DaysUntilOpensslDate(string(out))
-	if d == nil {
-		return -1
-	}
-	if fi, err := os.Stat(CRLFile()); err == nil {
-		e := crlCacheEntry{mtime: fi.ModTime(), days: *d, crlExists: true}
+		// A missing CRL is not a mismatch: a fresh node has not made one yet.
+		missing := os.IsNotExist(err)
+		e := crlCacheEntry{matchesCA: missing}
 		if ca, err := os.Stat(CACert()); err == nil {
 			e.caMtime = ca.ModTime()
 		}
-		if prev, ok := crlCacheCurrent(); ok {
-			e = prev
-			e.days = *d
-			e.mtime = fi.ModTime()
-			e.crlExists = true
-		}
 		crlCacheStore(e)
+		return -1, missing, false
 	}
-	return *d
+	e := crlCacheEntry{mtime: fi.ModTime(), days: -1, crlExists: true}
+	if ca, err := os.Stat(CACert()); err == nil {
+		e.caMtime = ca.ModTime()
+	}
+	if out, err := exec.Command("openssl", "crl", "-nextupdate", "-noout", "-in", CRLFile()).Output(); err == nil {
+		if d := DaysUntilOpensslDate(string(out)); d != nil {
+			e.days = *d
+		}
+	}
+	e.matchesCA = crlSignedByCA()
+	crlCacheStore(e)
+	return e.days, e.matchesCA, true
+}
+
+// CRLDaysRemaining returns days until CRL nextUpdate, or -1 if unreadable.
+func CRLDaysRemaining() int {
+	days, _, _ := crlStatus()
+	return days
 }
 
 // DaysUntilOpensslDate parses 'nextUpdate=Aug 28 ... GMT' -> days.
@@ -193,21 +201,14 @@ func EnsureCRLChecked() error {
 // CRLMatchesCA reports whether the local CRL was signed by the current CA.
 //
 // A pushed CA replaces ca.crt but leaves the old crl.pem behind; OpenVPN's
-// crl-verify then rejects every client. Returning true when no CRL exists
-// keeps a fresh node from being reported as mismatched.
+// crl-verify then rejects every client. A missing CRL reports true so a
+// fresh node is not flagged.
 func CRLMatchesCA() bool {
-	if e, ok := crlCacheCurrent(); ok {
-		return e.matchesCA
-	}
-	if _, err := os.Stat(CRLFile()); err != nil {
-		res := os.IsNotExist(err)
-		e := crlCacheEntry{matchesCA: res}
-		if ca, err := os.Stat(CACert()); err == nil {
-			e.caMtime = ca.ModTime()
-		}
-		crlCacheStore(e)
-		return res
-	}
+	_, matches, _ := crlStatus()
+	return matches
+}
+
+func crlSignedByCA() bool {
 	crlPEM, err := os.ReadFile(CRLFile())
 	if err != nil {
 		return false
@@ -232,19 +233,7 @@ func CRLMatchesCA() bool {
 	if err != nil {
 		return false
 	}
-	res := crl.CheckSignatureFrom(cert) == nil
-	if fi, err := os.Stat(CRLFile()); err == nil {
-		e := crlCacheEntry{mtime: fi.ModTime(), matchesCA: res, crlExists: true}
-		if ca, err := os.Stat(CACert()); err == nil {
-			e.caMtime = ca.ModTime()
-		}
-		if prev, ok := crlCacheCurrent(); ok {
-			e.matchesCA = res
-			e.days = prev.days
-		}
-		crlCacheStore(e)
-	}
-	return res
+	return crl.CheckSignatureFrom(cert) == nil
 }
 
 // ReadTLSCryptKey returns the tls-crypt key or "".

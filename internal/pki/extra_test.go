@@ -103,3 +103,22 @@ func TestCRLMatchesCA(t *testing.T) {
 		t.Fatal("CRLMatchesCA() = true, want false")
 	}
 }
+
+// /sync/status asks for the days first, then the match. The days call used
+// to cache matchesCA=false, so a healthy CRL was reported as signed by a
+// previous CA until the file changed.
+func TestCRLStatusComputesDaysAndMatchTogether(t *testing.T) {
+	root := t.TempDir()
+	t.Setenv("OpenVpnRoot", root)
+	t.Setenv("DataDir", root+"/ovnode-data")
+	writeTestCA(t, root)
+	if err := GenerateCRL(); err != nil {
+		t.Fatal(err)
+	}
+	if days := CRLDaysRemaining(); days < 0 {
+		t.Fatalf("CRLDaysRemaining = %d, want a reading", days)
+	}
+	if !CRLMatchesCA() {
+		t.Fatal("CRLMatchesCA = false after CRLDaysRemaining, want true")
+	}
+}
