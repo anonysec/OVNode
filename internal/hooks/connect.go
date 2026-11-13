@@ -28,6 +28,7 @@ import (
 	"ovnode/internal/fsx"
 	"ovnode/internal/logging"
 	"ovnode/internal/ovpn"
+	"ovnode/internal/settings"
 	"ovnode/internal/store"
 )
 
@@ -40,21 +41,17 @@ import (
 //   - limit 0: unlimited, admit.
 //   - disabled: refuse.
 //   - limit 1 at the limit: take over the old session, then admit.
-//   - limit N > 1 at the limit: refuse.
+//   - limit N > 1: the node's LimitPolicy decides:
+//     strict refuses, reserve admits one temporary session, takeover replaces
+//     one existing session.
 //
 // The take-over never refuses a client because the management socket was
 // down: a transient double session is cheaper than a refused reconnect.
-// overflowReserve is one session above the configured limit. A reconnect
-// needs it while the old status row is still present; the reclaim path (hook)
-// and the background reaper return the count to the limit as soon as the old
-// copy is provably safe to kill.
-const overflowReserve = 1
 
-// OverflowGrace is how long a zero-byte session is given to produce traffic
-// before it may be reclaimed. OpenVPN keepalive pings are not tun traffic, so
-// "zero bytes" is the only reliable failed-connection signal; a live idle
-// client that has moved any data is never selected.
-const OverflowGrace = 10 * time.Second
+// overflowReserve is the single temporary session reserve mode admits for a
+// reconnect. The background reaper returns the count to the limit once the
+// stale row expires.
+const overflowReserve = 1
 
 func Connect(cfg config.Hook, arg string) int {
 	exit := connectDecision(cfg, arg)
@@ -296,39 +293,67 @@ func connectLocked(
 	count := len(sessions) + freshMarkerCount(cfg, safeCN, sessions, key)
 
 	if count >= limit {
-		switch {
-		case limit == 1:
+		if limit == 1 {
 			if !takeover(cfg, cn, safeCN, trustedIP, trustedPort, poolIP, sessions, count) {
 				return 1
 			}
-		case count < limit+overflowReserve:
-			// The reconnect reserve: admit one over the limit and let the
-			// reaper (or the next connect) reclaim the old copy. Refusing
-			// here is what turned a mobile reconnect into AUTH_FAILED.
-			logging.Event(cfg.LogFile,
-				"CN=%s ip=%s:%s pool=%s limit=%d status=%d; ALLOW (overflow reserve +1)",
-				safeCN, safeIP, safePort, orNone(poolIP), limit, count)
-		default:
-			// Hard cap. Under DCO only "kill <cn>" removes a session, so a
-			// single targeted kill is impossible; reclaim only when every
-			// existing row is safe to lose (all zero-byte failed connections,
-			// or all copies of one device on one IP). Otherwise refuse: a
-			// live device is never kicked.
-			if !overflowAllKillable(sessions) {
+		} else {
+			policy, err := loadLimitPolicy()
+			if err != nil {
 				logging.Event(cfg.LogFile,
-					"CN=%s ip=%s:%s pool=%s limit=%d status=%d; REJECT (overflow cap, live sessions)",
+					"CN=%s limit policy unreadable: %v; using reserve", safeCN, err)
+				policy = settings.LimitReserve
+			}
+			switch policy {
+			case settings.LimitStrict:
+				logging.Event(cfg.LogFile,
+					"CN=%s ip=%s:%s pool=%s limit=%d status=%d; REJECT (strict)",
 					safeCN, safeIP, safePort, orNone(poolIP), limit, count)
 				return 1
-			}
-			logging.Event(cfg.LogFile,
-				"CN=%s ip=%s:%s pool=%s limit=%d status=%d; RECLAIM kill-cn (all rows reclaimable)",
-				safeCN, safeIP, safePort, orNone(poolIP), limit, count)
-			if result, lines := ovpn.Takeover(cfg.MgmtHost, cfg.MgmtPort, cfg.MgmtPassFile, cn, nil); result != ovpn.TakeoverVerified {
-				for _, line := range lines {
-					logging.Event(cfg.LogFile, "CN=%s mgmt: %s", cn, line)
+			case settings.LimitTakeover:
+				if count >= limit+overflowReserve {
+					logging.Event(cfg.LogFile,
+						"CN=%s ip=%s:%s pool=%s limit=%d status=%d; REJECT (takeover cap)",
+						safeCN, safeIP, safePort, orNone(poolIP), limit, count)
+					return 1
+				}
+				target, ok := takeoverTarget(sessions, trustedIP)
+				if !ok {
+					logging.Event(cfg.LogFile,
+						"CN=%s ip=%s:%s pool=%s limit=%d status=%d; REJECT (takeover, no target)",
+						safeCN, safeIP, safePort, orNone(poolIP), limit, count)
+					return 1
+				}
+				if err := killSessionCID(target.ClientID); err != nil {
+					logging.Event(cfg.LogFile,
+						"CN=%s ip=%s:%s pool=%s limit=%d status=%d; REJECT (takeover, kill failed: %v)",
+						safeCN, safeIP, safePort, orNone(poolIP), limit, count, err)
+					return 1
 				}
 				logging.Event(cfg.LogFile,
-					"CN=%s ip=%s:%s pool=%s limit=%d status=%d; REJECT (reclaim failed)",
+					"CN=%s ip=%s:%s pool=%s limit=%d status=%d; TAKEOVER client-kill cid=%s",
+					safeCN, safeIP, safePort, orNone(poolIP), limit, count, target.ClientID)
+			default:
+				if count < limit+overflowReserve {
+					logging.Event(cfg.LogFile,
+						"CN=%s ip=%s:%s pool=%s limit=%d status=%d; ALLOW (overflow reserve +1)",
+						safeCN, safeIP, safePort, orNone(poolIP), limit, count)
+					break
+				}
+				newest, ok := newestSession(sessions)
+				if ok && isDigits(newest.ClientID) && newest.BytesReceived+newest.BytesSent == 0 {
+					if err := killSessionCID(newest.ClientID); err != nil {
+						logging.Event(cfg.LogFile,
+							"CN=%s ip=%s:%s pool=%s limit=%d status=%d; REJECT (overflow cap, reclaim failed: %v)",
+							safeCN, safeIP, safePort, orNone(poolIP), limit, count, err)
+						return 1
+					}
+					logging.Event(cfg.LogFile,
+						"CN=%s ip=%s:%s pool=%s limit=%d status=%d; RECLAIM client-kill cid=%s (zero-byte)",
+						safeCN, safeIP, safePort, orNone(poolIP), limit, count, newest.ClientID)
+				}
+				logging.Event(cfg.LogFile,
+					"CN=%s ip=%s:%s pool=%s limit=%d status=%d; REJECT (overflow cap)",
 					safeCN, safeIP, safePort, orNone(poolIP), limit, count)
 				return 1
 			}
@@ -354,24 +379,64 @@ func connectLocked(
 	return 0
 }
 
-// overflowAllKillable reports whether every session of the CN can be lost
-// without kicking a live device: every row is a zero-byte failed connection.
-//
-// Same-IP rows are deliberately NOT treated as copies: several real devices
-// behind one home router or a carrier NAT share an address, and under DCO the
-// only working kill ("kill <cn>") removes all of them. Killing that set would
-// drop the live devices and loop. The +1 reserve absorbs such reconnects and
-// the extra row drains at keepalive instead.
-func overflowAllKillable(sessions []ovpn.Session) bool {
-	if len(sessions) == 0 {
-		return false
-	}
+var (
+	loadLimitPolicy = settings.LoadLimitPolicy
+	sendCommands    = ovpn.SendCommands
+)
+
+// newestSession returns the most recently connected session that has a
+// numeric management client id, the only id client-kill accepts.
+func newestSession(sessions []ovpn.Session) (ovpn.Session, bool) {
+	var best ovpn.Session
+	found := false
 	for _, s := range sessions {
-		if s.BytesReceived+s.BytesSent != 0 {
-			return false
+		if !isDigits(s.ClientID) {
+			continue
+		}
+		if !found || s.ConnectedAt > best.ConnectedAt ||
+			(s.ConnectedAt == best.ConnectedAt && cidNumber(s.ClientID) > cidNumber(best.ClientID)) {
+			best, found = s, true
 		}
 	}
-	return true
+	return best, found
+}
+
+// takeoverTarget prefers the reconnecting device's own old copy on the same
+// trusted address, then the most recently connected session.
+func takeoverTarget(sessions []ovpn.Session, trustedIP string) (ovpn.Session, bool) {
+	if trustedIP != "" {
+		var same []ovpn.Session
+		for _, s := range sessions {
+			if s.TrustedIP == trustedIP {
+				same = append(same, s)
+			}
+		}
+		if target, ok := newestSession(same); ok {
+			return target, true
+		}
+	}
+	return newestSession(sessions)
+}
+
+// killSessionCID sends one targeted management kill and reports whether any
+// configured management socket confirmed it. Delivery can lag one keepalive
+// cycle, so callers do not wait for the row to disappear.
+func killSessionCID(cid string) error {
+	replies, err := sendCommands([]string{"client-kill " + cid})
+	if err != nil {
+		return err
+	}
+	for _, reply := range replies {
+		if strings.Contains(strings.ToUpper(reply), "SUCCESS") {
+			return nil
+		}
+	}
+	return fmt.Errorf("management did not confirm client-kill %s", cid)
+}
+
+func cidNumber(cid string) int {
+	n, _ := strconv.Atoi(cid)
+	return n
 }
 
 // bankDisplacedGeneration closes the previous generation at key with its

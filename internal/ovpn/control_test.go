@@ -148,3 +148,46 @@ func TestSessionMarkersAreReadFromTheTree(t *testing.T) {
 		t.Fatalf("the marker is %+v, want alice on 10.8.0.2", markers[0])
 	}
 }
+
+func TestSettingsPatchBindsLimitPolicy(t *testing.T) {
+	var patch SettingsPatch
+	if err := json.Unmarshal([]byte(`{"LimitPolicy":"strict"}`), &patch); err != nil {
+		t.Fatal(err)
+	}
+	if patch.LimitPolicy == nil || *patch.LimitPolicy != "strict" {
+		t.Fatalf("LimitPolicy = %v, want strict", patch.LimitPolicy)
+	}
+}
+
+func TestLimitPolicyPatchAndReadConfig(t *testing.T) {
+	root := t.TempDir()
+	t.Setenv("OpenVpnRoot", root)
+	t.Setenv("DataDir", filepath.Join(root, "ovnode-data"))
+	if err := settings.Save(settings.Defaults()); err != nil {
+		t.Fatal(err)
+	}
+
+	policy := "takeover"
+	if _, err := ChangeConfig(ChangeConfigRequest{Settings: &SettingsPatch{LimitPolicy: &policy}}); err != nil {
+		t.Fatalf("policy patch: %v", err)
+	}
+	got, err := settings.LoadLimitPolicy()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got != settings.LimitTakeover {
+		t.Fatalf("policy = %q, want takeover", got)
+	}
+	if rc := ReadConfig(); rc["LimitPolicy"] != "takeover" {
+		t.Fatalf("ReadConfig LimitPolicy = %v", rc["LimitPolicy"])
+	}
+
+	bad := "bogus"
+	if _, err := ChangeConfig(ChangeConfigRequest{Settings: &SettingsPatch{LimitPolicy: &bad}}); err == nil {
+		t.Fatal("invalid policy accepted")
+	}
+	got, _ = settings.LoadLimitPolicy()
+	if got != settings.LimitTakeover {
+		t.Fatalf("invalid patch changed policy to %q", got)
+	}
+}

@@ -13,80 +13,132 @@ import (
 	"ovnode/internal/fsx"
 	"ovnode/internal/logging"
 	"ovnode/internal/ovpn"
+	"ovnode/internal/settings"
 	"ovnode/internal/store"
 )
 
-// ReapOverflow reclaims the +1 overflow reserve in the background.
-//
-// Under DCO the only working management kill is "kill <cn>", which removes
-// every session of the user. So a reclaim happens only when every row is a
-// zero-byte failed connection — safe to lose. Anything with real usage (a live
-// device, several devices behind one NAT) is left alone and drains at
-// keepalive; the next connect then decides at the hard cap.
-func ReapOverflow(ctx context.Context, interval, grace time.Duration) {
-	ticker := time.NewTicker(interval)
+const (
+	reapInterval = 2 * time.Second
+	reapRetry    = 30 * time.Second
+	reapGrace    = 150 * time.Second
+)
+
+// ReapOverflow turns the temporary reserve in reserve mode back into the
+// configured limit. It targets only the newest session and never uses
+// "kill <cn>": a stale row from a reconnect expires first, so a healthy
+// reconnect survives; a persistent extra device is the one dropped.
+func ReapOverflow(ctx context.Context) {
+	ticker := time.NewTicker(reapInterval)
 	defer ticker.Stop()
-	seen := map[string]time.Time{}
+	state := &reapState{
+		first: map[string]time.Time{},
+		last:  map[string]time.Time{},
+	}
 	for {
 		select {
 		case <-ctx.Done():
 			return
 		case now := <-ticker.C:
-			reapOnce(now, grace, seen)
+			reapOnce(now, overflowGrace(), state)
 		}
 	}
 }
 
+// overflowGrace follows the node's dead-peer detection. A silently dropped
+// session clears after roughly twice KeepaliveTimeout; the extra margin keeps
+// a healthy reconnect from being mistaken for a real extra device.
+func overflowGrace() time.Duration {
+	cfg, err := settings.Load()
+	if err != nil {
+		return reapGrace
+	}
+	grace := time.Duration(2*cfg.KeepaliveTimeout+30) * time.Second
+	if grace < 90*time.Second {
+		grace = 90 * time.Second
+	}
+	return grace
+}
+
+type reapState struct {
+	first map[string]time.Time
+	last  map[string]time.Time
+}
+
 var (
 	reapSessions = ovpn.AllSessions
-	reapKill     = killUserForReaper
+	reapKill     = killSessionForReaper
 	reapLimit    = userLimit
+	reapPolicy   = settings.LoadLimitPolicy
 )
 
-// reapOnce evaluates every CN once. seen tracks when an overflow was first
-// observed, so the grace applies to the overflow rather than to one session.
-func reapOnce(now time.Time, grace time.Duration, seen map[string]time.Time) []string {
+// reapOnce evaluates every oversized CN once and returns the client ids it
+// asked management to kill.
+func reapOnce(now time.Time, grace time.Duration, state *reapState) []string {
+	policy, err := reapPolicy()
+	if err != nil {
+		logging.Event(fsx.LogFile(), "limit policy: %v; using reserve", err)
+	}
+	if policy != settings.LimitReserve {
+		state.first = map[string]time.Time{}
+		state.last = map[string]time.Time{}
+		return nil
+	}
+
 	byCN := map[string][]ovpn.Session{}
 	for _, s := range reapSessions() {
 		if s.CommonName != "" {
 			byCN[s.CommonName] = append(byCN[s.CommonName], s)
 		}
 	}
+
 	var killed []string
 	for cn, list := range byCN {
 		limit := reapLimit(cn)
-		if limit <= 0 || len(list) <= limit {
-			delete(seen, cn)
+		if limit <= 1 || len(list) <= limit {
+			delete(state.first, cn)
+			delete(state.last, cn)
 			continue
 		}
-		first, ok := seen[cn]
+		first, ok := state.first[cn]
 		if !ok {
-			seen[cn] = now
+			state.first[cn] = now
 			continue
 		}
 		if now.Sub(first) < grace {
 			continue
 		}
-		if !overflowAllKillable(list) {
-			continue // a live device is present: soft overflow, never kick it
-		}
-		if err := reapKill(cn); err != nil {
-			logging.Event(fsx.LogFile(), "CN=%s limit=%d count=%d; overflow reclaim failed: %v",
-				cn, limit, len(list), err)
+		if last, ok := state.last[cn]; ok && now.Sub(last) < reapRetry {
 			continue
 		}
-		logging.Event(fsx.LogFile(), "CN=%s limit=%d count=%d; overflow reaped (all rows reclaimable)",
-			cn, limit, len(list))
-		killed = append(killed, cn)
-		delete(seen, cn)
+		target, ok := newestSession(list)
+		if !ok {
+			continue
+		}
+		if err := reapKill(target.ClientID); err != nil {
+			logging.Event(fsx.LogFile(), "CN=%s limit=%d count=%d; overflow reclaim cid=%s failed: %v",
+				cn, limit, len(list), target.ClientID, err)
+			state.last[cn] = now
+			continue
+		}
+		logging.Event(fsx.LogFile(), "CN=%s limit=%d count=%d; overflow reap client-kill cid=%s",
+			cn, limit, len(list), target.ClientID)
+		state.last[cn] = now
+		killed = append(killed, target.ClientID)
+	}
+
+	for cn := range state.first {
+		if _, ok := byCN[cn]; !ok {
+			delete(state.first, cn)
+			delete(state.last, cn)
+		}
 	}
 	return killed
 }
 
-// killUserForReaper kills every session of the CN across the management
-// sockets; any SUCCESS reply confirms the command was accepted.
-func killUserForReaper(cn string) error {
-	replies, err := ovpn.SendCommands([]string{"kill " + cn})
+// killSessionForReaper sends one targeted client-kill. Any SUCCESS reply from
+// a configured management socket confirms the command was accepted.
+func killSessionForReaper(cid string) error {
+	replies, err := ovpn.SendCommands([]string{"client-kill " + cid})
 	if err != nil {
 		return err
 	}
@@ -95,7 +147,7 @@ func killUserForReaper(cn string) error {
 			return nil
 		}
 	}
-	return fmt.Errorf("management did not confirm the kill")
+	return fmt.Errorf("management did not confirm client-kill %s", cid)
 }
 
 // userLimit resolves a CN's configured session limit.

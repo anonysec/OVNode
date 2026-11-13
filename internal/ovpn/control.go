@@ -62,6 +62,7 @@ type SettingsPatch struct {
 	RenegSec         *int      `json:"RenegSec"`
 	InactiveTimeout  *int      `json:"InactiveTimeout"`
 	Verb             *int      `json:"Verb"`
+	LimitPolicy      *string   `json:"LimitPolicy"`
 }
 
 // ChangeConfigResult classifies how the change was applied.
@@ -106,7 +107,18 @@ func ReadConfig() map[string]any {
 		"enable_ipv6":    cfg.IPv6Enabled,
 		"ipv6_prefix":    cfg.IPv6Prefix,
 		"extra_ports":    cfg.ExtraPorts,
+		"LimitPolicy":    string(limitPolicyOrDefault()),
 	}
+}
+
+// limitPolicyOrDefault reads the separate policy file. A bad file falls back
+// to the reconnect-friendly default and is reported in the log.
+func limitPolicyOrDefault() settings.LimitPolicy {
+	policy, err := settings.LoadLimitPolicy()
+	if err != nil {
+		logging.Warn("limit policy: %v", err)
+	}
+	return policy
 }
 
 // ChangeConfig validates and applies a panel push to the settings file.
@@ -134,6 +146,15 @@ func applySettingsPatch(patch SettingsPatch) (ChangeConfigResult, error) {
 	old, err := settings.Load()
 	if err != nil {
 		return ChangeConfigResult{}, fmt.Errorf("could not read node settings")
+	}
+	if patch.LimitPolicy != nil {
+		policy, err := settings.NormalizeLimitPolicy(*patch.LimitPolicy)
+		if err != nil {
+			return ChangeConfigResult{}, err
+		}
+		if err := settings.SaveLimitPolicy(policy); err != nil {
+			return ChangeConfigResult{}, err
+		}
 	}
 	next := old
 	if patch.Protocol != nil {

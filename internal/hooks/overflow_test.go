@@ -4,12 +4,12 @@
 package hooks
 
 import (
-	"net"
+	"errors"
 	"os"
-	"path/filepath"
 	"strings"
 	"testing"
-	"time"
+
+	"ovnode/internal/settings"
 )
 
 const overflowHeader = "HEADER,CLIENT_LIST,Common Name,Real Address,Virtual Address,Virtual IPv6 Address,Bytes Received,Bytes Sent,Connected Since,Connected Since (time_t),Username,Client ID,Peer ID\n"
@@ -30,37 +30,6 @@ func row(cn, real, virtual, recv, sent, cid string) string {
 		",2026-01-01 00:00:00,1767225600,," + cid + ",0"
 }
 
-// startMgmt answers the takeover dialogue: banner+password, then one command
-// (kill <cn>), then a status read that returns END (no client left).
-func startMgmt(t *testing.T, tr *tree) int {
-	t.Helper()
-	passFile := filepath.Join(tr.dir, "mgmt-pass")
-	if err := os.WriteFile(passFile, []byte("secret\n"), 0o600); err != nil {
-		t.Fatal(err)
-	}
-	ln, err := net.Listen("tcp", "127.0.0.1:0")
-	if err != nil {
-		t.Fatal(err)
-	}
-	t.Cleanup(func() { _ = ln.Close() })
-	go func() {
-		conn, err := ln.Accept()
-		if err != nil {
-			return
-		}
-		defer conn.Close()
-		_, _ = conn.Write([]byte("OpenVPN Management Interface\nENTER PASSWORD:"))
-		readLine(conn)
-		_, _ = conn.Write([]byte("SUCCESS: password ok\n"))
-		readLine(conn)
-		_, _ = conn.Write([]byte("SUCCESS: client killed\n"))
-		readLine(conn)
-		_, _ = conn.Write([]byte("END\n"))
-		time.Sleep(100 * time.Millisecond)
-	}()
-	return ln.Addr().(*net.TCPAddr).Port
-}
-
 func hasEvent(events []string, substr string) bool {
 	for _, line := range events {
 		if strings.Contains(line, substr) {
@@ -70,9 +39,34 @@ func hasEvent(events []string, substr string) bool {
 	return false
 }
 
-// limit=2 with two existing rows: the third (reconnect) is admitted via the
-// +1 reserve instead of AUTH_FAILED.
-func TestConnectOverflowReserveAllowsThirdSession(t *testing.T) {
+func withPolicy(t *testing.T, policy settings.LimitPolicy) {
+	t.Helper()
+	prev := loadLimitPolicy
+	loadLimitPolicy = func() (settings.LimitPolicy, error) { return policy, nil }
+	t.Cleanup(func() { loadLimitPolicy = prev })
+}
+
+func withKill(t *testing.T) *[]string {
+	t.Helper()
+	prev := sendCommands
+	var commands []string
+	sendCommands = func(batch []string) ([]string, error) {
+		commands = append(commands, batch...)
+		return []string{"SUCCESS: client-kill command succeeded"}, nil
+	}
+	t.Cleanup(func() { sendCommands = prev })
+	return &commands
+}
+
+func withKillError(t *testing.T) {
+	t.Helper()
+	prev := sendCommands
+	sendCommands = func([]string) ([]string, error) { return nil, errors.New("management down") }
+	t.Cleanup(func() { sendCommands = prev })
+}
+
+// Strict refuses the third connection of a limit-2 user.
+func TestConnectStrictRejectsAtLimit(t *testing.T) {
 	tr := newTree(t)
 	tr.user(t, "u1", "limit=2\ndisabled=0\n")
 	writeOverflowStatus(t, tr,
@@ -80,41 +74,37 @@ func TestConnectOverflowReserveAllowsThirdSession(t *testing.T) {
 		row("u1", "2.2.2.2:2000", "10.8.0.4", "100", "200", "42"),
 	)
 	setClientEnv(t, "u1", "10.8.0.2")
+	withPolicy(t, settings.LimitStrict)
+
+	if code := Connect(tr.config(), ""); code != 1 {
+		t.Fatalf("Connect = %d, want 1", code)
+	}
+	if !hasEvent(tr.events(t), "REJECT (strict)") {
+		t.Fatalf("strict refusal not logged: %v", tr.events(t))
+	}
+}
+
+// Reserve admits the reconnect as one temporary extra session.
+func TestConnectReserveAllowsThirdSession(t *testing.T) {
+	tr := newTree(t)
+	tr.user(t, "u1", "limit=2\ndisabled=0\n")
+	writeOverflowStatus(t, tr,
+		row("u1", "1.1.1.1:1000", "10.8.0.3", "100", "200", "41"),
+		row("u1", "2.2.2.2:2000", "10.8.0.4", "100", "200", "42"),
+	)
+	setClientEnv(t, "u1", "10.8.0.2")
+	withPolicy(t, settings.LimitReserve)
 
 	if code := Connect(tr.config(), ""); code != 0 {
-		t.Fatalf("Connect = %d, want 0 (overflow reserve)", code)
+		t.Fatalf("Connect = %d, want 0 (reserve)", code)
 	}
 	if !hasEvent(tr.events(t), "ALLOW (overflow reserve +1)") {
 		t.Fatalf("reserve admission not logged: %v", tr.events(t))
 	}
 }
 
-// limit=2 with three failed (zero-byte) rows: the hard cap reclaims the CN
-// (the only kill DCO supports) and admits.
-func TestConnectOverflowCapReclaimsZeroByteRows(t *testing.T) {
-	tr := newTree(t)
-	tr.user(t, "u1", "limit=2\ndisabled=0\n")
-	writeOverflowStatus(t, tr,
-		row("u1", "1.1.1.1:1000", "10.8.0.3", "0", "0", "41"),
-		row("u1", "2.2.2.2:2000", "10.8.0.4", "0", "0", "42"),
-		row("u1", "3.3.3.3:3000", "10.8.0.5", "0", "0", "43"),
-	)
-	setClientEnv(t, "u1", "10.8.0.2")
-
-	cfg := tr.config()
-	cfg.MgmtPort = startMgmt(t, tr)
-	cfg.MgmtPassFile = filepath.Join(tr.dir, "mgmt-pass")
-
-	if code := Connect(cfg, ""); code != 0 {
-		t.Fatalf("Connect = %d, want 0 (reclaimed)", code)
-	}
-	if !hasEvent(tr.events(t), "RECLAIM kill-cn") {
-		t.Fatalf("reclaim not logged: %v", tr.events(t))
-	}
-}
-
-// limit=2 with three live rows on different IPs: never kick; refuse the 4th.
-func TestConnectOverflowCapRefusesLiveSessions(t *testing.T) {
+// A fourth live connection is refused.
+func TestConnectReserveRefusesFourthLive(t *testing.T) {
 	tr := newTree(t)
 	tr.user(t, "u1", "limit=2\ndisabled=0\n")
 	writeOverflowStatus(t, tr,
@@ -123,31 +113,143 @@ func TestConnectOverflowCapRefusesLiveSessions(t *testing.T) {
 		row("u1", "3.3.3.3:3000", "10.8.0.5", "100", "200", "43"),
 	)
 	setClientEnv(t, "u1", "10.8.0.2")
+	withPolicy(t, settings.LimitReserve)
+	commands := withKill(t)
 
 	if code := Connect(tr.config(), ""); code != 1 {
-		t.Fatalf("Connect = %d, want 1 (overflow cap, live sessions)", code)
+		t.Fatalf("Connect = %d, want 1", code)
 	}
-	if !hasEvent(tr.events(t), "REJECT (overflow cap, live sessions)") {
-		t.Fatalf("cap refusal not logged: %v", tr.events(t))
+	if len(*commands) != 0 {
+		t.Fatalf("live rows were killed: %v", *commands)
+	}
+	if !hasEvent(tr.events(t), "REJECT (overflow cap)") {
+		t.Fatalf("overflow refusal not logged: %v", tr.events(t))
 	}
 }
 
-// Three rows on one IP with real usage are real devices behind one NAT: the
-// hard cap refuses instead of killing all of them.
-func TestConnectOverflowCapRefusesSameIPDevices(t *testing.T) {
+// A zero-byte newest row is reclaimed, but the fourth connection is still
+// refused so N+2 is never admitted.
+func TestConnectReserveReclaimsZeroByteNewest(t *testing.T) {
+	tr := newTree(t)
+	tr.user(t, "u1", "limit=2\ndisabled=0\n")
+	writeOverflowStatus(t, tr,
+		row("u1", "1.1.1.1:1000", "10.8.0.3", "100", "200", "41"),
+		row("u1", "2.2.2.2:2000", "10.8.0.4", "100", "200", "42"),
+		row("u1", "3.3.3.3:3000", "10.8.0.5", "0", "0", "43"),
+	)
+	setClientEnv(t, "u1", "10.8.0.2")
+	withPolicy(t, settings.LimitReserve)
+	commands := withKill(t)
+
+	if code := Connect(tr.config(), ""); code != 1 {
+		t.Fatalf("Connect = %d, want 1", code)
+	}
+	if len(*commands) != 1 || (*commands)[0] != "client-kill 43" {
+		t.Fatalf("commands = %v, want client-kill 43", *commands)
+	}
+	if !hasEvent(tr.events(t), "RECLAIM client-kill cid=43") {
+		t.Fatalf("reclaim not logged: %v", tr.events(t))
+	}
+}
+
+// Takeover prefers the reconnecting device's own network, then newest.
+func TestConnectTakeoverReplacesSameIP(t *testing.T) {
 	tr := newTree(t)
 	tr.user(t, "u1", "limit=2\ndisabled=0\n")
 	writeOverflowStatus(t, tr,
 		row("u1", "9.9.9.9:5002", "10.8.0.3", "100", "200", "41"),
 		row("u1", "9.9.9.9:5003", "10.8.0.4", "100", "200", "42"),
-		row("u1", "9.9.9.9:5004", "10.8.0.5", "100", "200", "43"),
 	)
 	setClientEnv(t, "u1", "10.8.0.2")
+	withPolicy(t, settings.LimitTakeover)
+	commands := withKill(t)
+
+	if code := Connect(tr.config(), ""); code != 0 {
+		t.Fatalf("Connect = %d, want 0 (takeover)", code)
+	}
+	if len(*commands) != 1 || (*commands)[0] != "client-kill 42" {
+		t.Fatalf("commands = %v, want the newest same-IP session 42", *commands)
+	}
+	if !hasEvent(tr.events(t), "TAKEOVER client-kill cid=42") {
+		t.Fatalf("takeover not logged: %v", tr.events(t))
+	}
+}
+
+// With no matching network, takeover replaces the newest existing session.
+func TestConnectTakeoverFallsBackToNewest(t *testing.T) {
+	tr := newTree(t)
+	tr.user(t, "u1", "limit=2\ndisabled=0\n")
+	writeOverflowStatus(t, tr,
+		row("u1", "1.1.1.1:1000", "10.8.0.3", "100", "200", "41"),
+		row("u1", "2.2.2.2:2000", "10.8.0.4", "100", "200", "42"),
+	)
+	setClientEnv(t, "u1", "10.8.0.2")
+	withPolicy(t, settings.LimitTakeover)
+	commands := withKill(t)
+
+	if code := Connect(tr.config(), ""); code != 0 {
+		t.Fatalf("Connect = %d, want 0 (takeover)", code)
+	}
+	if len(*commands) != 1 || (*commands)[0] != "client-kill 42" {
+		t.Fatalf("commands = %v, want the newest session 42", *commands)
+	}
+}
+
+func TestConnectTakeoverKillFailureRejects(t *testing.T) {
+	tr := newTree(t)
+	tr.user(t, "u1", "limit=2\ndisabled=0\n")
+	writeOverflowStatus(t, tr,
+		row("u1", "1.1.1.1:1000", "10.8.0.3", "100", "200", "41"),
+		row("u1", "2.2.2.2:2000", "10.8.0.4", "100", "200", "42"),
+	)
+	setClientEnv(t, "u1", "10.8.0.2")
+	withPolicy(t, settings.LimitTakeover)
+	withKillError(t)
 
 	if code := Connect(tr.config(), ""); code != 1 {
-		t.Fatalf("Connect = %d, want 1 (same-NAT devices are live)", code)
+		t.Fatalf("Connect = %d, want 1", code)
 	}
-	if !hasEvent(tr.events(t), "REJECT (overflow cap, live sessions)") {
-		t.Fatalf("cap refusal not logged: %v", tr.events(t))
+	if !hasEvent(tr.events(t), "REJECT (takeover, kill failed") {
+		t.Fatalf("takeover failure not logged: %v", tr.events(t))
+	}
+}
+
+func TestConnectTakeoverAtCapRejects(t *testing.T) {
+	tr := newTree(t)
+	tr.user(t, "u1", "limit=2\ndisabled=0\n")
+	writeOverflowStatus(t, tr,
+		row("u1", "1.1.1.1:1000", "10.8.0.3", "100", "200", "41"),
+		row("u1", "2.2.2.2:2000", "10.8.0.4", "100", "200", "42"),
+		row("u1", "3.3.3.3:3000", "10.8.0.5", "100", "200", "43"),
+	)
+	setClientEnv(t, "u1", "10.8.0.2")
+	withPolicy(t, settings.LimitTakeover)
+	commands := withKill(t)
+
+	if code := Connect(tr.config(), ""); code != 1 {
+		t.Fatalf("Connect = %d, want 1", code)
+	}
+	if len(*commands) != 0 {
+		t.Fatalf("takeover acted at the cap: %v", *commands)
+	}
+	if !hasEvent(tr.events(t), "REJECT (takeover cap)") {
+		t.Fatalf("takeover cap not logged: %v", tr.events(t))
+	}
+}
+
+// Unlimited ignores the policy entirely.
+func TestConnectUnlimitedIgnoresPolicy(t *testing.T) {
+	tr := newTree(t)
+	tr.user(t, "u1", "limit=0\ndisabled=0\n")
+	writeOverflowStatus(t, tr,
+		row("u1", "1.1.1.1:1000", "10.8.0.3", "100", "200", "41"),
+		row("u1", "2.2.2.2:2000", "10.8.0.4", "100", "200", "42"),
+		row("u1", "3.3.3.3:3000", "10.8.0.5", "100", "200", "43"),
+	)
+	setClientEnv(t, "u1", "10.8.0.2")
+	withPolicy(t, settings.LimitStrict)
+
+	if code := Connect(tr.config(), ""); code != 0 {
+		t.Fatalf("Connect = %d, want 0 (unlimited)", code)
 	}
 }
