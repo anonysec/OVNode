@@ -131,6 +131,7 @@ func (w *window) blocked(key string) (bool, time.Duration) {
 func (w *window) record(key string) {
 	now := time.Now()
 	w.maybeTrim(now)
+	w.cap(now)
 	e := w.hits[key]
 	e.ts = append(e.ts, now)
 	e.last = now
