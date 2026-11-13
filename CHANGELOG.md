@@ -1,5 +1,24 @@
 # Changelog
 
+## 2.0.21 - 2026-11-13
+
+- The installer probes /sync/health before committing an update; a candidate
+  that starts and fails is no longer recorded as healthy.
+- A both-protocol node enforces one limit across UDP and TCP again. Each
+  server.conf exported its own StatusFile path, which hid the other
+  transport from the hook.
+- Admission re-reads a torn status file instead of taking a partial list for
+  zero live sessions.
+- purge-stale merges both protocol files, so a live TCP session's marker is
+  no longer removed after 24h.
+- TLS failure events read server/<proto>/openvpn.log.
+- A purge aborts when a backup fails instead of deleting the CA.
+- Uninstall no longer deletes the PKI after a failed backup.
+- The API allowlist fails closed on an unparsable spec.
+- The CRL status reports the CA match and days from one cache fill.
+- Failed-auth buckets honour the bucket cap.
+- Marker reads are no-follow and size-capped.
+
 ## 2.0.20 - 2026-11-13
 
 - Limit-one takeover no longer opens the management socket in the hook. The
