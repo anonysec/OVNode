@@ -39,18 +39,6 @@ func withMgmtLock(passFile string, fn func() error) error {
 	return fn()
 }
 
-// TakeoverResult is the outcome of a management takeover.
-type TakeoverResult int
-
-const (
-	// TakeoverVerified: no CLIENT_LIST row is left for the common name.
-	TakeoverVerified TakeoverResult = iota
-	// TakeoverTimeout: rows remain after the verify budget.
-	TakeoverTimeout
-	// TakeoverDown: the management socket could not be used.
-	TakeoverDown
-)
-
 // Budgets. The verify budget is the contract with the operator: a takeover
 // must not hold a client handshake longer than this.
 const (
@@ -66,8 +54,6 @@ const (
 	mgmtBannerIdle       = 150 * time.Millisecond
 	mgmtBannerTotal      = 1 * time.Second
 	statusBudget         = 3 * time.Second
-	verifyBudget         = 7 * time.Second
-	verifyPoll           = 500 * time.Millisecond
 )
 
 // validateMgmtHost refuses non-loopback management hosts unless explicitly
@@ -289,104 +275,6 @@ func parseMgmtSessions(text, cn string) []Session {
 		return nil
 	}
 	return out
-}
-
-// Takeover kills the given client ids over ONE management connection and
-// then verifies that the common name is gone.
-//
-// One connection for the whole takeover: the management interface asks for
-// the password once, so a reconnect storm must not pay for a handshake per
-// session. The three results are the hook's three outcomes — verified (the
-// old session is gone), timeout (rows remain, the caller refuses) and down
-// (the socket could not be used, the caller degrades). A transport failure
-// must never refuse a legitimate reconnect.
-//
-// The returned lines are the log text the hook writes.
-func Takeover(host string, port int, passFile, cn string, cids []string) (TakeoverResult, []string) {
-	var (
-		result TakeoverResult
-		lines  []string
-	)
-	if err := withMgmtLock(passFile, func() error {
-		result, lines = takeoverLocked(host, port, passFile, cn, cids)
-		return nil
-	}); err != nil {
-		return TakeoverDown, []string{fmt.Sprintf("RESULT DOWN (%s)", err)}
-	}
-	return result, lines
-}
-
-func takeoverLocked(host string, port int, passFile, cn string, cids []string) (TakeoverResult, []string) {
-	if err := validateMgmtHost(host); err != nil {
-		return TakeoverDown, []string{fmt.Sprintf("RESULT DOWN (%s)", err)}
-	}
-	addr := net.JoinHostPort(host, strconv.Itoa(port))
-	conn, err := net.DialTimeout("tcp", addr, mgmtDialTimeout)
-	if err != nil {
-		return TakeoverDown, []string{fmt.Sprintf("RESULT DOWN (%s)", err)}
-	}
-	defer conn.Close()
-	m := &mgmtConn{conn: conn}
-
-	if strings.Contains(strings.ToUpper(m.readBanner()), "PASSWORD") {
-		pw, ok := readPassword(passFile)
-		if !ok {
-			return TakeoverDown, []string{"RESULT DOWN (management password unreadable)"}
-		}
-		_ = conn.SetWriteDeadline(time.Now().Add(mgmtReplyBudget))
-		if _, err := conn.Write([]byte(pw + "\n")); err != nil {
-			return TakeoverDown, []string{fmt.Sprintf("RESULT DOWN (password write failed: %s)", err)}
-		}
-		authReply := m.readUntil(time.Now().Add(mgmtAuthBudget), "SUCCESS", "ERROR")
-		upper := strings.ToUpper(authReply)
-		if strings.Contains(upper, "BAD PASSWORD") || (strings.Contains(upper, "ERROR") && strings.Contains(upper, "PASSWORD")) {
-			return TakeoverDown, append([]string{}, "RESULT DOWN (bad management password)")
-		}
-	}
-
-	var lines []string
-	// client-kill by CID returns no reply under DCO and can leave the old
-	// session running. kill by common name is one command, works with DCO, and
-	// is exactly the limit=1 takeover: every session of this CN goes.
-	cmd := "kill " + cn
-	_ = conn.SetWriteDeadline(time.Now().Add(mgmtReplyBudget))
-	if _, err := conn.Write([]byte(cmd + "\n")); err != nil {
-		lines = append(lines, fmt.Sprintf("KILL FAIL %s (%s)", cmd, err))
-	} else {
-		reply := m.readUntil(time.Now().Add(mgmtReplyBudget), "SUCCESS", "ERROR")
-		verdict := "FAIL"
-		if strings.Contains(strings.ToUpper(reply), "SUCCESS") {
-			verdict = "OK"
-		}
-		lines = append(lines, fmt.Sprintf("KILL %s %s (%s)", verdict, cmd, shorten(reply, 120)))
-	}
-
-	verified := false
-	deadline := time.Now().Add(verifyBudget)
-	for time.Now().Before(deadline) {
-		_ = conn.SetWriteDeadline(time.Now().Add(mgmtReplyBudget))
-		if _, err := conn.Write([]byte("status 3\n")); err != nil {
-			break
-		}
-		text := m.readUntil(time.Now().Add(statusBudget), "END")
-		// An empty/truncated reply is not proof the session is gone; only a
-		// complete status with no CN can verify the takeover.
-		if !strings.Contains(text, "END") {
-			break
-		}
-		if !mgmtHasCN(text, cn) {
-			verified = true
-			break
-		}
-		time.Sleep(verifyPoll)
-	}
-	_ = conn.SetWriteDeadline(time.Now().Add(mgmtReplyBudget))
-	_, _ = conn.Write([]byte("quit\n"))
-
-	if verified {
-		return TakeoverVerified, append(lines, "RESULT VERIFIED")
-	}
-	return TakeoverTimeout, append(lines, "RESULT TIMEOUT")
 }
 
 // mgmtHost returns the management socket host.
@@ -633,14 +521,4 @@ func mgmtHasCN(text, cn string) bool {
 		}
 	}
 	return false
-}
-
-// shorten collapses whitespace and cuts the text, the way the bash hook
-// formatted its replies.
-func shorten(s string, max int) string {
-	flat := strings.Join(strings.Fields(s), " ")
-	if len(flat) > max {
-		return flat[:max]
-	}
-	return flat
 }

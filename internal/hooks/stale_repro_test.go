@@ -104,12 +104,3 @@ func TestFreshTakeoverMarkerQueuesWhenManagementDown(t *testing.T) {
 		t.Fatalf("events = %q; want the queued takeover line", tr.events(t))
 	}
 }
-
-func contains(s, sub string) bool {
-	for i := 0; i+len(sub) <= len(s); i++ {
-		if s[i:i+len(sub)] == sub {
-			return true
-		}
-	}
-	return false
-}
