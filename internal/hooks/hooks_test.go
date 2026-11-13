@@ -40,7 +40,7 @@ func newTree(t *testing.T) *tree {
 			t.Fatalf("mkdir %s: %v", d, err)
 		}
 	}
-	if err := os.WriteFile(tr.status, []byte("HEADER\tX\n"), 0o644); err != nil {
+	if err := os.WriteFile(tr.status, []byte("HEADER\tX\nEND\n"), 0o644); err != nil {
 		t.Fatalf("write status: %v", err)
 	}
 	return tr

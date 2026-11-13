@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 	"time"
 
@@ -15,6 +16,29 @@ import (
 	"ovnode/internal/ovpn"
 	"ovnode/internal/store"
 )
+
+// liveVirtualAddresses merges every configured protocol. A missing file
+// means that protocol is not running; a torn one means keep everything.
+func liveVirtualAddresses(override string) (map[string]bool, bool) {
+	files := ovpn.StatusFiles()
+	if override != "" && !slices.Contains(files, override) {
+		files = []string{override}
+	}
+	live := map[string]bool{}
+	for _, file := range files {
+		snap, err := ovpn.ReadStatusSnapshot(file)
+		if err != nil {
+			if os.IsNotExist(err) {
+				continue
+			}
+			return nil, false
+		}
+		for _, s := range snap.Sessions {
+			live[s.VirtualAddress] = true
+		}
+	}
+	return live, true
+}
 
 // PurgeStale removes session markers that are older than the TTL and whose
 // pool address is no longer in the live status file.
@@ -24,9 +48,9 @@ import (
 // Only the session directory is touched — never user state or profiles.
 func PurgeStale(cfg config.Hook) int {
 	now := time.Now().Unix()
-	// A torn/incomplete snapshot proves nothing: keep every marker.
-	snap, err := ovpn.ReadStatusSnapshot(cfg.StatusFile)
-	if err != nil {
+	live, ok := liveVirtualAddresses(cfg.StatusFile)
+	if !ok {
+		// A torn/incomplete snapshot proves nothing: keep every marker.
 		summary, _ := json.Marshal(struct {
 			Removed int `json:"removed"`
 			Kept    int `json:"kept"`
@@ -34,10 +58,6 @@ func PurgeStale(cfg config.Hook) int {
 		}{0, 0, 0})
 		fmt.Println(string(summary))
 		return 0
-	}
-	live := map[string]bool{}
-	for _, s := range snap.Sessions {
-		live[s.VirtualAddress] = true
 	}
 
 	entries, err := os.ReadDir(cfg.SessionsDir)
