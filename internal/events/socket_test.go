@@ -155,9 +155,9 @@ func TestNotifyHookHungSocketDoesNotStall(t *testing.T) {
 
 func TestListenQueuesTargetedKill(t *testing.T) {
 	h := NewHub()
-	stop := startListener(t, h, func() (any, error) { return nil, nil })
-	defer stop()
-
+	// Install the fakes before the listener goroutine exists: the listener
+	// reads them from its own goroutine, and the race detector must see the
+	// write happen-before the goroutine start.
 	prevKill, prevSessions := killSession, sessionsForKill
 	t.Cleanup(func() { killSession, sessionsForKill = prevKill, prevSessions })
 	called := make(chan string, 1)
@@ -168,6 +168,8 @@ func TestListenQueuesTargetedKill(t *testing.T) {
 		called <- proto + "|" + cmds[0]
 		return []string{"SUCCESS: client-kill command succeeded"}, nil
 	}
+	stop := startListener(t, h, func() (any, error) { return nil, nil })
+	defer stop()
 
 	if err := NotifyKill("7", "udp", "2", "10.8.0.2", "1.1.1.1:4000"); err != nil {
 		t.Fatalf("notify kill: %v", err)
