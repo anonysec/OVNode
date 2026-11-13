@@ -61,16 +61,16 @@ func Uninstall(c *Config, runner Runner) error {
 		return err
 	}
 	if c.Purge {
-		// Pre-delete backups preserve exactly what was removed, matching
-		// bash backup_dir then rm -rf.
+		// Back up both trees before deleting either: a failure deletes the
+		// CA and every issued certificate, so it must abort, not warn.
 		if err := backupDir(c.DataBase, c.instanceBackupDir("pre-purge-data")); err != nil {
-			fmt.Fprintf(os.Stderr, "warning: %v\n", err)
+			return fmt.Errorf("refusing to purge: data backup failed: %w", err)
+		}
+		if err := backupDir(c.OpenVPNRoot, c.instanceBackupDir("pre-purge-openvpn")); err != nil {
+			return fmt.Errorf("refusing to purge: PKI backup failed: %w", err)
 		}
 		if err := os.RemoveAll(c.DataBase); err != nil && !os.IsNotExist(err) {
 			return err
-		}
-		if err := backupDir(c.OpenVPNRoot, c.instanceBackupDir("pre-purge-openvpn")); err != nil {
-			fmt.Fprintf(os.Stderr, "warning: %v\n", err)
 		}
 		if err := os.RemoveAll(c.OpenVPNRoot); err != nil && !os.IsNotExist(err) {
 			return err
@@ -91,7 +91,7 @@ func backupDir(path, dst string) error {
 	}
 	return filepath.Walk(path, func(p string, info os.FileInfo, err error) error {
 		if err != nil {
-			return nil
+			return err
 		}
 		rel, _ := filepath.Rel(path, p)
 		target := filepath.Join(dst, rel)
