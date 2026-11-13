@@ -331,7 +331,7 @@ func HookEnvDirectives(proto string) []string {
 	settings := [][2]string{
 		{"OpenVpnRoot", cfg.OpenVPNRoot}, {"DataDir", fsx.OVNodeDir()},
 		{"UsersDir", cfg.UsersDir}, {"SessionsDir", cfg.SessionsDir}, {"UsageDir", cfg.UsageDir},
-		{"StatusFile", fsx.StatusFile(proto)}, {"LogDir", cfg.LogDir}, {"LogFile", cfg.LogFile},
+		{"LogDir", cfg.LogDir}, {"LogFile", cfg.LogFile},
 		{"ManagementHost", cfg.MgmtHost}, {"ManagementPort", itoaStr(ManagementPort(proto))}, {"MgmtPassFile", cfg.MgmtPassFile},
 		{"AllowRemoteMgmt", fsx.Get("AllowRemoteMgmt", "0")},
 		{"RuntimeUser", RuntimeUser()}, {"RuntimeGroup", RuntimeGroup()}, {"SessionTtlSeconds", itoaStr(cfg.SessionTTL)},

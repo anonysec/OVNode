@@ -200,13 +200,19 @@ func TestHookEnvironmentExportsEffectiveOverrides(t *testing.T) {
 	t.Setenv("ApiKey", "private-fixture-api-key")
 	got := strings.Join(HookEnvDirectives("udp"), "\n")
 	for key, value := range map[string]string{
-		"StatusFile": filepath.Join(dir, "custom-status"), "MgmtPassFile": filepath.Join(dir, "custom-password"),
-		"LogDir": filepath.Join(dir, "logs"), "LogFile": filepath.Join(dir, "logs", "custom.log"), "SessionTtlSeconds": "120",
+		"MgmtPassFile": filepath.Join(dir, "custom-password"),
+		"LogDir":       filepath.Join(dir, "logs"), "LogFile": filepath.Join(dir, "logs", "custom.log"), "SessionTtlSeconds": "120",
 		"AllowRemoteMgmt": "1",
 	} {
 		if !strings.Contains(got, "setenv "+key+" "+value) {
 			t.Errorf("effective %s not exported: %s", key, got)
 		}
+	}
+	// Each server.conf exports StatusFile for its own protocol. Exporting it
+	// here collapses both protocols to the hook's file, so a limit check
+	// cannot see the other transport's sessions.
+	if strings.Contains(got, "setenv StatusFile ") {
+		t.Fatalf("StatusFile must not be exported to the hook: %s", got)
 	}
 	if strings.Contains(got, "private-fixture-api-key") {
 		t.Fatal("hook environment exported the API key")
