@@ -1,5 +1,23 @@
 # Changelog
 
+## 2.0.19 - 2026-11-13
+
+- Session limit policy per node: `strict` refuses at the limit, `reserve`
+  (default) admits one temporary reconnect session and reaps a persistent
+  extra, and `takeover` targets one existing session with a management
+  client-kill before admitting the new one. One-device users keep the
+  existing takeover path.
+- The policy is stored in `/var/lib/ovnode/limit-policy`, separate from
+  `server.json`, so a downgrade still parses the OpenVPN settings. Changes
+  apply on the next connection and the next reaper tick, without a restart.
+- The reserve reaper runs only in reserve mode, targets only the newest
+  numeric client id, and never uses `kill <cn>`. The old zero-byte reclaim
+  is removed because an idle live session also reports zero bytes.
+- Management access is serialized across the agent and the hooks. Takeover
+  kills are queued through the agent, so a busy management slot no longer
+  turns a reconnect into AUTH_FAILED. The hook counts sessions from the
+  status files and never opens the management slot for admission.
+
 ## 2.0.18 — 2026-11-13
 
 - Overflow reclaim is limited to zero-byte failed connections. Rows that share

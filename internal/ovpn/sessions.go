@@ -406,7 +406,7 @@ var (
 func mgmtAvailable(now time.Time) bool {
 	mgmtAvailMu.Lock()
 	defer mgmtAvailMu.Unlock()
-	if mgmtAvailSet && now.Sub(mgmtAvailAt) < 8*time.Second {
+	if mgmtAvailSet && now.Sub(mgmtAvailAt) < 60*time.Second {
 		return mgmtAvailVal
 	}
 	mgmtAvailVal = probeManagement()
@@ -424,13 +424,18 @@ func probeManagement() bool {
 	if !OpenVPNIsRunning() {
 		return false
 	}
-	for _, port := range managementTargets() {
-		conn, err := dialManagement(port)
-		if err != nil {
-			continue
+	ok := false
+	_ = withMgmtLock(fsx.MgmtPassFile(), func() error {
+		for _, port := range managementTargets() {
+			conn, err := dialManagement(port)
+			if err != nil {
+				continue
+			}
+			conn.Close()
+			ok = true
+			return nil
 		}
-		conn.Close()
-		return true
-	}
-	return false
+		return nil
+	})
+	return ok
 }

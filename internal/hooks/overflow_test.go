@@ -48,21 +48,21 @@ func withPolicy(t *testing.T, policy settings.LimitPolicy) {
 
 func withKill(t *testing.T) *[]string {
 	t.Helper()
-	prev := sendCommands
+	prev := notifyKill
 	var commands []string
-	sendCommands = func(batch []string) ([]string, error) {
-		commands = append(commands, batch...)
-		return []string{"SUCCESS: client-kill command succeeded"}, nil
+	notifyKill = func(cid, proto string) error {
+		commands = append(commands, "client-kill "+cid)
+		return nil
 	}
-	t.Cleanup(func() { sendCommands = prev })
+	t.Cleanup(func() { notifyKill = prev })
 	return &commands
 }
 
 func withKillError(t *testing.T) {
 	t.Helper()
-	prev := sendCommands
-	sendCommands = func([]string) ([]string, error) { return nil, errors.New("management down") }
-	t.Cleanup(func() { sendCommands = prev })
+	prev := notifyKill
+	notifyKill = func(string, string) error { return errors.New("agent socket down") }
+	t.Cleanup(func() { notifyKill = prev })
 }
 
 // Strict refuses the third connection of a limit-2 user.
@@ -147,7 +147,7 @@ func TestConnectReserveReclaimsZeroByteNewest(t *testing.T) {
 	if len(*commands) != 1 || (*commands)[0] != "client-kill 43" {
 		t.Fatalf("commands = %v, want client-kill 43", *commands)
 	}
-	if !hasEvent(tr.events(t), "RECLAIM client-kill cid=43") {
+	if !hasEvent(tr.events(t), "RECLAIM queued client-kill cid=43") {
 		t.Fatalf("reclaim not logged: %v", tr.events(t))
 	}
 }
@@ -170,7 +170,7 @@ func TestConnectTakeoverReplacesSameIP(t *testing.T) {
 	if len(*commands) != 1 || (*commands)[0] != "client-kill 42" {
 		t.Fatalf("commands = %v, want the newest same-IP session 42", *commands)
 	}
-	if !hasEvent(tr.events(t), "TAKEOVER client-kill cid=42") {
+	if !hasEvent(tr.events(t), "TAKEOVER queued client-kill cid=42") {
 		t.Fatalf("takeover not logged: %v", tr.events(t))
 	}
 }
@@ -195,7 +195,7 @@ func TestConnectTakeoverFallsBackToNewest(t *testing.T) {
 	}
 }
 
-func TestConnectTakeoverKillFailureRejects(t *testing.T) {
+func TestConnectTakeoverQueueFailureDegrades(t *testing.T) {
 	tr := newTree(t)
 	tr.user(t, "u1", "limit=2\ndisabled=0\n")
 	writeOverflowStatus(t, tr,
@@ -206,11 +206,11 @@ func TestConnectTakeoverKillFailureRejects(t *testing.T) {
 	withPolicy(t, settings.LimitTakeover)
 	withKillError(t)
 
-	if code := Connect(tr.config(), ""); code != 1 {
-		t.Fatalf("Connect = %d, want 1", code)
+	if code := Connect(tr.config(), ""); code != 0 {
+		t.Fatalf("Connect = %d, want 0 (degrade)", code)
 	}
-	if !hasEvent(tr.events(t), "REJECT (takeover, kill failed") {
-		t.Fatalf("takeover failure not logged: %v", tr.events(t))
+	if !hasEvent(tr.events(t), "DEGRADE (takeover, queue failed") {
+		t.Fatalf("takeover degrade not logged: %v", tr.events(t))
 	}
 }
 

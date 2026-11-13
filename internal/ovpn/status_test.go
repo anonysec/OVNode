@@ -71,3 +71,27 @@ func TestParseSessionsReadsCommaDelimitedFiles(t *testing.T) {
 		t.Fatalf("session = %+v, want u1 / 10.8.0.2", sessions[0])
 	}
 }
+
+func TestParseSessionsSetsProtocolFromStatusDirectory(t *testing.T) {
+	for _, proto := range []string{"udp", "tcp"} {
+		t.Run(proto, func(t *testing.T) {
+			dir := filepath.Join(t.TempDir(), "server", proto)
+			if err := os.MkdirAll(dir, 0o755); err != nil {
+				t.Fatal(err)
+			}
+			path := filepath.Join(dir, "status.log")
+			body := "HEADER,CLIENT_LIST,Common Name,Real Address,Virtual Address,Virtual IPv6 Address,Bytes Received,Bytes Sent,Connected Since,Connected Since (time_t),Username,Client ID,Peer ID\n" +
+				"CLIENT_LIST,u1,5.5.5.5:4000,10.8.0.2,,100,200,now,1700000000,,7,0\n"
+			if err := os.WriteFile(path, []byte(body), 0o644); err != nil {
+				t.Fatal(err)
+			}
+			sessions := ParseSessions(path)
+			if len(sessions) != 1 {
+				t.Fatalf("sessions = %d, want 1", len(sessions))
+			}
+			if sessions[0].Protocol != proto {
+				t.Fatalf("protocol = %q, want %q", sessions[0].Protocol, proto)
+			}
+		})
+	}
+}

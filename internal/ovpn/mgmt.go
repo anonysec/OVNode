@@ -6,15 +6,38 @@ package ovpn
 import (
 	"fmt"
 	"net"
-
 	"os"
-	"ovnode/internal/fsx"
 	"strconv"
 	"strings"
+	"syscall"
 	"time"
 
+	"ovnode/internal/fsx"
 	"ovnode/internal/pki"
 )
+
+// withMgmtLock serializes access to the single management slot across the
+// agent process and the hook processes. The management password file is the
+// lock: both processes can read it, and its group access already matches the
+// hook user. A separate lock file would be created by the agent as root and
+// the hook could not open it.
+func withMgmtLock(passFile string, fn func() error) error {
+	if passFile == "" {
+		return fn()
+	}
+	f, err := os.Open(passFile)
+	if err != nil {
+		// The management dialogue will fail on the password read anyway. Do
+		// not turn a missing test fixture into a lock error.
+		return fn()
+	}
+	defer f.Close()
+	if err := syscall.Flock(int(f.Fd()), syscall.LOCK_EX); err != nil {
+		return err
+	}
+	defer syscall.Flock(int(f.Fd()), syscall.LOCK_UN)
+	return fn()
+}
 
 // TakeoverResult is the outcome of a management takeover.
 type TakeoverResult int
@@ -66,6 +89,29 @@ func validateMgmtHost(host string) error {
 	return fmt.Errorf("management host %q is not loopback; set AllowRemoteMgmt=1", host)
 }
 
+// StatusSessionsForCN merges the status files of every protocol and keeps one
+// row per session. The hook uses this path for admission; it never touches
+// the single management slot.
+func StatusSessionsForCN(statusFile, cn string) []Session {
+	files := StatusFiles()
+	if len(files) == 0 {
+		files = []string{statusFile}
+	}
+	seen := map[string]bool{}
+	var out []Session
+	for _, file := range files {
+		for _, s := range SessionsForCN(file, cn) {
+			key := s.CommonName + "\x00" + s.VirtualAddress + "\x00" + s.ClientID
+			if seen[key] {
+				continue
+			}
+			seen[key] = true
+			out = append(out, s)
+		}
+	}
+	return out
+}
+
 // LiveSessionsForCN returns the live sessions of one CN, preferring the
 // management socket (status 3) over the status file, which OpenVPN only
 // rewrites every few seconds.
@@ -112,8 +158,8 @@ func managementTargets() []int {
 func mgmtSessionsForCN(cn string) ([]Session, bool) {
 	var out []Session
 	answered := false
-	for _, port := range managementTargets() {
-		sessions, ok := mgmtSessionsOnPort(port, cn)
+	for _, proto := range currentSettings().Protos() {
+		sessions, ok := mgmtSessionsOnPort(ManagementPort(proto), proto, cn)
 		if ok {
 			answered = true
 			out = append(out, sessions...)
@@ -122,7 +168,21 @@ func mgmtSessionsForCN(cn string) ([]Session, bool) {
 	return out, answered
 }
 
-func mgmtSessionsOnPort(port int, cn string) ([]Session, bool) {
+func mgmtSessionsOnPort(port int, proto, cn string) ([]Session, bool) {
+	var (
+		out []Session
+		ok  bool
+	)
+	if err := withMgmtLock(pki.MgmtPassFile(), func() error {
+		out, ok = mgmtSessionsOnPortLocked(port, proto, cn)
+		return nil
+	}); err != nil {
+		return nil, false
+	}
+	return out, ok
+}
+
+func mgmtSessionsOnPortLocked(port int, proto, cn string) ([]Session, bool) {
 	host := mgmtHost()
 	if err := validateMgmtHost(host); err != nil {
 		return nil, false
@@ -159,7 +219,11 @@ func mgmtSessionsOnPort(port int, cn string) ([]Session, bool) {
 	if !strings.Contains(text, "END") {
 		return nil, false
 	}
-	return parseMgmtSessions(text, cn), true
+	sessions := parseMgmtSessions(text, cn)
+	for i := range sessions {
+		sessions[i].Protocol = proto
+	}
+	return sessions, true
 }
 
 // parseMgmtSessions parses the status 3 reply into sessions of one CN.
@@ -232,6 +296,20 @@ func parseMgmtSessions(text, cn string) []Session {
 //
 // The returned lines are the log text the hook writes.
 func Takeover(host string, port int, passFile, cn string, cids []string) (TakeoverResult, []string) {
+	var (
+		result TakeoverResult
+		lines  []string
+	)
+	if err := withMgmtLock(passFile, func() error {
+		result, lines = takeoverLocked(host, port, passFile, cn, cids)
+		return nil
+	}); err != nil {
+		return TakeoverDown, []string{fmt.Sprintf("RESULT DOWN (%s)", err)}
+	}
+	return result, lines
+}
+
+func takeoverLocked(host string, port int, passFile, cn string, cids []string) (TakeoverResult, []string) {
 	if err := validateMgmtHost(host); err != nil {
 		return TakeoverDown, []string{fmt.Sprintf("RESULT DOWN (%s)", err)}
 	}
@@ -378,8 +456,29 @@ func SendCommands(cmds []string) ([]string, error) {
 	return all, nil
 }
 
+// SendCommandsToProtocol runs one batch against the management socket of one
+// transport. A targeted kill belongs there: the other protocol answers with a
+// not-found error and needlessly contends with the panel's status reads.
+func SendCommandsToProtocol(proto string, cmds []string) ([]string, error) {
+	return sendCommandsTo(ManagementPort(proto), cmds)
+}
+
 // SendCommandsTo runs one batch against a single protocol socket.
 func sendCommandsTo(port int, cmds []string) ([]string, error) {
+	var (
+		replies []string
+		err     error
+	)
+	if lockErr := withMgmtLock(pki.MgmtPassFile(), func() error {
+		replies, err = sendCommandsToLocked(port, cmds)
+		return nil
+	}); lockErr != nil {
+		return nil, lockErr
+	}
+	return replies, err
+}
+
+func sendCommandsToLocked(port int, cmds []string) ([]string, error) {
 	conn, err := dialManagementRetry(port)
 	if err != nil {
 		return nil, err

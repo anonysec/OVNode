@@ -10,6 +10,7 @@ import (
 	"io"
 	"math"
 	"os"
+	"path/filepath"
 	"strconv"
 	"strings"
 )
@@ -29,6 +30,7 @@ type Session struct {
 	BytesSent      uint64
 	ClientID       string
 	ConnectedAt    int64
+	Protocol       string
 }
 
 // defaultColumns are the OpenVPN >= 2.4 CLIENT_LIST column positions, used
@@ -117,7 +119,22 @@ func ParseSessions(path string) []Session {
 	}
 	defer f.Close()
 	snap, _ := parseStatus(f)
+	proto := protocolFromStatusPath(path)
+	for i := range snap.Sessions {
+		snap.Sessions[i].Protocol = proto
+	}
 	return snap.Sessions
+}
+
+// protocolFromStatusPath recovers the transport from the per-protocol status
+// directory (server/udp or server/tcp). An overridden status file can live
+// anywhere, so the field stays empty and callers fall back to every socket.
+func protocolFromStatusPath(path string) string {
+	dir := filepath.Base(filepath.Dir(path))
+	if dir == "udp" || dir == "tcp" {
+		return dir
+	}
+	return ""
 }
 
 // SessionsForCN returns the live sessions of one common name.

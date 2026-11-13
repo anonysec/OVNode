@@ -11,11 +11,13 @@ import (
 	"os"
 	"os/user"
 	"path/filepath"
+	"strings"
 	"sync"
 	"time"
 
 	"ovnode/internal/fsx"
 	"ovnode/internal/logging"
+	"ovnode/internal/ovpn"
 )
 
 // datagramDeadline caps one hook notify so a stalled agent can never slow a
@@ -125,11 +127,16 @@ func Listen(ctx context.Context, h *Hub, sessions func() (any, error)) error {
 		}
 		if n > 0 {
 			var poke struct {
-				Op string `json:"op"`
-				CN string `json:"cn"`
+				Op    string `json:"op"`
+				CN    string `json:"cn"`
+				CID   string `json:"cid"`
+				Proto string `json:"proto"`
 			}
 			_ = json.Unmarshal(buf[:n], &poke)
-			logging.Event(fsx.LogFile(), "events: hook poke op=%s cn=%s", poke.Op, poke.CN)
+			logging.Event(fsx.LogFile(), "events: hook poke op=%s cn=%s cid=%s", poke.Op, poke.CN, poke.CID)
+			if poke.CID != "" {
+				go runKill(poke.CID, poke.Proto)
+			}
 			snap, serr := sessions()
 			if serr == nil && snap != nil {
 				h.Publish("sessions", snap)
@@ -142,6 +149,18 @@ func Listen(ctx context.Context, h *Hub, sessions func() (any, error)) error {
 // design: a hook must never wait on the agent or change its exit code.
 func NotifyHook(op, cn string) error {
 	body, _ := json.Marshal(map[string]string{"op": op, "cn": cn})
+	return send(body)
+}
+
+// NotifyKill queues a targeted management kill in the agent. The hook never
+// touches the single management slot itself: the agent owns that socket, can
+// retry, and cannot turn a transient hold into AUTH_FAILED.
+func NotifyKill(cid, proto string) error {
+	body, _ := json.Marshal(map[string]string{"op": "kill", "cid": cid, "proto": proto})
+	return send(body)
+}
+
+func send(body []byte) error {
 	conn, err := net.DialTimeout("unixgram", SocketPath(), datagramDeadline)
 	if err != nil {
 		return nil
@@ -150,6 +169,39 @@ func NotifyHook(op, cn string) error {
 	_ = conn.SetWriteDeadline(time.Now().Add(datagramDeadline))
 	_, _ = conn.Write(body)
 	return nil
+}
+
+// killSession is the management call the agent makes for a queued kill. Tests
+// replace it to avoid a live socket.
+var killSession = ovpn.SendCommandsToProtocol
+
+// runKill retries a queued targeted kill. The management interface serves one
+// client at a time, so a busy slot is normal and not a reason to lose the
+// replacement.
+func runKill(cid, proto string) {
+	for attempt := 0; attempt < 3; attempt++ {
+		var (
+			replies []string
+			err     error
+		)
+		if proto == "" {
+			replies, err = ovpn.SendCommands([]string{"client-kill " + cid})
+		} else {
+			replies, err = killSession(proto, []string{"client-kill " + cid})
+		}
+		if err == nil {
+			for _, reply := range replies {
+				if strings.Contains(strings.ToUpper(reply), "SUCCESS") {
+					logging.Event(fsx.LogFile(), "events: kill cid=%s proto=%s ok", cid, proto)
+					return
+				}
+			}
+		}
+		if attempt < 2 {
+			time.Sleep(time.Second)
+		}
+	}
+	logging.Event(fsx.LogFile(), "events: kill cid=%s proto=%s failed", cid, proto)
 }
 
 // vpnGroupGID resolves the ovnode-vpn group; 0 when absent (tests, docker).

@@ -195,10 +195,11 @@ func newMarker(safeCN, trustedIP, trustedPort, poolIP, key string, connStart int
 	}
 }
 
-// liveSessions is the hook's one live-session read: the management socket
-// when it answers, otherwise the status file.
+// liveSessions reads the per-protocol status files. The hook must not open
+// the single management slot for admission; the agent owns that socket and
+// handles any targeted kill asynchronously.
 func liveSessions(cfg config.Hook, safeCN string) []ovpn.Session {
-	return liveRows(ovpn.LiveSessionsForCN(cfg.StatusFile, safeCN))
+	return liveRows(ovpn.StatusSessionsForCN(cfg.StatusFile, safeCN))
 }
 
 // freshMarkerCount counts markers of this CN written in the marker window
@@ -324,15 +325,15 @@ func connectLocked(
 						safeCN, safeIP, safePort, orNone(poolIP), limit, count)
 					return 1
 				}
-				if err := killSessionCID(target.ClientID); err != nil {
+				if err := notifyKill(target.ClientID, target.Protocol); err != nil {
 					logging.Event(cfg.LogFile,
-						"CN=%s ip=%s:%s pool=%s limit=%d status=%d; REJECT (takeover, kill failed: %v)",
+						"CN=%s ip=%s:%s pool=%s limit=%d status=%d; DEGRADE (takeover, queue failed: %v)",
 						safeCN, safeIP, safePort, orNone(poolIP), limit, count, err)
-					return 1
+				} else {
+					logging.Event(cfg.LogFile,
+						"CN=%s ip=%s:%s pool=%s limit=%d status=%d; TAKEOVER queued client-kill cid=%s",
+						safeCN, safeIP, safePort, orNone(poolIP), limit, count, target.ClientID)
 				}
-				logging.Event(cfg.LogFile,
-					"CN=%s ip=%s:%s pool=%s limit=%d status=%d; TAKEOVER client-kill cid=%s",
-					safeCN, safeIP, safePort, orNone(poolIP), limit, count, target.ClientID)
 			default:
 				if count < limit+overflowReserve {
 					logging.Event(cfg.LogFile,
@@ -342,14 +343,9 @@ func connectLocked(
 				}
 				newest, ok := newestSession(sessions)
 				if ok && isDigits(newest.ClientID) && newest.BytesReceived+newest.BytesSent == 0 {
-					if err := killSessionCID(newest.ClientID); err != nil {
-						logging.Event(cfg.LogFile,
-							"CN=%s ip=%s:%s pool=%s limit=%d status=%d; REJECT (overflow cap, reclaim failed: %v)",
-							safeCN, safeIP, safePort, orNone(poolIP), limit, count, err)
-						return 1
-					}
+					_ = notifyKill(newest.ClientID, newest.Protocol)
 					logging.Event(cfg.LogFile,
-						"CN=%s ip=%s:%s pool=%s limit=%d status=%d; RECLAIM client-kill cid=%s (zero-byte)",
+						"CN=%s ip=%s:%s pool=%s limit=%d status=%d; RECLAIM queued client-kill cid=%s (zero-byte)",
 						safeCN, safeIP, safePort, orNone(poolIP), limit, count, newest.ClientID)
 				}
 				logging.Event(cfg.LogFile,
@@ -381,7 +377,7 @@ func connectLocked(
 
 var (
 	loadLimitPolicy = settings.LoadLimitPolicy
-	sendCommands    = ovpn.SendCommands
+	notifyKill      = events.NotifyKill
 )
 
 // newestSession returns the most recently connected session that has a
@@ -416,22 +412,6 @@ func takeoverTarget(sessions []ovpn.Session, trustedIP string) (ovpn.Session, bo
 		}
 	}
 	return newestSession(sessions)
-}
-
-// killSessionCID sends one targeted management kill and reports whether any
-// configured management socket confirmed it. Delivery can lag one keepalive
-// cycle, so callers do not wait for the row to disappear.
-func killSessionCID(cid string) error {
-	replies, err := sendCommands([]string{"client-kill " + cid})
-	if err != nil {
-		return err
-	}
-	for _, reply := range replies {
-		if strings.Contains(strings.ToUpper(reply), "SUCCESS") {
-			return nil
-		}
-	}
-	return fmt.Errorf("management did not confirm client-kill %s", cid)
 }
 
 func cidNumber(cid string) int {

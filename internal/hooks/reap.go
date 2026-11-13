@@ -114,7 +114,7 @@ func reapOnce(now time.Time, grace time.Duration, state *reapState) []string {
 		if !ok {
 			continue
 		}
-		if err := reapKill(target.ClientID); err != nil {
+		if err := reapKill(target.ClientID, target.Protocol); err != nil {
 			logging.Event(fsx.LogFile(), "CN=%s limit=%d count=%d; overflow reclaim cid=%s failed: %v",
 				cn, limit, len(list), target.ClientID, err)
 			state.last[cn] = now
@@ -136,9 +136,17 @@ func reapOnce(now time.Time, grace time.Duration, state *reapState) []string {
 }
 
 // killSessionForReaper sends one targeted client-kill. Any SUCCESS reply from
-// a configured management socket confirms the command was accepted.
-func killSessionForReaper(cid string) error {
-	replies, err := ovpn.SendCommands([]string{"client-kill " + cid})
+// the session's own management socket confirms the command was accepted.
+func killSessionForReaper(cid, proto string) error {
+	var (
+		replies []string
+		err     error
+	)
+	if proto != "" {
+		replies, err = ovpn.SendCommandsToProtocol(proto, []string{"client-kill " + cid})
+	} else {
+		replies, err = ovpn.SendCommands([]string{"client-kill " + cid})
+	}
 	if err != nil {
 		return err
 	}

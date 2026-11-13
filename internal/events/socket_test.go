@@ -150,3 +150,29 @@ func TestNotifyHookHungSocketDoesNotStall(t *testing.T) {
 		t.Fatalf("hook notify took %s against a full socket", elapsed)
 	}
 }
+
+func TestListenQueuesTargetedKill(t *testing.T) {
+	h := NewHub()
+	stop := startListener(t, h, func() (any, error) { return nil, nil })
+	defer stop()
+
+	prev := killSession
+	t.Cleanup(func() { killSession = prev })
+	called := make(chan string, 1)
+	killSession = func(proto string, cmds []string) ([]string, error) {
+		called <- proto + "|" + cmds[0]
+		return []string{"SUCCESS: client-kill command succeeded"}, nil
+	}
+
+	if err := NotifyKill("7", "udp"); err != nil {
+		t.Fatalf("notify kill: %v", err)
+	}
+	select {
+	case got := <-called:
+		if got != "udp|client-kill 7" {
+			t.Fatalf("kill = %q", got)
+		}
+	case <-time.After(2 * time.Second):
+		t.Fatal("kill was not queued")
+	}
+}

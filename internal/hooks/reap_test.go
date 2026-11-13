@@ -22,7 +22,7 @@ func withReaper(t *testing.T, sessions []ovpn.Session, limit int, policy setting
 	var killed []string
 	reapSessions = func() []ovpn.Session { return sessions }
 	reapLimit = func(string) int { return limit }
-	reapKill = func(cid string) error { killed = append(killed, cid); return nil }
+	reapKill = func(cid, proto string) error { killed = append(killed, cid); return nil }
 	reapPolicy = func() (settings.LimitPolicy, error) { return policy, nil }
 	t.Cleanup(func() {
 		reapSessions, reapKill, reapLimit, reapPolicy = prevSessions, prevKill, prevLimit, prevPolicy
@@ -115,7 +115,7 @@ func TestReapReserveSkipsLimitOne(t *testing.T) {
 func TestReapReserveRetriesFailedKill(t *testing.T) {
 	killed := withReaper(t, overflowRows(), 2, settings.LimitReserve)
 	var calls int
-	reapKill = func(cid string) error {
+	reapKill = func(cid, proto string) error {
 		calls++
 		if calls == 1 {
 			return errors.New("management down")
