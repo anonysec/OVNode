@@ -46,7 +46,7 @@ func TestFailedAuthLockoutBlocksCorrectKey(t *testing.T) {
 
 func TestPanelAllowBlocksOtherIPs(t *testing.T) {
 	s := testServer(t)
-	s.panelAllow, s.allowEmpty = parsePanelAllow("203.0.113.0/24")
+	s.panelAllow, s.allowEmpty, s.allowNone = parsePanelAllow("203.0.113.0/24")
 	if s.allowEmpty {
 		t.Fatal("allowlist parsed as empty")
 	}
@@ -73,7 +73,7 @@ func TestPanelAllowBlocksOtherIPs(t *testing.T) {
 
 func TestPanelAllowEmptyAllowsAnyIP(t *testing.T) {
 	s := testServer(t)
-	s.panelAllow, s.allowEmpty = parsePanelAllow("")
+	s.panelAllow, s.allowEmpty, s.allowNone = parsePanelAllow("")
 	if !s.allowEmpty {
 		t.Fatal("empty spec must mean allow-all")
 	}
@@ -153,5 +153,23 @@ func TestHeavyBucketExhaustionReturns429(t *testing.T) {
 	}
 	if !strings.Contains(rec.Body.String(), "certificate") {
 		t.Fatalf("429 body = %q, want certificate slowdown text", rec.Body.String())
+	}
+}
+
+// A typo in ApiAllowedCidrs used to parse to zero prefixes and disable the
+// allowlist. It must deny instead.
+func TestPanelAllowBadSpecDenies(t *testing.T) {
+	s := testServer(t)
+	s.panelAllow, s.allowEmpty, s.allowNone = parsePanelAllow("203.0.113.0/33, not-a-cidr")
+	if !s.allowNone || s.allowEmpty {
+		t.Fatalf("allowNone=%v allowEmpty=%v, want deny", s.allowNone, s.allowEmpty)
+	}
+	req := httptest.NewRequest(http.MethodGet, "/sync/status", nil)
+	req.RemoteAddr = "203.0.113.9:1234"
+	req.Header.Set("key", testKey)
+	rec := httptest.NewRecorder()
+	s.panelAllowMiddleware(s.routes()).ServeHTTP(rec, req)
+	if envelopeOf(t, rec)["success"] == true {
+		t.Fatal("a bad allowlist admitted a caller")
 	}
 }

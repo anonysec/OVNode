@@ -56,6 +56,7 @@ type Server struct {
 	started    time.Time
 	panelAllow []netip.Prefix
 	allowEmpty bool
+	allowNone  bool
 	appDirPath string
 
 	// hub + streamSlots back GET /sync/events. Run sets them; a Server
@@ -83,7 +84,10 @@ func NewServer() *Server {
 	}
 	s.CertFile = cf
 	s.KeyFile = kf
-	s.panelAllow, s.allowEmpty = parsePanelAllow(os.Getenv("ApiAllowedCidrs"))
+	s.panelAllow, s.allowEmpty, s.allowNone = parsePanelAllow(fsx.EnvOr("ApiAllowedCidrs", ""))
+	if s.allowNone {
+		logging.Error("ApiAllowedCidrs is set but no entry parses — /sync is disabled until it is fixed")
+	}
 	s.appDirPath = fsx.EnvOr("AppDir", "")
 	if s.appDirPath == "" {
 		for _, c := range []string{"/opt/" + fsx.InstanceName(), "/usr/local/" + fsx.InstanceName()} {
@@ -100,11 +104,12 @@ func NewServer() *Server {
 }
 
 // parsePanelAllow parses the comma-separated allowlist once. An empty list
-// means allow any IP that presents a valid API key.
-func parsePanelAllow(spec string) ([]netip.Prefix, bool) {
+// means allow any IP that presents a valid API key; a non-empty spec that
+// parses to nothing denies every caller instead of silently allowing them.
+func parsePanelAllow(spec string) ([]netip.Prefix, bool, bool) {
 	spec = strings.TrimSpace(spec)
 	if spec == "" {
-		return nil, true
+		return nil, true, false
 	}
 	var out []netip.Prefix
 	for _, part := range strings.Split(spec, ",") {
@@ -120,7 +125,10 @@ func parsePanelAllow(spec string) ([]netip.Prefix, bool) {
 			out = append(out, netip.PrefixFrom(a, a.BitLen()))
 		}
 	}
-	return out, len(out) == 0
+	if len(out) == 0 {
+		return nil, false, true
+	}
+	return out, false, false
 }
 
 // routes returns the node's route table.
@@ -179,6 +187,10 @@ var panelAllowWarned sync.Once
 
 func (s *Server) panelAllowMiddleware(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if s.allowNone {
+			writeFail(w, "forbidden")
+			return
+		}
 		if s.allowEmpty {
 			panelAllowWarned.Do(func() {
 				logging.Warn("ApiAllowedCidrs is empty — panel allowlist disabled (any IP with valid API key accepted)")
