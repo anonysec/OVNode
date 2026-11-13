@@ -1,5 +1,12 @@
 # Changelog
 
+## 2.0.16 — 2026-11-13
+
+- Management calls retry once after a short pause with a longer dial
+  deadline when the single-slot OpenVPN management interface is briefly
+  held (a status read or the other protocol's hook). A transient hold no
+  longer turns a mobile reconnect into TAKEOVER → RESULT DOWN → REJECT.
+
 ## 2.0.15 — 2026-11-12
 
 - Event push: `GET /sync/events` streams session changes, a display-only
