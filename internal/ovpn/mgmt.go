@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"net"
 	"os"
+	"slices"
 	"strconv"
 	"strings"
 	"syscall"
@@ -87,6 +88,11 @@ func ManagementSessionsForCN(cn string) ([]Session, bool) {
 // the single management slot.
 func StatusSessionsForCN(statusFile, cn string) []Session {
 	files := StatusFiles()
+	// An explicit path that is not one of the computed per-protocol files is
+	// a test fixture or a relocated layout: use it alone.
+	if statusFile != "" && !slices.Contains(files, statusFile) {
+		files = []string{statusFile}
+	}
 	if len(files) == 0 {
 		files = []string{statusFile}
 	}
