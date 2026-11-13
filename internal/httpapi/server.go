@@ -31,6 +31,7 @@ import (
 
 	"ovnode/internal/events"
 	"ovnode/internal/fsx"
+	"ovnode/internal/hooks"
 	"ovnode/internal/logging"
 	"ovnode/internal/ovpn"
 	"ovnode/internal/pki"
@@ -453,6 +454,10 @@ func Run() error {
 		}
 	}()
 	go events.Watch(ctx, s.hub, time.Second, eventsSnapshot)
+	// The reconnect reserve is one session over a user's limit; this loop
+	// reclaims it by killing only a duplicated trusted IP or a zero-byte
+	// failed session. See hooks.ReapOverflow.
+	go hooks.ReapOverflow(ctx, time.Second, hooks.OverflowGrace)
 	logging.Info("ovnode agent %s starting (addr=%s, openvpn_root=%s)",
 		version.Version, s.Addr, pki.OpenVPNRoot())
 	fmt.Println("ovnode serve listening on", s.Addr)

@@ -1,5 +1,17 @@
 # Changelog
 
+## 2.0.17 — 2026-11-13
+
+- Reconnect reserve: a user already at their session limit is admitted one
+  over it instead of receiving AUTH_FAILED. The agent reclaims that extra
+  session once it is safe — every row a zero-byte failed connection, or all
+  copies of one device on one trusted IP. Under DCO only `kill <cn>` removes
+  a session, so a mixed set that includes a live second device is never
+  kicked; it drains at keepalive.
+- The hard cap (limit + 1) is enforced: a further connection is admitted only
+  if the reclaim above succeeds, otherwise it is refused. Limit 1 keeps the
+  existing takeover path.
+
 ## 2.0.16 — 2026-11-13
 
 - Management calls retry once after a short pause with a longer dial

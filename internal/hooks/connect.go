@@ -44,6 +44,18 @@ import (
 //
 // The take-over never refuses a client because the management socket was
 // down: a transient double session is cheaper than a refused reconnect.
+// overflowReserve is one session above the configured limit. A reconnect
+// needs it while the old status row is still present; the reclaim path (hook)
+// and the background reaper return the count to the limit as soon as the old
+// copy is provably safe to kill.
+const overflowReserve = 1
+
+// OverflowGrace is how long a zero-byte session is given to produce traffic
+// before it may be reclaimed. OpenVPN keepalive pings are not tun traffic, so
+// "zero bytes" is the only reliable failed-connection signal; a live idle
+// client that has moved any data is never selected.
+const OverflowGrace = 10 * time.Second
+
 func Connect(cfg config.Hook, arg string) int {
 	exit := connectDecision(cfg, arg)
 	_ = events.NotifyHook("connect", hookEventCN(arg))
@@ -284,13 +296,42 @@ func connectLocked(
 	count := len(sessions) + freshMarkerCount(cfg, safeCN, sessions, key)
 
 	if count >= limit {
-		if limit != 1 {
-			logging.Event(cfg.LogFile, "CN=%s ip=%s:%s pool=%s limit=%d status=%d; REJECT",
+		switch {
+		case limit == 1:
+			if !takeover(cfg, cn, safeCN, trustedIP, trustedPort, poolIP, sessions, count) {
+				return 1
+			}
+		case count < limit+overflowReserve:
+			// The reconnect reserve: admit one over the limit and let the
+			// reaper (or the next connect) reclaim the old copy. Refusing
+			// here is what turned a mobile reconnect into AUTH_FAILED.
+			logging.Event(cfg.LogFile,
+				"CN=%s ip=%s:%s pool=%s limit=%d status=%d; ALLOW (overflow reserve +1)",
 				safeCN, safeIP, safePort, orNone(poolIP), limit, count)
-			return 1
-		}
-		if !takeover(cfg, cn, safeCN, trustedIP, trustedPort, poolIP, sessions, count) {
-			return 1
+		default:
+			// Hard cap. Under DCO only "kill <cn>" removes a session, so a
+			// single targeted kill is impossible; reclaim only when every
+			// existing row is safe to lose (all zero-byte failed connections,
+			// or all copies of one device on one IP). Otherwise refuse: a
+			// live device is never kicked.
+			if !overflowAllKillable(sessions) {
+				logging.Event(cfg.LogFile,
+					"CN=%s ip=%s:%s pool=%s limit=%d status=%d; REJECT (overflow cap, live sessions)",
+					safeCN, safeIP, safePort, orNone(poolIP), limit, count)
+				return 1
+			}
+			logging.Event(cfg.LogFile,
+				"CN=%s ip=%s:%s pool=%s limit=%d status=%d; RECLAIM kill-cn (all rows reclaimable)",
+				safeCN, safeIP, safePort, orNone(poolIP), limit, count)
+			if result, lines := ovpn.Takeover(cfg.MgmtHost, cfg.MgmtPort, cfg.MgmtPassFile, cn, nil); result != ovpn.TakeoverVerified {
+				for _, line := range lines {
+					logging.Event(cfg.LogFile, "CN=%s mgmt: %s", cn, line)
+				}
+				logging.Event(cfg.LogFile,
+					"CN=%s ip=%s:%s pool=%s limit=%d status=%d; REJECT (reclaim failed)",
+					safeCN, safeIP, safePort, orNone(poolIP), limit, count)
+				return 1
+			}
 		}
 	}
 
@@ -311,6 +352,27 @@ func connectLocked(
 	logging.Event(cfg.LogFile, "CN=%s ip=%s:%s pool=%s limit=%d status=%d; ALLOW session=%s",
 		safeCN, safeIP, safePort, orNone(poolIP), limit, count, key)
 	return 0
+}
+
+// overflowAllKillable reports whether every session of the CN can be lost
+// without kicking a live device: all failed (zero tun bytes) or all copies of
+// one device on one trusted IP. Under DCO "kill <cn>" is the only working
+// management kill and removes every row, so this is the precondition for it.
+func overflowAllKillable(sessions []ovpn.Session) bool {
+	if len(sessions) == 0 {
+		return false
+	}
+	zeroBytes := true
+	sameIP := sessions[0].TrustedIP != ""
+	for _, s := range sessions {
+		if s.BytesReceived+s.BytesSent != 0 {
+			zeroBytes = false
+		}
+		if s.TrustedIP == "" || s.TrustedIP != sessions[0].TrustedIP {
+			sameIP = false
+		}
+	}
+	return zeroBytes || sameIP
 }
 
 // bankDisplacedGeneration closes the previous generation at key with its
