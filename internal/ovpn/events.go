@@ -48,7 +48,7 @@ var rejectReasons = []rejectReason{
 	{"is disabled", "disabled", SeverityPolicy, "user disabled in the panel"},
 	{"disabled;", "disabled", SeverityPolicy, "user disabled in the panel"},
 	{"USERS_DIR missing", "fail_closed", SeverityFailure, "node user state missing"},
-	{"could not verify", "takeover_failed", SeverityFailure, "old session not terminated"},
+	{"could not verify", "takeover_failed", SeverityWarn, "old session not terminated"},
 	{"management unavailable", "mgmt_degraded", SeverityWarn, "management unavailable"},
 	{"GLOBAL_CHECK_FAILED", "global_check", SeverityPolicy, "panel policy check failed"},
 	{"GLOBAL_REJECT", "global_policy", SeverityPolicy, "panel rejected the connection"},

@@ -42,7 +42,7 @@ func TestClassifyReject(t *testing.T) {
 			name:     "takeover not verified",
 			message:  "CN=7 ip=1.2.3.4:5678 pool=10.8.0.2 limit=1 status=1; takeover could not verify old session termination; REJECT",
 			action:   "takeover_failed",
-			severity: SeverityFailure,
+			severity: SeverityWarn,
 			reason:   "old session not terminated",
 		},
 		{

@@ -16,7 +16,8 @@
 - Management access is serialized across the agent and the hooks. Takeover
   kills are queued through the agent, so a busy management slot no longer
   turns a reconnect into AUTH_FAILED. The hook counts sessions from the
-  status files and never opens the management slot for admission.
+  status files and never opens the management slot for admission. Takeover
+  verification failures are warnings, not authentication failures.
 
 ## 2.0.18 — 2026-11-13
 
