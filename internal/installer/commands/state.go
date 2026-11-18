@@ -207,7 +207,15 @@ func (c *Config) NodeExists() bool {
 
 func (c *Config) anyNodeUnit() bool {
 	sd := envOr("SystemdDir", "/etc/systemd/system")
-	if _, err := os.Stat(filepath.Join(sd, "ovnode.service")); err == nil {
+	name := c.Service
+	if name == "" {
+		instance := c.Instance
+		if instance == "" {
+			instance = "ovnode"
+		}
+		name = instance + ".service"
+	}
+	if _, err := os.Stat(filepath.Join(sd, name)); err == nil {
 		return true
 	}
 	return false
