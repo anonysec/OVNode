@@ -37,7 +37,7 @@ func TestUpdateFailsOverWhenUnitWriteFailsAfterSwap(t *testing.T) {
 	t.Setenv("SystemdDir", filepath.Join(blocker, "system"))
 
 	c := &Config{
-		AppDir: app, DataBase: data, OpenVPNRoot: ovpn,
+		AppDir: app, DataBase: data, OpenVPNRoot: ovpn, BackupDir: filepath.Join(root, "backups"),
 		Local: true, Version: "1.0", NodeName: "test",
 		Service: "test.service", NatService: "test-nat.service", Port: "2083",
 	}

@@ -24,6 +24,7 @@ type Config struct {
 	AppDir      string
 	DataBase    string
 	OpenVPNRoot string
+	BackupDir   string
 	LogDir      string
 	MgmtPort    int
 
@@ -159,8 +160,15 @@ func (c *Config) cronPath() string   { return "/etc/cron.d/" + c.Instance + "-pu
 func (c *Config) completionPath() string {
 	return filepath.Join(envOr("CompletionDir", "/etc/bash_completion.d"), c.CLIName)
 }
+func (c *Config) backupRoot() string {
+	if c.BackupDir != "" {
+		return c.BackupDir
+	}
+	return "/var/backups"
+}
+
 func (c *Config) instanceBackupDir(label string) string {
-	return filepath.Join("/var/backups", c.Instance+"-"+label)
+	return filepath.Join(c.backupRoot(), c.Instance+"-"+label)
 }
 
 // AgentBin mirrors bash AGENT_BIN.

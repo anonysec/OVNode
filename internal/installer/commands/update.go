@@ -80,7 +80,7 @@ func Update(c *Config, runner Runner) error {
 	defer c.operationEnd()
 	c.recoverEnvFromDotEnv()
 	// [1/6] Backup — safety bundle before anything else.
-	safety, err := installer.Bundle(c.AppDir, c.DataDir(), c.OpenVPNRoot, "/var/backups", c.NodeName, version.Version)
+	safety, err := installer.Bundle(c.AppDir, c.DataDir(), c.OpenVPNRoot, c.backupRoot(), c.NodeName, version.Version)
 	if err != nil {
 		return fmt.Errorf("could not create the mandatory state safety snapshot: %w", err)
 	}
