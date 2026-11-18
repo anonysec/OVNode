@@ -84,6 +84,15 @@ func Update(c *Config, runner Runner) error {
 	if err != nil {
 		return fmt.Errorf("could not create the mandatory state safety snapshot: %w", err)
 	}
+	// Record the running version in the tree and snapshot it before the
+	// swap, so `ovnode rollback` has the exact release to return to.
+	verPath := filepath.Join(c.AppDir, "VERSION")
+	if _, err := os.Stat(verPath); os.IsNotExist(err) {
+		_ = os.WriteFile(verPath, []byte(version.Version+"\n"), 0o644)
+	}
+	if _, err := installer.SnapshotCode(c.AppDir, c.backupRoot(), "node"); err != nil {
+		return fmt.Errorf("could not snapshot the current release for rollback: %w", err)
+	}
 	from := version.Version
 	identity := installer.IdentitySHA(c.NodeName, c.APIKey)
 	u := &updateCtx{from: from, safety: safety, identity: identity}
@@ -100,6 +109,7 @@ func Update(c *Config, runner Runner) error {
 	if err := stageStaticAssets(c.AppDir, stage); err != nil {
 		return err
 	}
+	_ = os.WriteFile(filepath.Join(stage, "VERSION"), []byte(c.Version+"\n"), 0o644)
 	// [3/6] Maintenance
 	marker := u.marker(c)
 	if err := os.MkdirAll(filepath.Dir(marker), 0o755); err != nil {

@@ -380,7 +380,7 @@ do_restore() {
         || [[ "$was_vpn" -eq 1 && "$(systemctl is-active "$SYSTEMD_SERVICE" 2>/dev/null)" == "active" ]]; then
         die "Restore aborted: service did not stop — the current state is untouched, safety copies hold pre-restore state" "$EX_ERROR"
     fi
-    tar --no-absolute-filenames -xzf "$src" -C "$(restore_target_dir "$src")" \
+    tar -xzf "$src" -C "$(restore_target_dir "$src")" \
         || die "Restore failed — $name was not fully unpacked; the safety copies above hold the previous state" "$EX_ERROR"
     local restart_failed=0
     [[ "$was_agent" -eq 1 ]] && { node_service_action restart || restart_failed=1; }
@@ -595,7 +595,14 @@ do_rollback() {
     # v2 usage counters and would overwrite them, so refuse before touching
     # any service; a verified state restore replaces those files instead.
     if has_incompatible_usage_counters; then
-        die "Refusing code-only rollback: v2 usage counters in $(node_data_dir)/usage are not readable by the previous binary. Restore the matching pre-update data backup instead ('ovnode restore' quiesces the services), or keep the current binary." "$EX_ERROR"
+        # A v2 snapshot can read v2 counters; only refuse when the snapshot is
+        # older than v2 or carries no version marker.
+        local prev_ver
+        prev_ver="$(tar xzf "$snap" -O "$(basename "$AppDir")/VERSION" 2>/dev/null | head -1 || true)"
+        case "$prev_ver" in
+            2.*) : ;;
+            *) die "Refusing code-only rollback: v2 usage counters in $(node_data_dir)/usage are not readable by the previous binary. Restore the matching pre-update data backup instead ('ovnode restore' quiesces the services), or keep the current binary." "$EX_ERROR" ;;
+        esac
     fi
     check_root
     render_kv "Snapshot" "$snap"
@@ -606,7 +613,7 @@ do_rollback() {
     tls="$(tls_method_of "$AppDir/.env")"; : "${tls:=selfsigned}"
     scheme="http"; [[ "$tls" != "none" ]] && scheme="https"
     systemctl_bounded stop "$SYSTEMD_SERVICE" >/dev/null 2>&1 || true
-    tar --no-absolute-filenames -xzf "$snap" -C "$(dirname "$AppDir")" >/dev/null 2>&1 \
+    tar -xzf "$snap" -C "$(dirname "$AppDir")" >/dev/null 2>&1 \
         || die "Rollback extract failed — snapshot kept at $snap" "$EX_ERROR"
     run "Restarting node agent" systemctl_bounded restart "$SYSTEMD_SERVICE"
     if wait_health "${scheme}://127.0.0.1:${port}/sync/health" 45; then

@@ -21,7 +21,7 @@ func TestUpdateFailsOverWhenUnitWriteFailsAfterSwap(t *testing.T) {
 			t.Fatal(err)
 		}
 	}
-	if err := os.WriteFile(filepath.Join(app, "VERSION"), []byte("old"), 0o644); err != nil {
+	if err := os.WriteFile(filepath.Join(app, "VERSION"), []byte("2.0.21"), 0o644); err != nil {
 		t.Fatal(err)
 	}
 	bin := []byte("#!/bin/sh\nexit 0\n")
@@ -48,8 +48,11 @@ func TestUpdateFailsOverWhenUnitWriteFailsAfterSwap(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if string(got) != "old" {
-		t.Fatalf("AppDir holds version %q after failed unit write, want old", got)
+	if string(got) != "2.0.21" {
+		t.Fatalf("AppDir holds version %q after failed unit write, want 2.0.21", got)
+	}
+	if snaps, _ := filepath.Glob(filepath.Join(root, "backups", "node-code-*.tar.gz")); len(snaps) == 0 {
+		t.Fatal("update did not write a code snapshot for rollback")
 	}
 	if _, err := os.Stat(previous); !os.IsNotExist(err) {
 		t.Fatalf("previous tree survived a failed update: %v", err)
