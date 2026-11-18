@@ -119,6 +119,30 @@ func TestSettingsPatchRejectsReservedPort(t *testing.T) {
 	}
 }
 
+func TestSettingsPatchDoesNotCommitLimitPolicyOnFailure(t *testing.T) {
+	root := t.TempDir()
+	t.Setenv("OpenVpnRoot", root)
+	t.Setenv("DataDir", filepath.Join(root, "data"))
+	if err := settings.Save(settings.Defaults()); err != nil {
+		t.Fatal(err)
+	}
+	if err := settings.SaveLimitPolicy(settings.LimitReserve); err != nil {
+		t.Fatal(err)
+	}
+	policy := string(settings.LimitStrict)
+	port := 70000
+	if _, err := applySettingsPatch(SettingsPatch{LimitPolicy: &policy, Port: &port}); err == nil {
+		t.Fatal("invalid port was accepted")
+	}
+	got, err := settings.LoadLimitPolicy()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got != settings.LimitReserve {
+		t.Fatalf("limit policy = %q after failed patch, want reserve", got)
+	}
+}
+
 func TestSettingsPatchRejectsInvalidValue(t *testing.T) {
 	root := t.TempDir()
 	t.Setenv("OpenVpnRoot", root)

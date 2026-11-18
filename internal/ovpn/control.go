@@ -147,14 +147,19 @@ func applySettingsPatch(patch SettingsPatch) (ChangeConfigResult, error) {
 	if err != nil {
 		return ChangeConfigResult{}, fmt.Errorf("could not read node settings")
 	}
+	var oldPolicy, newPolicy settings.LimitPolicy
+	policyChanged := false
 	if patch.LimitPolicy != nil {
 		policy, err := settings.NormalizeLimitPolicy(*patch.LimitPolicy)
 		if err != nil {
 			return ChangeConfigResult{}, err
 		}
-		if err := settings.SaveLimitPolicy(policy); err != nil {
+		oldPolicy, err = settings.LoadLimitPolicy()
+		if err != nil {
 			return ChangeConfigResult{}, err
 		}
+		newPolicy = policy
+		policyChanged = true
 	}
 	next := old
 	if patch.Protocol != nil {
@@ -236,14 +241,23 @@ func applySettingsPatch(patch SettingsPatch) (ChangeConfigResult, error) {
 	if patch.Verb != nil {
 		next.Verb = *patch.Verb
 	}
-	if reflect.DeepEqual(next, old) {
+	if reflect.DeepEqual(next, old) && !policyChanged {
 		return ChangeConfigResult{}, nil
 	}
 	if err := settings.Save(next); err != nil {
 		return ChangeConfigResult{}, err
 	}
+	if policyChanged {
+		if err := settings.SaveLimitPolicy(newPolicy); err != nil {
+			_ = settings.Save(old)
+			return ChangeConfigResult{}, err
+		}
+	}
 	rollback := func() {
 		_ = settings.Save(old)
+		if policyChanged {
+			_ = settings.SaveLimitPolicy(oldPolicy)
+		}
 		EnsureServerConf()
 		_ = EnsureClientTemplate()
 		invalidateCachedOVPN()
