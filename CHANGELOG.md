@@ -1,5 +1,22 @@
 # Changelog
 
+## 2.0.22 - 2026-11-18
+
+- Keyless API requests charge the per-IP rate limiter before the 401, so they
+  cannot flood /sync.
+- The kill hook rejects non-numeric client ids instead of passing them to the
+  management socket.
+- State, policy and DNS writes check every write/chmod/rename error before
+  publishing, and no longer leak a temp file on failure.
+- The installer detects a partial install by checking the instance unit.
+- The updater holds its lock for the whole update and writes a terminal
+  status on commit and failover; a unit activation failure now fails over.
+- OpenVPN settings patches reject reserved primary ports and write the limit
+  policy only after the patch succeeds, rolling it back with the settings.
+- NAT reapplies its owned masquerade rules after flushing them; cron and NAT
+  units carry the instance identity.
+- A ChangeConfig panic is reported as an error instead of an empty result.
+
 ## 2.0.21 - 2026-11-13
 
 - The installer probes /sync/health before committing an update; a candidate
