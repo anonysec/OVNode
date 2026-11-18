@@ -131,10 +131,10 @@ func Update(c *Config, runner Runner) error {
 	}
 	// Candidate starts.
 	if err := c.writeSystemdUnit(runner); err != nil {
-		return err
+		return failover(c, u, runner)
 	}
 	if err := c.writeNatUnit(runner); err != nil {
-		return err
+		return failover(c, u, runner)
 	}
 	_ = c.installAgentBinary()
 	if err := systemctlBounded(runner, "restart", c.Service); err != nil {
