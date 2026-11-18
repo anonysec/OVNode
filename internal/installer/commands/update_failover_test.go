@@ -6,12 +6,14 @@ package commands
 import (
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 )
 
 func TestUpdateFailsOverWhenUnitWriteFailsAfterSwap(t *testing.T) {
 	root := t.TempDir()
 	t.Setenv("TestFakeRunner", "1")
+	t.Setenv("LogFile", filepath.Join(root, "events.log"))
 	app := filepath.Join(root, "app")
 	previous := app + ".previous"
 	data := filepath.Join(root, "data")
@@ -53,6 +55,9 @@ func TestUpdateFailsOverWhenUnitWriteFailsAfterSwap(t *testing.T) {
 	}
 	if snaps, _ := filepath.Glob(filepath.Join(root, "backups", "node-code-*.tar.gz")); len(snaps) == 0 {
 		t.Fatal("update did not write a code snapshot for rollback")
+	}
+	if log, err := os.ReadFile(filepath.Join(root, "events.log")); err != nil || !strings.Contains(string(log), "failed over") {
+		t.Fatalf("update failover not logged: %v %q", err, string(log))
 	}
 	if _, err := os.Stat(previous); !os.IsNotExist(err) {
 		t.Fatalf("previous tree survived a failed update: %v", err)

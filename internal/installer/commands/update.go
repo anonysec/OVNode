@@ -8,7 +8,9 @@ import (
 	"strings"
 
 	"ovnode/internal/assets"
+	"ovnode/internal/fsx"
 	"ovnode/internal/installer"
+	"ovnode/internal/logging"
 	"ovnode/internal/updater"
 	"ovnode/internal/version"
 )
@@ -170,6 +172,7 @@ func Update(c *Config, runner Runner) error {
 		return fmt.Errorf("candidate passed verification but failed its final check; writes are blocked; run: ovnode recover-update")
 	}
 	_ = installer.WriteUpdateState(u.statePath(c), "committed", from, c.Version, safety, identity)
+	logging.Event(fsx.LogFile(), "update: %s -> %s committed", from, c.Version)
 	_ = updater.WriteStatus(c.AppDir, "completed")
 	_ = os.RemoveAll(previous)
 	c.installCLI()
@@ -203,6 +206,7 @@ func failover(c *Config, u *updateCtx, runner Runner) error {
 	if healthCheck(healthURL, 60) {
 		_ = os.Remove(u.marker(c))
 		_ = installer.WriteUpdateState(u.statePath(c), "failed_over", u.from, c.Version, u.safety, u.identity)
+		logging.Event(fsx.LogFile(), "update: %s -> %s failed over to %s", u.from, c.Version, u.from)
 		_ = updater.WriteStatus(c.AppDir, "failed_over")
 		return fmt.Errorf("update failed over safely to v%s; state was restored from %s; check logs before retrying", u.from, u.safety)
 	}
