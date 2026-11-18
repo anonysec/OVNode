@@ -130,6 +130,28 @@ func TestAuthorizeChargesOncePerRequest(t *testing.T) {
 	}
 }
 
+func TestKeylessRequestsChargeRateLimiter(t *testing.T) {
+	s := testServer(t)
+	ip := "203.0.113.70:1234"
+	for i := 0; i < 120; i++ {
+		req := httptest.NewRequest(http.MethodGet, "/sync/status", nil)
+		req.RemoteAddr = ip
+		if s.authorize(httptest.NewRecorder(), req, false) {
+			t.Fatalf("keyless call %d was authorized", i+1)
+		}
+	}
+	req := httptest.NewRequest(http.MethodGet, "/sync/status", nil)
+	req.RemoteAddr = ip
+	req.Header.Set("key", testKey)
+	rec := httptest.NewRecorder()
+	if s.authorize(rec, req, false) {
+		t.Fatal("valid key after 120 keyless calls should be rate limited")
+	}
+	if rec.Code != http.StatusTooManyRequests {
+		t.Fatalf("status after keyless flood = %d, want 429", rec.Code)
+	}
+}
+
 func TestHeavyBucketExhaustionReturns429(t *testing.T) {
 	s := testServer(t)
 	ip := "203.0.113.60:1234"

@@ -21,13 +21,15 @@ import (
 // limiter is keyed on the address, never on the submitted secret.
 func (s *Server) authorize(w http.ResponseWriter, r *http.Request, heavy bool) bool {
 	given := r.Header.Get("key")
+	client := clientAddr(r)
+	// Only the per-IP bucket is charged before authentication. Keyless calls
+	// still get a 401, but they consume the budget so they cannot flood /sync.
+	allowed, retry := s.limiter.Allow(client)
 	if given == "" {
 		writeAuthError(w, http.StatusUnauthorized, "Missing API key")
 		return false
 	}
-	client := clientAddr(r)
-	// Only the per-IP bucket is charged before authentication.
-	if ok, retry := s.limiter.Allow(client); !ok {
+	if !allowed {
 		w.Header().Set("Retry-After", strconv.Itoa(int(retry.Seconds())))
 		writeAuthError(w, http.StatusTooManyRequests, "Rate limit exceeded")
 		return false
