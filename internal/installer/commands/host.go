@@ -50,6 +50,11 @@ func isTTY() bool {
 
 // checkRoot mirrors lib.sh check_root.
 func checkRoot() error {
+	// The fake runner is the test seam for the update/install paths, which
+	// would otherwise need a root CI job just to reach their logic.
+	if os.Getenv("TestFakeRunner") == "1" {
+		return nil
+	}
 	if os.Geteuid() != 0 {
 		return fmt.Errorf("must run as root")
 	}
