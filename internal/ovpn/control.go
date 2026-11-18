@@ -122,12 +122,13 @@ func limitPolicyOrDefault() settings.LimitPolicy {
 }
 
 // ChangeConfig validates and applies a panel push to the settings file.
-func ChangeConfig(req ChangeConfigRequest) (ChangeConfigResult, error) {
+func ChangeConfig(req ChangeConfigRequest) (result ChangeConfigResult, err error) {
 	changeConfigMu.Lock()
 	defer changeConfigMu.Unlock()
 	defer func() {
 		if r := recover(); r != nil {
 			logging.Syslog("ChangeConfig panic: %v", r)
+			err = fmt.Errorf("ChangeConfig panic: %v", r)
 		}
 	}()
 	if req.Settings != nil {
