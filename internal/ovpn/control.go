@@ -165,6 +165,9 @@ func applySettingsPatch(patch SettingsPatch) (ChangeConfigResult, error) {
 		next.Protocol = proto
 	}
 	if patch.Port != nil {
+		if policy.IsReservedPrimaryPort(*patch.Port) {
+			return ChangeConfigResult{}, fmt.Errorf("port %d is reserved", *patch.Port)
+		}
 		next.Port = *patch.Port
 	}
 	if patch.TunnelAddress != nil {

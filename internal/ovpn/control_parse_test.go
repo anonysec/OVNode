@@ -101,6 +101,24 @@ func TestSettingsPatchAppliesEveryField(t *testing.T) {
 	}
 }
 
+func TestSettingsPatchRejectsReservedPort(t *testing.T) {
+	root := t.TempDir()
+	t.Setenv("OpenVpnRoot", root)
+	t.Setenv("DataDir", filepath.Join(root, "data"))
+	t.Setenv("ApiPort", "2083")
+	port := 2083
+	if err := settings.Save(settings.Defaults()); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := applySettingsPatch(SettingsPatch{Port: &port}); err == nil {
+		t.Fatal("reserved primary port was accepted by settings patch")
+	}
+	got, _ := settings.Load()
+	if got.Port == port {
+		t.Fatalf("reserved patch changed the file: port %d", got.Port)
+	}
+}
+
 func TestSettingsPatchRejectsInvalidValue(t *testing.T) {
 	root := t.TempDir()
 	t.Setenv("OpenVpnRoot", root)
