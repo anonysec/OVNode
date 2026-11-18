@@ -175,6 +175,9 @@ func Apply() error {
 	if err := flushOwnRedirects(); err != nil {
 		return err
 	}
+	if err := flushOwnRules("POSTROUTING", "ovnode-nat"); err != nil {
+		return err
+	}
 	// Owner-marked so Cleanup never deletes a pre-existing identical
 	// non-owned rule.
 	if err := rule("add", "nat", "POSTROUTING", "-s", cfg.Subnet, "-o", iface, "-m", "comment", "--comment", "ovnode-nat", "-j", "MASQUERADE"); err != nil {
@@ -199,15 +202,19 @@ func Apply() error {
 // to list rules aborts the apply: silently continuing would leave stale
 // redirects in place.
 func flushOwnRedirects() error {
-	out, err := execCmd("iptables", "-t", "nat", "-S", "PREROUTING").Output()
+	return flushOwnRules("PREROUTING", "ovnode-redirect")
+}
+
+func flushOwnRules(chain, comment string) error {
+	out, err := execCmd("iptables", "-t", "nat", "-S", chain).Output()
 	if err != nil {
-		return fmt.Errorf("ovnode-nat: list PREROUTING rules: %w", err)
+		return fmt.Errorf("ovnode-nat: list %s rules: %w", chain, err)
 	}
 	for _, line := range strings.Split(string(out), "\n") {
-		if !strings.Contains(line, "ovnode-redirect") {
+		if !strings.Contains(line, comment) {
 			continue
 		}
-		if !strings.HasPrefix(line, "-A PREROUTING") {
+		if !strings.HasPrefix(line, "-A "+chain) {
 			continue
 		}
 		fields := strings.Fields(line)
@@ -216,7 +223,7 @@ func flushOwnRedirects() error {
 		}
 		fields[0] = "-D"
 		if err := execCmd("iptables", append([]string{"-t", "nat"}, fields...)...).Run(); err != nil {
-			return fmt.Errorf("ovnode-nat: delete redirect rule: %w", err)
+			return fmt.Errorf("ovnode-nat: delete %s rule: %w", chain, err)
 		}
 	}
 	return nil
