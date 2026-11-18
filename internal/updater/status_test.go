@@ -10,6 +10,19 @@ import (
 	"testing"
 )
 
+func TestWriteStatusMakesTerminalStatus(t *testing.T) {
+	dir := t.TempDir()
+	if err := os.WriteFile(filepath.Join(dir, statusName), []byte("running\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := WriteStatus(dir, "completed"); err != nil {
+		t.Fatal(err)
+	}
+	if got := UpdateStatus(dir); got != "completed" {
+		t.Fatalf("status after WriteStatus = %q, want completed", got)
+	}
+}
+
 func TestUpdateStatus(t *testing.T) {
 	dir := t.TempDir()
 

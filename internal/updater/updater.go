@@ -82,6 +82,13 @@ func TriggerUpdate(appDir, version string) error {
 	return nil
 }
 
+func WriteStatus(appDir, status string) error {
+	if len(status) > 32 {
+		status = status[:32]
+	}
+	return os.WriteFile(filepath.Join(appDir, statusName), []byte(status+"\n"), 0o600)
+}
+
 func UpdateStatus(appDir string) string {
 	data, err := os.ReadFile(filepath.Join(appDir, statusName))
 	if err != nil {
