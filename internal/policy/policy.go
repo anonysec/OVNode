@@ -294,20 +294,36 @@ func WriteDNSState(dns1, dns2 string) bool {
 			return false
 		}
 	}
-	os.MkdirAll(filepath.Dir(path), 0o755)
+	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
+		return false
+	}
 	tmp, err := os.CreateTemp(filepath.Dir(path), ".dns-")
 	if err != nil {
 		return false
 	}
-	if tmp == nil {
-		return false
+	tmpName := tmp.Name()
+	cleanup := func() {
+		_ = tmp.Close()
+		_ = os.Remove(tmpName)
 	}
 	if desired != "" {
-		tmp.WriteString(desired + "\n")
+		if _, err := tmp.WriteString(desired + "\n"); err != nil {
+			cleanup()
+			return false
+		}
 	}
-	tmp.Close()
-	os.Chmod(tmp.Name(), 0o644)
-	os.Rename(tmp.Name(), path)
+	if err := tmp.Chmod(0o644); err != nil {
+		cleanup()
+		return false
+	}
+	if err := tmp.Close(); err != nil {
+		_ = os.Remove(tmpName)
+		return false
+	}
+	if err := os.Rename(tmpName, path); err != nil {
+		_ = os.Remove(tmpName)
+		return false
+	}
 	return true
 }
 
@@ -398,18 +414,34 @@ func WriteIPv6State(enabled bool, prefix string) bool {
 			return false
 		}
 	}
-	os.MkdirAll(filepath.Dir(path), 0o755)
+	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
+		return false
+	}
 	tmp, err := os.CreateTemp(filepath.Dir(path), ".ipv6-")
 	if err != nil {
 		return false
 	}
-	if tmp == nil {
+	tmpName := tmp.Name()
+	cleanup := func() {
+		_ = tmp.Close()
+		_ = os.Remove(tmpName)
+	}
+	if _, err := tmp.WriteString(desired + "\n"); err != nil {
+		cleanup()
 		return false
 	}
-	tmp.WriteString(desired + "\n")
-	tmp.Close()
-	os.Chmod(tmp.Name(), 0o644)
-	os.Rename(tmp.Name(), path)
+	if err := tmp.Chmod(0o644); err != nil {
+		cleanup()
+		return false
+	}
+	if err := tmp.Close(); err != nil {
+		_ = os.Remove(tmpName)
+		return false
+	}
+	if err := os.Rename(tmpName, path); err != nil {
+		_ = os.Remove(tmpName)
+		return false
+	}
 	return true
 }
 

@@ -5,6 +5,7 @@ package installer
 
 import (
 	"encoding/json"
+	"io"
 	"os"
 	"path/filepath"
 	"time"
@@ -32,16 +33,38 @@ func WriteUpdateState(path, phase, from, target, backup, identity string) error 
 		return err
 	}
 	b = append(b, '\n')
-	os.MkdirAll(filepath.Dir(path), 0o755)
+	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
+		return err
+	}
 	tmp, err := os.CreateTemp(filepath.Dir(path), ".update-state-")
 	if err != nil {
 		return err
 	}
 	tmpName := tmp.Name()
-	tmp.Write(b)
-	tmp.Close()
-	os.Chmod(tmpName, 0o600)
-	return os.Rename(tmpName, path)
+	cleanup := func() {
+		_ = tmp.Close()
+		_ = os.Remove(tmpName)
+	}
+	if n, err := tmp.Write(b); err != nil || n != len(b) {
+		cleanup()
+		if err != nil {
+			return err
+		}
+		return io.ErrShortWrite
+	}
+	if err := tmp.Chmod(0o600); err != nil {
+		cleanup()
+		return err
+	}
+	if err := tmp.Close(); err != nil {
+		_ = os.Remove(tmpName)
+		return err
+	}
+	if err := os.Rename(tmpName, path); err != nil {
+		_ = os.Remove(tmpName)
+		return err
+	}
+	return nil
 }
 
 // ReadUpdateState reads the update state file.
