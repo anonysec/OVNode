@@ -223,6 +223,10 @@ func runKill(req killRequest) {
 			}
 			continue
 		}
+		if !digitsOnly(req.CID) {
+			logging.Event(fsx.LogFile(), "events: rejected non-numeric client id %q", req.CID)
+			return
+		}
 		var (
 			replies []string
 			err     error
@@ -245,6 +249,18 @@ func runKill(req killRequest) {
 		}
 	}
 	logging.Event(fsx.LogFile(), "events: kill cid=%s virtual=%s failed", req.CID, req.Virtual)
+}
+
+func digitsOnly(s string) bool {
+	if s == "" {
+		return false
+	}
+	for _, r := range s {
+		if r < '0' || r > '9' {
+			return false
+		}
+	}
+	return true
 }
 
 func findKillTarget(sessions []ovpn.Session, virtual, real string) (ovpn.Session, bool) {

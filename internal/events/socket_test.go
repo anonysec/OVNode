@@ -9,6 +9,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"strings"
 	"sync"
 	"testing"
 	"time"
@@ -186,6 +187,25 @@ func TestListenQueuesTargetedKill(t *testing.T) {
 
 // A kill queued from a fresh marker has no client id yet. The agent must
 // retry the virtual lookup instead of dropping the target as gone.
+func TestRunKillRejectsInjectedClientID(t *testing.T) {
+	prevKill, prevSessions := killSession, sessionsForKill
+	t.Cleanup(func() { killSession, sessionsForKill = prevKill, prevSessions })
+
+	sessionsForKill = func(cn string) ([]ovpn.Session, bool) { return nil, false }
+	got := make(chan string, 1)
+	killSession = func(proto string, cmds []string) ([]string, error) {
+		got <- strings.Join(cmds, "|")
+		return []string{"SUCCESS"}, nil
+	}
+
+	runKill(killRequest{CID: "1\nsignal SIGTERM", Proto: "udp", CN: "u1"})
+	select {
+	case cmd := <-got:
+		t.Fatalf("injected CID produced a management command: %q", cmd)
+	default:
+	}
+}
+
 func TestRunKillRetriesAFreshVirtual(t *testing.T) {
 	prevKill, prevSessions := killSession, sessionsForKill
 	t.Cleanup(func() { killSession, sessionsForKill = prevKill, prevSessions })
