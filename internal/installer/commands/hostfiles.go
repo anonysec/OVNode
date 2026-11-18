@@ -63,13 +63,15 @@ Wants=network-online.target
 [Service]
 Type=oneshot
 EnvironmentFile=-%s
+Environment=Instance=%s
+Environment=AppDir=%s
 ExecStart=%s nat apply
 ExecStop=%s nat cleanup
 RemainAfterExit=yes
 
 [Install]
 WantedBy=multi-user.target
-`, c.natConfigPath(), c.natConfigPath(), c.AgentBin(), c.AgentBin())
+`, c.natConfigPath(), c.natConfigPath(), c.Instance, c.AppDir, c.AgentBin(), c.AgentBin())
 	path := filepath.Join(c.systemdDir(), c.NatService)
 	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
 		return err
@@ -133,6 +135,6 @@ func (c *Config) removeCLI() {
 // cronLine mirrors the ovnode-purge cron entry.
 func (c *Config) writeCron() error {
 	path := c.cronPath()
-	line := fmt.Sprintf("0 3 * * * root %s hook purge-stale >/dev/null 2>&1\n", c.AgentBin())
+	line := fmt.Sprintf("0 3 * * * root env AppDir=%s Instance=%s %s hook purge-stale >/dev/null 2>&1\n", c.AppDir, c.Instance, c.AgentBin())
 	return os.WriteFile(path, []byte(line), 0o644)
 }
