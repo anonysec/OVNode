@@ -11,11 +11,17 @@ import (
 	"path/filepath"
 	"regexp"
 	"strings"
+	"sync"
 	"syscall"
 )
 
 const lockName = ".update.lock"
 const statusName = ".update-status"
+
+var (
+	updateLockMu   sync.Mutex
+	updateLockFile *os.File
+)
 
 // TriggerUpdate runs install.sh update detached via systemd-run. The unit
 // lives outside the service sandbox, so it can replace binaries and survive
@@ -55,7 +61,14 @@ func TriggerUpdate(appDir, version string) error {
 		_ = lockFile.Close()
 		return errors.New("update already running")
 	}
-	// Keep the lock: releasing it here would let a second update start.
+	// Keep a live reference: an unreferenced os.File is closed by the finalizer,
+	// which would silently release the flock midway through the update.
+	updateLockMu.Lock()
+	if updateLockFile != nil {
+		_ = updateLockFile.Close()
+	}
+	updateLockFile = lockFile
+	updateLockMu.Unlock()
 
 	marker := filepath.Join(appDir, statusName)
 	_ = os.WriteFile(marker, []byte("running\n"), 0o600)
@@ -76,6 +89,11 @@ func TriggerUpdate(appDir, version string) error {
 	if err := cmd.Run(); err != nil {
 		_ = syscall.Flock(int(lockFile.Fd()), syscall.LOCK_UN)
 		_ = lockFile.Close()
+		updateLockMu.Lock()
+		if updateLockFile == lockFile {
+			updateLockFile = nil
+		}
+		updateLockMu.Unlock()
 		return err
 	}
 	// The unit only enqueued; keep the lock so a second update cannot start.
