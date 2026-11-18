@@ -1,5 +1,16 @@
 # Changelog
 
+## 2.0.23 - 2026-11-18
+
+- The update writes the code snapshot that `ovnode rollback` restores, so a
+  post-commit problem can return to the exact previous release.
+- `ovnode rollback` allows a v2 to v2 rollback (the previous binary reads v2
+  counters) and refuses only when the snapshot predates v2.
+- Snapshot extraction no longer passes `--no-absolute-filenames`, which GNU
+  tar rejects; the archive entries are already relative.
+- Note: updating or rolling back restarts the node agent, which restarts the
+  OpenVPN child and briefly reconnects online users.
+
 ## 2.0.22 - 2026-11-18
 
 - Keyless API requests charge the per-IP rate limiter before the 401, so they
